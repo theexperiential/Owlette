@@ -63,38 +63,31 @@ Run the `install.bat` file to automatically install the required packages and se
 
 2. Follow the on-screen instructions to authenticate with Gmail and configure the processes you want to manage.
 
-3. Install and start the service:
-
-    ```bash
-    python owlette_service.py install
-    python owlette_service.py start
-    ```
-
-4. To install the Windows service, run the following command as an administrator:
+3. To install the Windows service, run the following command as an administrator:
 
     ```bash
     python owlette_service.py install
     ```
 
-5. To start the Windows service, run:
+4. To start the Windows service, run:
 
     ```bash
     python owlette_service.py start
     ```
 
-6. To stop the Windows service, run:
+5. To stop the Windows service, run:
 
     ```bash
     python owlette_service.py stop
     ```
 
-7. To run the GUI configuration, double-click on `owlette_gui.py` or run:
+6. To run the GUI configuration, double-click on `owlette_gui.py` or run:
 
     ```bash
     python owlette_gui.py
     ```
 
-8. To access the system tray icon, run:
+7. To access the system tray icon, run:
 
     ```bash
     python owlette_tray.py
