@@ -38,7 +38,7 @@ Run the `install.bat` file to automatically install the required packages and se
 
 #### Manual Installation
 
-3. Install the required Python packages:
+Install the required Python packages:
 
     ```bash
     pip install -r requirements.txt
@@ -81,13 +81,13 @@ Run the `install.bat` file to automatically install the required packages and se
     python owlette_service.py stop
     ```
 
-6. To run the GUI configuration, double-click on `owlette_gui.py` or run:
+6. The tray icon will automatically run with the service. But if you wish to run the GUI configuration, just double-click on `owlette_gui.py` or run:
 
     ```bash
     python owlette_gui.py
     ```
 
-7. To access the system tray icon, run:
+7. To restart the system tray icon, restart the process or run:
 
     ```bash
     python owlette_tray.py
