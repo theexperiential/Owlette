@@ -1,0 +1,6 @@
+__pycache__/
+*.log
+*.pyc
+*.swp
+.DS_Store
+client_secrets.json

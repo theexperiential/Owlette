@@ -1,0 +1,28 @@
+{
+    "processes": [
+        {
+            "name": "chrome fullscreen",
+            "exe_path": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+            "file_path": "--start-fullscreen",
+            "time_delay": "1"
+        },
+        {
+            "name": "notes",
+            "exe_path": "C:/Windows/notepad.exe",
+            "file_path": "",
+            "time_delay": "1"
+        },
+        {
+            "name": "test",
+            "exe_path": "C:/Program Files/Derivative/TouchDesigner/bin/TouchDesigner.exe",
+            "file_path": "C:/Users/dylan/OneDrive/Desktop/test.toe",
+            "time_delay": "1"
+        }
+    ],
+    "email": {
+        "from": "installs@theexperiential.com",
+        "to": [
+            "rosco@theexperiential.com"
+        ]
+    }
+}
