@@ -1,6 +1,6 @@
 # Owlette
 
-Owlette is a Python-based Windows service designed for maximum flexibility and editability. It manages and monitors various processes and system metrics, automatically restarting applications if they crash or are accidentally closed. It also sends email notifications when certain events occur.
+Owlette is a Python-based Windows process watcher service designed for maximum flexibility and editability. It manages and monitors various processes and system metrics, automatically restarting applications if they crash or are accidentally closed. It also sends email notifications when certain events occur.
 
 ## Features
 
