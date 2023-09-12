@@ -21,13 +21,13 @@ Owlette is a Python-based Windows service designed for maximum flexibility and e
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/yourusername/owlette.git
+    git clone https://github.com/theexperiential/Owlette.git
     ```
 
 2. Navigate to the project directory:
 
     ```bash
-    cd owlette
+    cd Owlette
     ```
 
 ### Installation Methods
