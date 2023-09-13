@@ -63,11 +63,13 @@ def browse_exe():
     exe_path = filedialog.askopenfilename(initialdir="C:/", title="Select Exe File", filetypes=[("Executable files", "*.exe")])
     exe_path_entry.delete(0, tk.END)
     exe_path_entry.insert(0, exe_path)
+    update_selected_process()
 
 def browse_file():
     file_path = filedialog.askopenfilename(initialdir="C:/", title="Select File")
     file_path_entry.delete(0, tk.END)
     file_path_entry.insert(0, file_path)
+    update_selected_process()
 
 def remove_process():
     selected_process = process_list.curselection()
