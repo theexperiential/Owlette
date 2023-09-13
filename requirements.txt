@@ -6,3 +6,4 @@ GPUtil==1.4.0
 keyring==24.2.0
 google-auth==2.22.0
 google-api-python-client==2.98.0
+google-auth-oauthlib==1.0.0
