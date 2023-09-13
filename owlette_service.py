@@ -145,19 +145,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
         while self.is_alive:
             # Start the tray icon script as a subprocess
             if not is_script_running('owlette_tray.py'):
-                logging.info("Starting Owlette Tray...")
-                startupInfo.wShowWindow = win32con.SW_HIDE
-                command_line = f"python {shared_utils.get_path('owlette_tray.py')}"
-                win32process.CreateProcessAsUser(console_user_token,
-                    None,  # Application Name
-                    command_line,  # Command Line
-                    None,
-                    None,
-                    0,
-                    win32con.NORMAL_PRIORITY_CLASS,
-                    environment,  # To open in user's environment
-                    None,
-                    startupInfo)
+                try:
+                    logging.info("Starting Owlette Tray...")
+                    startupInfo.wShowWindow = win32con.SW_HIDE
+                    command_line = f"python {shared_utils.get_path('owlette_tray.py')}"
+                    win32process.CreateProcessAsUser(console_user_token,
+                        None,  # Application Name
+                        command_line,  # Command Line
+                        None,
+                        None,
+                        0,
+                        win32con.NORMAL_PRIORITY_CLASS,
+                        environment,  # To open in user's environment
+                        None,
+                        startupInfo)
+                except Exception as e:
+                    logging.error(f"Couldn't start Owlette Tray. {e}")
 
             # Start each application from JSON config
             # Read the JSON configuration
@@ -181,8 +184,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if last_time is None or (current_time - last_time).seconds >= 60:  # 60 seconds
                     # Delay the app (if applicable)
                     time.sleep(delay)
-                    pid = start_process_as_user(console_user_token, environment, startupInfo, process)
-
+                    # Attempt to start the process
+                    try:
+                        pid = start_process_as_user(console_user_token, environment, startupInfo, process)
+                    except Exception as e:
+                        logging.error(f"Could not start process {process_name}.\n {e}")
                     # Update the last started time and PID
                     last_started[process_name] = {'time': current_time, 'pid': pid}
                     logging.info(f"PID {pid} started.")
