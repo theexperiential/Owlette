@@ -4,10 +4,12 @@ from PIL import Image, ImageDraw
 import subprocess
 import logging
 import os
+import psutil
 
 logging.basicConfig(filename=shared_utils.get_path('_tray.log'), level=logging.INFO)
 logging.info('Starting Owlette tray icon...')
 
+pid = None
 
 def create_image():
     # Create an image using PIL
@@ -25,13 +27,27 @@ def create_image():
 
     return image
 
-def open_config(icon, item):
-    # Open the configuration GUI
+def is_process_running(pid):
+    if pid is None:
+        return False
     try:
-        subprocess.run(["python", shared_utils.get_path('owlette_gui.py')])
+        process = psutil.Process(pid)
+        return True if process.is_running() else False
+    except psutil.NoSuchProcess:
+        return False
     except Exception as e:
-        logging.error(f"Failed to open Owlette GUI: {e}")
+        logging.error(f"Failed to check if process is running: {e}")
+        return False
 
+def open_config(icon, item):
+    global pid  # Declare pid as global so you can modify it
+    
+    if not is_process_running(pid):
+        try:
+            process = subprocess.Popen(["python", shared_utils.get_path('owlette_gui.py')])
+            pid = process.pid
+        except Exception as e:
+            logging.error(f"Failed to open Owlette GUI: {e}")
 
 def exit_action(icon, item):
     icon.stop()
