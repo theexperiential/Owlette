@@ -113,10 +113,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
         win32serviceutil.ServiceFramework.__init__(self, args)
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
+        self.tray_icon_pid = None
 
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.is_alive = False
+        # Terminate the tray icon process if it exists
+        if self.tray_icon_pid:
+            try:
+                psutil.Process(self.tray_icon_pid).terminate()
+            except psutil.NoSuchProcess:
+                logging.error(f"Couldn't find process with PID: {self.tray_icon_pid}")
+            except Exception as e:
+                logging.error(f"Couldn't terminate tray icon: {e}")
         win32event.SetEvent(self.hWaitStop)
 
     def SvcDoRun(self):
@@ -149,7 +158,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     logging.info("Starting Owlette Tray...")
                     startupInfo.wShowWindow = win32con.SW_HIDE
                     command_line = f"python {shared_utils.get_path('owlette_tray.py')}"
-                    win32process.CreateProcessAsUser(console_user_token,
+                    _, _, pid, _ = win32process.CreateProcessAsUser(console_user_token,
                         None,  # Application Name
                         command_line,  # Command Line
                         None,
@@ -159,6 +168,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         environment,  # To open in user's environment
                         None,
                         startupInfo)
+                    self.tray_icon_pid = pid  # Store the PID
                 except Exception as e:
                     logging.error(f"Couldn't start Owlette Tray. {e}")
 

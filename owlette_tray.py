@@ -5,6 +5,8 @@ import subprocess
 import logging
 import os
 import psutil
+import ctypes
+import sys
 
 logging.basicConfig(filename=shared_utils.get_path('_tray.log'), level=logging.INFO)
 logging.info('Starting Owlette tray icon...')
@@ -50,12 +52,24 @@ def open_config(icon, item):
             logging.error(f"Failed to open Owlette GUI: {e}")
 
 def exit_action(icon, item):
-    icon.stop()
     try:
-        # Stop the OwletteService
-        subprocess.run(["python", shared_utils.get_path('owlette_service.py'), "stop"])
+        # Check for admin rights
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+
+        if not is_admin:
+             # Form the Python command you want to run
+            python_command = f"python {shared_utils.get_path('owlette_service.py')} stop"
+            
+            # Re-run the Python command with admin rights
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c {python_command}", None, 0)
+        else:
+            # Stop the OwletteService
+            subprocess.run(["python", shared_utils.get_path('owlette_service.py'), "stop"])
+            
     except Exception as e:
         logging.error(f"Failed to stop service: {e}")
+
+    icon.stop()
 
 # Create the system tray icon
 image = create_image()
