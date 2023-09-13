@@ -93,6 +93,17 @@ Install the required Python packages:
     python owlette_tray.py
     
     
+
+## Uninstallation 🗑️
+
+To uninstall the Owlette service, run the following command as an administrator:
+
+    
+    python owlette_service.py remove
+    
+
+This will remove the Owlette service from your system.
+
 ## 🐞 Troubleshooting
 
 Logs are stored in `_service.log` for the service and `_email.log` for the email notifications. Check these logs for debugging information.
