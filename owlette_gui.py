@@ -225,7 +225,7 @@ exe_path_entry.grid(row=2, column=1, sticky='ew', padx=5, pady=5)
 exe_browse_button = tk.Button(root, text="Browse", command=browse_exe, bg=dark_bg, fg=dark_fg)
 exe_browse_button.grid(row=2, column=2, sticky='w', padx=5, pady=5)
 
-ttk.Label(root, text="File Path:", background=dark_bg, foreground=dark_fg).grid(row=3, column=0, sticky='e', padx=(10, 5), pady=5)
+ttk.Label(root, text="File Path / Cmd Line Args:", background=dark_bg, foreground=dark_fg).grid(row=3, column=0, sticky='e', padx=(10, 5), pady=5)
 file_path_entry = tk.Entry(root, bg=dark_bg, fg=dark_fg, insertbackground=dark_fg)
 file_path_entry.grid(row=3, column=1, sticky='ew', padx=(5, 5), pady=5)
 
