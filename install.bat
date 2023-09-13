@@ -32,7 +32,7 @@ cd %~dp0
 python owlette_service.py install
 
 :: Set the service to start automatically
-sc config OwletteService start= auto
+sc config OwletteService start= delayed-auto
 
 :: Start the service
 python owlette_service.py start
