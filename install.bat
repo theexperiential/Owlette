@@ -16,6 +16,10 @@ if errorlevel 1 (
     goto :eof
 )
 
+:: Stop the Owlette Windows service if it's running
+echo Stopping the Owlette Windows service if it's running...
+net stop OwletteService
+
 :: Install dependencies
 echo Installing Python dependencies...
 python -m pip install --upgrade pip
