@@ -32,9 +32,9 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 
 ### 📦 Installation Methods
 
-#### 🤖 Automatic Installation
+#### 🤖 Automatic Installation/Updater
 
-Run the `install.bat` file as an Administrator to automatically install the required packages and set up/start the service.
+Run the `install.bat` file as an Administrator to automatically install the required packages and set up the service. It also works as an updater, anytime this repo is updated.
 
 #### 🖐️ Manual Installation
 
