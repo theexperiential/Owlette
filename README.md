@@ -34,7 +34,7 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 
 #### 🤖 Automatic Installation/Updater
 
-Run the `install.bat` file as an Administrator to automatically install the required packages and set up the service. It also works as an updater, anytime this repo is updated.
+Run the `install.bat` file as an administrator to automatically install the required packages and set up the service. It also works as an updater, anytime this repo is updated.
 
 #### 🖐️ Manual Installation
 
@@ -96,7 +96,7 @@ Install the required Python packages:
 
 ## 🗑️ Uninstallation 
 
-To uninstall the Owlette service, run the following command as an administrator:
+To uninstall the Owlette service and python dependencies, you may run the `uninstall.bat` file as an administrator. Alternatively, to just remove the service, you may run the following command as an administrator:
 
     
     python owlette_service.py remove
