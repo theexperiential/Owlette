@@ -94,7 +94,7 @@ Install the required Python packages:
     
     
 
-## Uninstallation 🗑️
+## 🗑️ Uninstallation 
 
 To uninstall the Owlette service, run the following command as an administrator:
 
