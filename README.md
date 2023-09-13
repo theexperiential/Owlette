@@ -20,15 +20,15 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 
 1️⃣ Clone the repository:
 
-    ```bash
+    
     git clone https://github.com/theexperiential/Owlette.git
-    ```
+    
 
 2️⃣ Navigate to the project directory:
 
-    ```bash
+    
     cd Owlette
-    ```
+    
 
 ### 📦 Installation Methods
 
@@ -40,9 +40,9 @@ Run the `install.bat` file to automatically install the required packages and se
 
 Install the required Python packages:
 
-    ```bash
+    
     pip install -r requirements.txt
-    ```
+    
 
 ### ☁️ Google Cloud Platform (GCP) Configuration
 
@@ -57,41 +57,41 @@ Install the required Python packages:
 
 1️⃣ Run the `owlette_gui.py` script to configure the service:
 
-    ```bash
+    
     python owlette_gui.py
-    ```
+    
 
 2️⃣ Follow the on-screen instructions to authenticate with Gmail and configure the processes you want to manage.
 
 3️⃣ To install the Windows service, run the following command as an administrator:
 
-    ```bash
+    
     python owlette_service.py install
-    ```
+    
 
 4️⃣ To start the Windows service, run:
 
-    ```bash
+    
     python owlette_service.py start
-    ```
+    
 
 5️⃣ To stop the Windows service, run:
 
-    ```bash
+    
     python owlette_service.py stop
-    ```
+    
 
 6️⃣ The tray icon will automatically run with the service. But if you wish to run the GUI configuration, just double-click on `owlette_gui.py` or run:
 
-    ```bash
+    
     python owlette_gui.py
-    ```
+    
 
 7️⃣ To restart the system tray icon, restart the process or run:
 
-    ```bash
+    
     python owlette_tray.py
-    ```
+    
     
 ## 🐞 Troubleshooting
 
