@@ -92,7 +92,6 @@ Install the required Python packages:
     
     python owlette_tray.py
     
-    
 
 ## 🗑️ Uninstallation 
 
@@ -106,7 +105,15 @@ This will remove the Owlette service from your system.
 
 ## 🐞 Troubleshooting
 
-Logs are stored in `_service.log` for the service and `_email.log` for the email notifications. Check these logs for debugging information.
+### 📝 Logs 
+Logs are stored in `_service.log` for the service, `_email.log` for the email notifications, and `_tray.log` for the tray icon. Check these logs for debugging information.
+
+### 🔄 Restarting the service
+If you exit Owlette from the tray icon or stop the service and wish to restart it, you can go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service", or run the following command as an administrator:
+
+    
+    python owlette_service.py start
+    
 
 ## 🤝 Contributing
 
