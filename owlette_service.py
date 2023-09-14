@@ -25,7 +25,6 @@ python owlette_service.py install | start | stop | remove
 
 # Initialize logging
 log_file_path = shared_utils.get_path('_service.log')
-
 # Clear the log file after system restart
 with open(log_file_path, 'w'):
     pass

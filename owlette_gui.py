@@ -8,6 +8,7 @@ import json
 from email_validator import validate_email, EmailNotValidError
 from google_auth_oauthlib.flow import InstalledAppFlow
 import keyring
+import logging
 
 def load_config(email_from_entry, emails_to_entry):
     try:
@@ -17,8 +18,9 @@ def load_config(email_from_entry, emails_to_entry):
             emails_to_entry.insert(0, ', '.join(config['email']['to']))
             return config
     except FileNotFoundError:
-        return {'processes': [], 'email': {'from': '', 'to': []}}
         logging.error(f"Failed to load config: {e}")
+        return {'processes': [], 'email': {'from': '', 'to': []}}
+        
 
 def save_config(config):
     config['email']['from'] = email_from_entry.get()

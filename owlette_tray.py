@@ -10,8 +10,16 @@ import ctypes
 import sys
 import winreg
 
-logging.basicConfig(filename=shared_utils.get_path('_tray.log'), level=logging.INFO)
+# Initialize logging
+log_file_path = shared_utils.get_path('_tray.log')
+# Clear the log file after system restart
+with open(log_file_path, 'w'):
+    pass
+
+logging.basicConfig(filename=log_file_path, level=logging.INFO)
 logging.info('Starting Owlette tray icon...')
+
+
 
 pid = None
 start_on_login = True
