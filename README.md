@@ -14,6 +14,7 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 8. [🤝 Contributing](#-contributing)
 9. [📜 License](#-license)
 
+<a id="features"></a>
 ## 🌟 Features
 
 - 🚀 Starts specified processes upon system startup
@@ -22,6 +23,7 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 - 📧 Sends email notifications using Gmail API
 - 🍽️ Tray icon for easy access to features and settings
 
+<a id="installation"></a>
 ## 🛠️ Installation
 
 ### 📋 Prerequisites
@@ -65,6 +67,7 @@ Install the required Python packages:
 5️⃣ Create OAuth client IDs and download the client secrets JSON file.
 6️⃣ Place the downloaded JSON file in the project directory and rename it to `client_secrets.json`.
 
+<a id="usage"></a>
 ## 🚀 Usage
 
 1️⃣ Run the `owlette_gui.py` script to configure the service:
@@ -105,6 +108,7 @@ Install the required Python packages:
     python owlette_tray.py
     
 
+<a id="ui-features"></a>
 ## 🎛️ UI Features
 
 ### System Tray Icon
@@ -115,15 +119,16 @@ Install the required Python packages:
 - **Start on Login**: Allows you to toggle whether the service starts upon system login.
 - **Exit**: Closes the Owlette service and any open Configuration windows.
 
-### 🛠️ Configuration
+<a id="configuration"></a>
+## 🛠️ Configuration
 
-#### 📑 Overview
+### 📑 Overview
 
 The Configuration UI is built using Python's Tkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
 
-#### 🧩 UI Components
+### 🧩 UI Components
 
-##### 🔄 Process Details
+#### 🔄 Process Details
 
 - **Name**: Text field to enter the name of the process.
 - **Exe Path**: Text field to specify the executable path. Includes a "Browse" button.
@@ -131,7 +136,7 @@ The Configuration UI is built using Python's Tkinter library and is designed to 
 - **Start Time Delay (s)**: Text field to specify a time delay before the process starts.
 - **Add Process**: Button to add a new process based on the details provided.
 
-##### 📋 Process List
+#### 📋 Process List
 
 - **Listbox**: Displays the list of configured processes.
 - **Up**: Button to move the selected process up in the list.
@@ -139,23 +144,24 @@ The Configuration UI is built using Python's Tkinter library and is designed to 
 - **Del**: Button to remove the selected process from the list.
 - **Save Changes**: Button to save any modifications to the selected process.
 
-##### 📧 Email Alerts
+#### 📧 Email Alerts
 
 - **Email From**: Text field to specify the sender's email address.
 - **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
 - **Connect to Gmail**: Button to initiate Gmail OAuth flow for sending emails.
 
-#### 🌟 Features
+### 🌟 Features
 
 - **Dark Theme**: The UI uses a dark color scheme for better visibility.
 - **Validation**: Includes validation for duplicate process names, invalid paths, and invalid email addresses.
 - **Keyboard Shortcuts**: The Return key can be used to update process and email configurations.
 
-#### ⚙️ Additional Functionalities
+### ⚙️ Additional Functionalities
 
 - **Google OAuth**: Includes a function to get Google OAuth tokens for Gmail.
 - **JSON Configuration**: Utilizes a JSON file (`config.json`) to load and save configurations.
 
+<a id="uninstallation"></a>
 ## 🗑️ Uninstallation 
 
 To uninstall the Owlette service and python dependencies, you may run the `uninstall.bat` file as an administrator. Alternatively, to just remove the service, you may run the following command as an administrator:
@@ -166,6 +172,7 @@ To uninstall the Owlette service and python dependencies, you may run the `unins
 
 This will remove the Owlette service from your system.
 
+<a id="troubleshooting"></a>
 ## 🐞 Troubleshooting
 
 ### 📝 Logs 
@@ -178,10 +185,12 @@ If you exit Owlette from the tray icon or stop the service and wish to restart i
     python owlette_service.py start
     
 
+<a id="contributing"></a>
 ## 🤝 Contributing
 
 Feel free to contribute by submitting pull requests.
 
+<a id="license"></a>
 ## 📜 License
 
 This project is licensed under the GNU General Public License v3.0.
