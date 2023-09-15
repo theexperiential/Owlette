@@ -2,6 +2,18 @@
 
 Owlette is a Python-based Windows process watcher service designed for maximum flexibility and editability. 🛠️ It manages and monitors various processes and system metrics, automatically restarting applications if they crash or are accidentally closed. 🔄 It also sends email notifications when certain events occur. 📧
 
+## 📚 Table of Contents
+
+1. [🌟 Features](#-features)
+2. [🛠️ Installation](#-installation)
+3. [🚀 Usage](#-usage)
+4. [🎛️ UI Features](#-ui-features)
+5. [🛠️ Configuration](#-configuration)
+6. [🗑️ Uninstallation](#-uninstallation)
+7. [🐞 Troubleshooting](#-troubleshooting)
+8. [🤝 Contributing](#-contributing)
+9. [📜 License](#-license)
+
 ## 🌟 Features
 
 - 🚀 Starts specified processes upon system startup
@@ -92,6 +104,57 @@ Install the required Python packages:
     
     python owlette_tray.py
     
+
+## 🎛️ UI Features
+
+### System Tray Icon
+
+#### Right-Click Menu
+
+- **Open Config**: Brings up the Owlette Configuration window where you can manage and monitor processes. 
+- **Start on Login**: Allows you to toggle whether the service starts upon system login.
+- **Exit**: Closes the Owlette service and any open Configuration windows.
+
+### 🛠️ Configuration
+
+#### 📑 Overview
+
+The Configuration UI is built using Python's Tkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
+
+#### 🧩 UI Components
+
+##### 🔄 Process Details
+
+- **Name**: Text field to enter the name of the process.
+- **Exe Path**: Text field to specify the executable path. Includes a "Browse" button.
+- **File Path / Cmd Line Args**: Text field for additional file paths or command-line arguments. Includes a "Browse" button.
+- **Start Time Delay (s)**: Text field to specify a time delay before the process starts.
+- **Add Process**: Button to add a new process based on the details provided.
+
+##### 📋 Process List
+
+- **Listbox**: Displays the list of configured processes.
+- **Up**: Button to move the selected process up in the list.
+- **Down**: Button to move the selected process down in the list.
+- **Del**: Button to remove the selected process from the list.
+- **Save Changes**: Button to save any modifications to the selected process.
+
+##### 📧 Email Alerts
+
+- **Email From**: Text field to specify the sender's email address.
+- **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
+- **Connect to Gmail**: Button to initiate Gmail OAuth flow for sending emails.
+
+#### 🌟 Features
+
+- **Dark Theme**: The UI uses a dark color scheme for better visibility.
+- **Validation**: Includes validation for duplicate process names, invalid paths, and invalid email addresses.
+- **Keyboard Shortcuts**: The Return key can be used to update process and email configurations.
+
+#### ⚙️ Additional Functionalities
+
+- **Google OAuth**: Includes a function to get Google OAuth tokens for Gmail.
+- **JSON Configuration**: Utilizes a JSON file (`config.json`) to load and save configurations.
 
 ## 🗑️ Uninstallation 
 
