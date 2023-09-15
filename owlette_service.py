@@ -81,7 +81,7 @@ def start_process_as_user(console_user_token, environment, startupInfo, process)
     logging.info(f"Starting {exe_path} {file_path}...")
 
     # Build the command line
-    command_line = f"{exe_path} {file_path}" if file_path else exe_path
+    command_line = f'"{exe_path}" "{file_path}"' if file_path else exe_path
     
     # Start the process
     process_info = win32process.CreateProcessAsUser(console_user_token,
@@ -155,8 +155,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if not is_script_running('owlette_tray.py'):
                 try:
                     logging.info("Starting Owlette Tray...")
+                    logging.info(console_user_token)
                     startupInfo.wShowWindow = win32con.SW_HIDE
-                    command_line = f"python {shared_utils.get_path('owlette_tray.py')}"
+                    command_line = f'python "{shared_utils.get_path("owlette_tray.py")}"'
                     _, _, pid, _ = win32process.CreateProcessAsUser(console_user_token,
                         None,  # Application Name
                         command_line,  # Command Line
@@ -168,8 +169,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         None,
                         startupInfo)
                     self.tray_icon_pid = pid  # Store the PID
+                    logging.info(command_line)
                 except Exception as e:
-                    logging.error(f"Couldn't start Owlette Tray. {e}")
+                    logging.error(f"Couldn't start Owlette Tray. {e}", exc_info=True)
 
             # Start each application from JSON config
             # Read the JSON configuration
