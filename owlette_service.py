@@ -60,7 +60,7 @@ def is_script_running(script_name):
 
 def start_python_script_as_user(script_name, args, console_user_token, environment, startupInfo):
     startupInfo.wShowWindow = win32con.SW_HIDE
-    command_line = f"python {shared_utils.get_path(script_name)} {args}"
+    command_line = f'python "{shared_utils.get_path(script_name)}" {args}'
     win32process.CreateProcessAsUser(console_user_token,
         None,  # Application Name
         command_line,  # Command Line
