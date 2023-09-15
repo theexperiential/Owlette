@@ -173,8 +173,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             # Start each application from JSON config
             # Read the JSON configuration
-            with open(shared_utils.get_path('config.json'), 'r') as f:
-                config = json.load(f)
+            config_path = shared_utils.get_path('config.json')
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+            except FileNotFoundError:
+                logging.info(f"{config_path} not found, creating default config.")
+                config = shared_utils.generateConfigFile()
+                with open(config_path, 'w') as f:
+                    json.dump(config, f)
 
             # Get the current time
             current_time = datetime.datetime.now()

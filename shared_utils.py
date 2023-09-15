@@ -9,3 +9,7 @@ def get_path(filename=None):
         path = os.path.join(path, filename)
 
     return path
+
+def generateConfigFile():
+    config = {'processes': [], 'email': {'from': '', 'to': []}}
+    return config

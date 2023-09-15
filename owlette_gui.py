@@ -19,7 +19,7 @@ def load_config(email_from_entry, emails_to_entry):
             return config
     except FileNotFoundError:
         logging.error(f"Failed to load config: {e}")
-        return {'processes': [], 'email': {'from': '', 'to': []}}
+        return {shared_utils.generateConfigFile()}
         
 
 def save_config(config):
