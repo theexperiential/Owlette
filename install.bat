@@ -5,6 +5,7 @@ setlocal
 where python >nul 2>nul
 if errorlevel 1 (
     echo Python is not installed. Please install Python 3.x and rerun this script.
+    pause
     goto :eof
 )
 
@@ -13,6 +14,7 @@ for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
 echo %PYTHON_VERSION% | findstr /R "Python 3\..*" >nul
 if errorlevel 1 (
     echo This script requires Python 3.x. Please install the correct version and rerun this script.
+    pause
     goto :eof
 )
 
