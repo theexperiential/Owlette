@@ -134,15 +134,18 @@ def update_email_config(event=None):
     email_from = email_from_entry.get()
     emails_to = emails_to_entry.get().split(',')
 
-    if not validate_email_address(email_from):
-        tk.messagebox.showwarning("Validation Error", "The 'Email From' address is not valid.")
-        logging.warning(f"Invalid 'Email From' address {email_from}.")
-        return
+    # Skip validation if email_from is empty.
+    if email_from:  
+        if not validate_email_address(email_from):
+            tk.messagebox.showwarning("Validation Error", "The 'Email From' address is not valid.")
+            logging.warning(f"Invalid 'Email From' address {email_from}.")
+            return
 
     for email in emails_to:
-        if not validate_email_address(email.strip()):
-            tk.messagebox.showwarning("Validation Error", f"The 'Email To' address {email} is not valid.")
-            return
+        if email.strip():  # Skip validation for empty items in the list
+            if not validate_email_address(email.strip()):
+                tk.messagebox.showwarning("Validation Error", f"The 'Email To' address {email} is not valid.")
+                return
 
     config['email']['from'] = email_from
     config['email']['to'] = [email.strip() for email in emails_to]
