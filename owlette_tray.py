@@ -9,6 +9,8 @@ import psutil
 import ctypes
 import sys
 import winreg
+import win32gui
+import win32con
 
 # Initialize logging
 log_file_path = shared_utils.get_path('_tray.log')
@@ -61,14 +63,33 @@ def open_config(icon, item):
             pid = process.pid
         except Exception as e:
             logging.error(f"Failed to open Owlette Configuration: {e}")
+    else:
+        try:
+            # Assuming the window title contains "Owlette"
+            hwnd = win32gui.FindWindow(None, "Owlette Configuration")
+            if hwnd:
+                # Restore window if minimized.
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                # Bring window to front.
+                win32gui.SetForegroundWindow(hwnd)
+        except Exception as e:
+            logging.error(f"Failed to bring Owlette Configuration to the front: {e}")
 
 # Function to exit
 def exit_action(icon, item):
     try:
+        # Try to close the configuration window if it's open
+        hwnd = win32gui.FindWindow(None, "Owlette Configuration")
+        if hwnd:
+            # Close the window
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+        
+        # Stop the service
         ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} stop", None, 0)
     except Exception as e:
         logging.error(f"Failed to stop service: {e}")
     icon.stop()
+
 
 # Function to change the registry setting for the Windows Service
 def on_select(icon, item):
