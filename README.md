@@ -9,7 +9,7 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 3. [🚀 Usage](#-usage)
 4. [🎛️ UI Features](#-ui-features)
 5. [🛠️ Configuration](#-configuration)
-6. [🗑️ Uninstallation](#-uninstallation)
+6. [🗑️ Uninstallation](#uninstallation)
 7. [🐞 Troubleshooting](#-troubleshooting)
 8. [🤝 Contributing](#-contributing)
 9. [📜 License](#-license)
