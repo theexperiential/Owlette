@@ -78,10 +78,12 @@ def start_process_as_user(console_user_token, environment, startupInfo, process)
 
     exe_path = process['exe_path']
     file_path = process.get('file_path', '')
+    # If file path, add double quotes, else leave as-is (cmd args)
+    file_path = f"{file_path}" if os.path.isfile(file_path) else file_path
     logging.info(f"Starting {exe_path} {file_path}...")
 
     # Build the command line
-    command_line = f'"{exe_path}" "{file_path}"' if file_path else exe_path
+    command_line = f'"{exe_path}" {file_path}' if file_path else exe_path
     
     # Start the process
     process_info = win32process.CreateProcessAsUser(console_user_token,
