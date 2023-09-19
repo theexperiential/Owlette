@@ -28,6 +28,11 @@ python -m pip install --upgrade pip
 cd %~dp0
 python -m pip install -r requirements.txt
 
+:: Create necessary folder structure
+mkdir "%~dp0logs" 2>nul
+mkdir "%~dp0config" 2>nul
+mkdir "%~dp0tmp" 2>nul
+
 :: Install and start the Windows service
 echo Installing and starting the Owlette Windows service...
 cd %~dp0
