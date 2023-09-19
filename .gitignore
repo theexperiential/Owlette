@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 client_secrets.json
 config.json
+app_states.json

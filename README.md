@@ -24,6 +24,8 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 - 📊 Monitors system metrics like CPU usage, memory usage, and disk space
 - 📧 Sends email notifications using Gmail API
 - 🍽️ Tray icon for easy access to features and settings
+- 🎚️ Autostart Process Toggle: Choose which processes to autostart.
+- 🔄 Relaunch Attempts: Configurable number of relaunch attempts before triggering a restart.
 
 <a id="installation"></a>
 ## 🛠️ Installation
@@ -126,7 +128,7 @@ Install the required Python packages:
 
 ### 📑 Overview
 
-The Configuration UI is built using Python's Tkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
+The Configuration UI is built using the customtkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
 
 ### 🧩 UI Components
 
@@ -136,6 +138,9 @@ The Configuration UI is built using Python's Tkinter library and is designed to 
 - **Exe Path**: Text field to specify the executable path. Includes a "Browse" button.
 - **File Path / Cmd Line Args**: Text field for additional file paths or command-line arguments. Includes a "Browse" button.
 - **Start Time Delay (s)**: Text field to specify a time delay before the process starts.
+- **Autostart Process**: Enable or disable autostart for each process.
+- **Relaunch Attempts til Restart**: Set the number of relaunch attempts before a system restart is triggered. Owlette will prompt you with a 30 second countdown window before starting, which you may either initiate, pause or cancel. If the countdown completes, the restart will continue.
+
 - **Add Process**: Button to add a new process based on the details provided.
 
 #### 📋 Process List
@@ -148,7 +153,6 @@ The Configuration UI is built using Python's Tkinter library and is designed to 
 
 #### 📧 Email Alerts
 
-- **Email From**: Text field to specify the sender's email address.
 - **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
 - **Connect to Gmail**: Button to initiate Gmail OAuth flow for sending emails.
 

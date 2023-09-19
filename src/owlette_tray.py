@@ -13,7 +13,7 @@ import win32gui
 import win32con
 
 # Initialize logging
-log_file_path = shared_utils.get_path('_tray.log')
+log_file_path = shared_utils.get_path('../logs/tray.log')
 # Clear the log file after system restart
 with open(log_file_path, 'w'):
     pass

@@ -23,6 +23,7 @@ net stop OwletteService
 :: Uninstall the Owlette Windows service
 echo Uninstalling the Owlette Windows service...
 cd %~dp0
+cd src
 python owlette_service.py remove
 
 :: Optional: Ask the user if they want to remove Python dependencies

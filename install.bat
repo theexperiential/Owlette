@@ -31,6 +31,7 @@ python -m pip install -r requirements.txt
 :: Install and start the Windows service
 echo Installing and starting the Owlette Windows service...
 cd %~dp0
+cd src
 python owlette_service.py install
 
 :: Set the service to start automatically

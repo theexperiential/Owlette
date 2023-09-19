@@ -14,12 +14,16 @@ import base64
 import platform
 import argparse
 
+# Load logging
+logging.basicConfig(filename=shared_utils.get_path('../logs/email.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 # Take an input of the app name that was restarted
 parser = argparse.ArgumentParser(description='Send email notifications.')
 parser.add_argument('--process_name', type=str, help='Name of the process to notify about')
-
+parser.add_argument('--reason', type=str, help='Reason for the email notification')
 args = parser.parse_args()
 process_name = args.process_name
+reason = args.reason
 
 def get_system_info():
     # Get system information
@@ -45,17 +49,15 @@ def get_system_info():
         'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
     }
 
-def send_email(app_name):
-    logging.basicConfig(filename=shared_utils.get_path('_email.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
+def send_email(app_name, reason):
     # Load config
-    with open(shared_utils.get_path('config.json'), 'r') as f:
+    with open(shared_utils.get_path('../config/config.json'), 'r') as f:
         config = json.load(f)
 
     # Get refresh token
     refresh_token = keyring.get_password("Owlette", "GmailRefreshToken")
 
-    with open(shared_utils.get_path('client_secrets.json'), 'r') as f:
+    with open(shared_utils.get_path('../config/client_secrets.json'), 'r') as f:
         client_info = json.load(f)
         client_id = client_info['installed']['client_id']
         client_secret = client_info['installed']['client_secret']
@@ -79,9 +81,19 @@ def send_email(app_name):
 
     # Email subject and body
     hostname = socket.gethostname()
-    subject = f"Owlette on {hostname} - {app_name} restarted"
+    # Modify the email subject and body based on the reason
+    if reason == "restarted":
+        subject = f"Owlette on {hostname} - {app_name} restarted"
+        body_intro = f"Owlette detected that the app '{app_name}' was restarted on {hostname} at {datetime.now()}."
+    elif reason == "frozen":
+        subject = f"Owlette on {hostname} - {app_name} is frozen"
+        body_intro = f"Owlette detected that the app '{app_name}' is frozen on {hostname} at {datetime.now()}."
+    else:
+        subject = f"Owlette on {hostname} - {app_name} status update"
+        body_intro = f"Owlette detected a status update for the app '{app_name}' on {hostname} at {datetime.now()}. \nDetails: {reason}"
+
     body = f"""
-        Owlette detected that the app '{app_name}' was restarted on {hostname} at {datetime.now()}.
+        {body_intro}
         System Info:
         - CPU Model: {system_info['cpu_model']}
         - CPU Usage: {system_info['cpu_usage']}%
@@ -99,12 +111,13 @@ def send_email(app_name):
     # Loop through each email in the 'to' list
     for to_email in config['email']['to']:
         msg['To'] = to_email
-        msg['From'] = config['email']['from']
         raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
         message = {'raw': raw_message}
         message = service.users().messages().send(userId='me', body=message).execute()
 
-        logging.info(f"Sent email from {msg['From']} to {[msg['To']]} about {app_name}")
+        logging.info(f"Sent email to {[msg['To']]} about {app_name}")
 
-# for debugging
-send_email(process_name)
+try:
+    send_email(process_name, reason)
+except Exception as e:
+    logging.error(e)
