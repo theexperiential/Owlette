@@ -62,6 +62,8 @@ Install the required Python packages:
     pip install -r requirements.txt
     
 
+Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
+
 ### ☁️ Google Cloud Platform (GCP) Configuration
 
 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
