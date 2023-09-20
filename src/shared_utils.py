@@ -35,7 +35,7 @@ def generate_config_file():
     return config
 
 # Specific function to read config
-def read_config(key=None, process_name=None):
+def read_config(key=None, process_list_id=None):
     config_path = get_path('../config/config.json')
     config = read_json_from_file(config_path)
     
@@ -44,9 +44,23 @@ def read_config(key=None, process_name=None):
         with open(config_path, 'w') as f:
             json.dump(config, f)
     
-    if key and process_name:
+    if key and process_list_id:
         for process in config['processes']:
-            if process['name'] == process_name:
+            if process['id'] == process_list_id:
                 return process.get(key, None)
     
     return config
+
+def fetch_process_by_id(id, data):
+        return next((process for process in data['processes'] if process['id'] == id), None)
+
+def fetch_process_name_by_id(id, data):
+    process = next((process for process in data['processes'] if process['id'] == id), None)
+    return process['name'] if process else None   
+
+def fetch_process_id_by_name(name, data):
+    process = next((process for process in data['processes'] if process['name'] == name), None)
+    return process['id'] if process else None
+
+def get_process_index(selected_process_id):
+    return next((i for i, p in enumerate(read_config()['processes']) if p['id'] == selected_process_id), None)

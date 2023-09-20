@@ -24,22 +24,24 @@ an Administrator Command Prompt & run:
 python owlette_service.py install | start | stop | remove
 """
 
-# Dictionary to keep track of restart attempts for each process
-relaunch_attempts = {}
+# Constants
+LOG_FILE_PATH = shared_utils.get_path('../logs/service.log')
+RESULT_FILE_PATH = shared_utils.get_path('../tmp/app_states.json')
+MAX_RELAUNCH_ATTEMPTS = 3
+SLEEP_INTERVAL = 10
+TIME_TO_INIT = 60
 
 # Initialize logging
-log_file_path = shared_utils.get_path('../logs/service.log')
-# Clear the log file after system restart
-with open(log_file_path, 'w'):
-    pass
+def initialize_logging():
+    with open(LOG_FILE_PATH, 'w'):
+        pass
+    logging.basicConfig(filename=LOG_FILE_PATH, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.info("Starting Owlette Service")
 
-# Initialize the results file with an empty JSON object after system restart
-result_file_path = shared_utils.get_path('../tmp/app_states.json')
-with open(result_file_path, 'w') as f:
-    json.dump({}, f)
-
-logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.info("Starting Owlette Service")
+# Initialize results file
+def initialize_results_file():
+    with open(RESULT_FILE_PATH, 'w') as f:
+        json.dump({}, f)
 
 # Send email notification
 def send_email_notification(process_name, reason, console_user_token, environment, startupInfo):
@@ -74,13 +76,6 @@ def is_app_not_responding(pid):
     for title in windows:
         if "Not Responding" in title:
             #logging.info(title)
-            return True
-    return False
-
-# Check if process is running
-def is_process_running(process_name):
-    for process in psutil.process_iter(['name']):
-        if process.info['name'] == process_name:
             return True
     return False
 
@@ -122,7 +117,6 @@ def start_python_script_as_user(script_name, args, console_user_token, environme
         None,
         startupInfo)
 
-
 # Start a Windows process as a user
 def start_process_as_user(console_user_token, environment, startupInfo, process):
     # show window!
@@ -156,9 +150,9 @@ def start_process_as_user(console_user_token, environment, startupInfo, process)
     current_timestamp = int(time.time())
 
     # Read existing results from the output file
-    if os.path.exists(result_file_path):
+    if os.path.exists(RESULT_FILE_PATH):
         try:
-            with open(result_file_path, 'r') as f:
+            with open(RESULT_FILE_PATH, 'r') as f:
                 results = json.load(f)
         except json.JSONDecodeError:
             logging.error("Failed to decode JSON from result file.")
@@ -179,7 +173,7 @@ def start_process_as_user(console_user_token, environment, startupInfo, process)
     #logging.info(results)
 
     # Write the updated results back to the output file
-    with open(result_file_path, 'w') as f:
+    with open(RESULT_FILE_PATH, 'w') as f:
         json.dump(results, f)
 
     return pid
@@ -192,15 +186,16 @@ def is_pid_running(pid):
     except psutil.NoSuchProcess:
         return False
 
-# Check if process has been restarted more than 3 times already
+# Check if process has been restarted more than n times already
 def reached_max_relaunch_attempts(process_name, console_user_token, environment, startupInfo):
     try:
-        attempts = relaunch_attempts.get(process_name, 0)
+        attempts = relaunch_attempts.get(process_name, MAX_RELAUNCH_ATTEMPTS)
         logging.info(f'Process relaunch attempt: {attempts}')
 
-        relaunches_to_attempt = int(shared_utils.read_config(key='relaunch_attempts', process_name=process_name))
+        process_list_id = shared_utils.fetch_process_id_by_name(process_name, shared_utils.read_config())
+        relaunches_to_attempt = int(shared_utils.read_config(key='relaunch_attempts', process_list_id=process_list_id))
 
-        if attempts > (relaunches_to_attempt or 3) and relaunches_to_attempt != 0:
+        if attempts > (relaunches_to_attempt or MAX_RELAUNCH_ATTEMPTS) and relaunches_to_attempt != 0:
             if not is_script_running('prompt_restart.py'):
                 success = start_python_script_as_user(
                     shared_utils.get_path('prompt_restart.py'),
@@ -228,7 +223,6 @@ def reached_max_relaunch_attempts(process_name, console_user_token, environment,
 
     except Exception as e:
         logging.info(e)
-
 
 # Kill and restart a process
 def kill_and_restart_process(pid, process, console_user_token, environment, startupInfo):
@@ -270,20 +264,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
         self.tray_icon_pid = None
+        self.relaunch_attempts = {} # Dictionary to keep track of restart attempts for each process
 
+    # On service stop
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.is_alive = False
-        # Terminate the tray icon process if it exists
+        self.terminate_tray_icon()
+        win32event.SetEvent(self.hWaitStop)
+
+    # Terminate the tray icon process if it exists
+    def terminate_tray_icon(self):
         if self.tray_icon_pid:
             try:
                 psutil.Process(self.tray_icon_pid).terminate()
-            except psutil.NoSuchProcess:
-                logging.error(f"Couldn't find process with PID: {self.tray_icon_pid}")
-            except Exception as e:
+            except (psutil.NoSuchProcess, Exception) as e:
                 logging.error(f"Couldn't terminate tray icon: {e}")
-        win32event.SetEvent(self.hWaitStop)
 
+    # While service runs
     def SvcDoRun(self):
         servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,
               servicemanager.PYS_SERVICE_STARTED,
@@ -291,7 +289,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.main()
 
     def main(self):
-        # Is this the first start?
+        initialize_logging()
+        initialize_results_file()
         first_start = True
 
         # Process startup info
@@ -313,24 +312,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         while self.is_alive:
             # Start the tray icon script as a subprocess
             if not is_script_running('owlette_tray.py'):
-                try:
-                    logging.info("Starting Owlette Tray...")
-                    startupInfo.wShowWindow = win32con.SW_HIDE
-                    command_line = f'python "{shared_utils.get_path("owlette_tray.py")}"'
-                    _, _, pid, _ = win32process.CreateProcessAsUser(console_user_token,
-                        None,  # Application Name
-                        command_line,  # Command Line
-                        None,
-                        None,
-                        0,
-                        win32con.NORMAL_PRIORITY_CLASS,
-                        environment,  # To open in user's environment
-                        None,
-                        startupInfo)
-                    self.tray_icon_pid = pid  # Store the PID
-                    #logging.info(command_line)
-                except Exception as e:
-                    logging.error(f"Couldn't start Owlette Tray. {e}", exc_info=True)
+                self.start_owlette_tray(console_user_token, environment, startupInfo)
 
             # Read the JSON configuration
             config = shared_utils.read_config()
@@ -339,90 +321,125 @@ class OwletteService(win32serviceutil.ServiceFramework):
             current_time = datetime.datetime.now()
 
             # Load in latest results from the output file
-            content = shared_utils.read_json_from_file(result_file_path)
+            content = shared_utils.read_json_from_file(RESULT_FILE_PATH)
             if content:
                 results = content
 
             # Loop over all processes in config json
             for process in config['processes']:
-                # Read the autostart_process value from the JSON config
-                autostart_process = process.get('autostart_process', False)  # Default to False if not found
+                action = self.handle_process(
+                    process,
+                    console_user_token,
+                    environment,
+                    startupInfo,
+                    current_time,
+                    last_started,
+                    results,
+                    first_start)
+                if action == 'continue':
+                    continue
 
-                # Only proceed if autostart_process is True
-                if autostart_process:
-                    process_name = process['name']
-                    delay = float(process.get('time_delay', 0))
-
-                    last_info = last_started.get(process_name, {})
-                    last_time = last_info.get('time')
-                    last_pid = last_info.get('pid')
-
-                    if last_pid:
-                        if is_pid_running(last_pid):
-                            #logging.info(f'Process is running: {last_pid}')
-
-                            # Run owlette_scout.py using start_python_script_as_user
-                            start_python_script_as_user(
-                                'owlette_scout.py', 
-                                str(last_pid), 
-                                console_user_token, 
-                                environment, 
-                                startupInfo,
-                            )
-
-                            # Read the result file and check if the process is not responding
-                            try:
-                                is_not_responding = results.get(str(last_pid), {}).get('isNotResponding', False)
-                            except json.JSONDecodeError:
-                                logging.error("Failed to decode JSON from result file.")
-                                is_not_responding = False
-                            except Exception as e:
-                                logging.error(f"An error occurred while reading the result file: {e}")
-                                is_not_responding = False
-                            
-                            # If process is not responding
-                            if is_not_responding:
-                                logging.error(f"Process {process_name} (PID: {last_pid}) is not responding.")
-                                # Send email notification
-                                send_email_notification(process_name, 'frozen', console_user_token, environment, startupInfo)
-                                # Attempt to kill and restart process
-                                new_pid = kill_and_restart_process(last_pid, process, console_user_token, environment, startupInfo)
-                                if new_pid:
-                                    last_started[process_name] = {'time': current_time, 'pid': new_pid}
-                            
-                            continue  # Skip this iteration if the process is running
-
-                    # Fetch the time to init
-                    time_to_init = float(shared_utils.read_config(key='time_to_init', process_name=process_name))
-                    if last_time is None or (last_time is not None and (current_time - last_time).total_seconds() >= (time_to_init or 60)):
-                        # Delay starting of the app (if applicable)
-                        time.sleep(delay)
-
-                        # If it's not been tried 3 times already, try to start the process
-                        if not reached_max_relaunch_attempts(process_name, console_user_token, environment, startupInfo):
-                            # Attempt to start the process
-                            try:
-                                # Only if we're not already on a restart prompt
-                                if not is_script_running('prompt_restart.py'):
-                                    pid = start_process_as_user(console_user_token, environment, startupInfo, process)
-                            except Exception as e:
-                                logging.error(f"Could not start process {process_name}.\n {e}")
-                            # Update the last started time and PID
-                            last_started[process_name] = {'time': current_time, 'pid': pid}
-                            logging.info(f"PID {pid} started.")
-
-                            #logging.info(f'{last_started}')
-
-                            if not first_start:
-                                # Send email notification
-                                send_email_notification(process_name, 'restarted', console_user_token, environment, startupInfo)
-
-            # Now that all apps have started for the session, start monitoring
-            # And send an email if they get restarted
             first_start = False
 
             # Sleep for 10 seconds
-            time.sleep(10)
+            time.sleep(SLEEP_INTERVAL)
+
+    def start_owlette_tray(self, console_user_token, environment, startupInfo):
+        try:
+            logging.info("Starting Owlette Tray...")
+            startupInfo.wShowWindow = win32con.SW_HIDE
+            command_line = f'python "{shared_utils.get_path("owlette_tray.py")}"'
+            _, _, pid, _ = win32process.CreateProcessAsUser(console_user_token,
+                None,
+                command_line,
+                None,
+                None,
+                0,
+                win32con.NORMAL_PRIORITY_CLASS,
+                environment,
+                None,
+                startupInfo)
+            self.tray_icon_pid = pid
+        except Exception as e:
+            logging.error(f"Couldn't start Owlette Tray. {e}", exc_info=True)
+
+    def handle_process(self, process, console_user_token, environment, startupInfo, current_time, last_started, results, first_start):
+        # Read the autostart_process value from the JSON config
+        autostart_process = process.get('autostart_process', False)  # Default to False if not found
+
+        # Only proceed if autostart process is True
+        if autostart_process:
+            process_name = process['name']
+            process_list_id = process['id']
+            delay = float(process.get('time_delay', 0))
+
+            last_info = last_started.get(process_list_id, {})
+            last_time = last_info.get('time')
+            last_pid = last_info.get('pid')
+
+            if last_pid:
+                if is_pid_running(last_pid):
+                    #logging.info(f'Process is running: {last_pid}')
+
+                    # Run owlette_scout.py to check if process is responsive
+                    start_python_script_as_user(
+                        'owlette_scout.py', 
+                        str(last_pid), 
+                        console_user_token, 
+                        environment, 
+                        startupInfo,
+                    )
+
+                    # Read the result file and check if the process is not responding
+                    try:
+                        is_not_responding = results.get(str(last_pid), {}).get('isNotResponding', False)
+                    except json.JSONDecodeError:
+                        logging.error("Failed to decode JSON from result file.")
+                        is_not_responding = False
+                    except Exception as e:
+                        logging.error(f"An error occurred while reading the result file: {e}")
+                        is_not_responding = False
+                    
+                    # If process is not responding
+                    if is_not_responding:
+                        logging.error(f"Process {process_name} (PID: {last_pid}) is not responding.")
+                        # Send email notification
+                        send_email_notification(process_name, 'frozen', console_user_token, environment, startupInfo)
+                        # Attempt to kill and restart process
+                        new_pid = kill_and_restart_process(last_pid, process, console_user_token, environment, startupInfo)
+                        if new_pid:
+                            last_started[process_list_id] = {'time': current_time, 'pid': new_pid}
+                    
+                    return 'continue'  # Skip the remainder of this iteration if the process is running & responsive
+
+            # Fetch the time to init (how long to give the app to initialize itself / start up)
+            time_to_init = float(shared_utils.read_config(key='time_to_init', process_list_id=process_list_id))
+
+            # Give the app time to launch (if it's launching for the first time)
+            if last_time is None or (last_time is not None and (current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
+                # Delay starting of the app (if applicable)
+                time.sleep(delay)
+
+                # If it's not been tried n times already, try to start the process
+                if not reached_max_relaunch_attempts(process_name, console_user_token, environment, startupInfo):
+                    # Attempt to start the process
+                    try:
+                        # Only if we're not already on a restart prompt
+                        if not is_script_running('prompt_restart.py'):
+                            pid = start_process_as_user(console_user_token, environment, startupInfo, process)
+                    except Exception as e:
+                        logging.error(f"Could not start process {process_name}.\n {e}")
+                    # Update the last started time and PID
+                    last_started[process_list_id] = {'time': current_time, 'pid': pid}
+                    logging.info(f"PID {pid} started.")
+
+                    #logging.info(f'{last_started}')
+
+                    if not first_start:
+                        # Send email notification
+                        send_email_notification(process_name, 'restarted', console_user_token, environment, startupInfo)
+
+            return 'proceed'
 
 if __name__ == '__main__':
     win32serviceutil.HandleCommandLine(OwletteService)

@@ -11,9 +11,10 @@ from email_validator import validate_email, EmailNotValidError
 from google_auth_oauthlib.flow import InstalledAppFlow
 import keyring
 import logging
+import uuid
 
 class OwletteConfigApp:
-    VERSION = '0.2.0'
+    VERSION = '0.2.1'
     FRAME_COLOR = '#28292b'
     BUTTON_COLOR = '#374448'
     BUTTON_HOVER_COLOR = '#27424a'
@@ -182,7 +183,12 @@ class OwletteConfigApp:
         except FileNotFoundError:
             logging.error(f"Failed to load config: {e}")
             return {shared_utils.generateConfigFile()}
-            
+
+        # Backwards compatibility
+        for process in self.config.get('processes', []):
+            if 'id' not in process:
+                process['id'] = str(uuid.uuid4())
+                
     def save_config(self, config):
         config['email']['to'] = [email.strip() for email in self.emails_to_entry.get().split(',')]
         with open(shared_utils.get_path('../config/config.json'), 'w') as f:
@@ -191,22 +197,12 @@ class OwletteConfigApp:
     # PROCESS HANDLING
     def toggle_start_process(self):
         if self.selected_process:
-            index = self.get_process_index(self.selected_process)
+            index = shared_utils.get_process_index(self.selected_process)
             current_state = self.config['processes'][index].get('autostart_process', False)
             self.config['processes'][index]['autostart_process'] = not current_state
             self.save_config(self.config)
         else:
             tk.messagebox.showwarning("No Process Selected", "Please select a process to toggle autostart.")
-
-    def fetch_process_by_name(self, name, data):
-        # Use list comprehension to filter processes by name
-        filtered_processes = [process for process in data['processes'] if process['name'] == name]
-        
-        # Use `next()` to get the first matching process or return None if not found
-        return next((process for process in filtered_processes), None)
-
-    def get_process_index(self, selected_process):
-        return next((i for i, p in enumerate(self.config['processes']) if p['name'] == selected_process), None)
 
     def update_selected_process(self,event=None):
         # Field Validation
@@ -266,7 +262,7 @@ class OwletteConfigApp:
                 tk.messagebox.showwarning("Validation Error", "Name and Exe Path are required fields.")
                 return
 
-            index = self.get_process_index(self.selected_process)
+            index = shared_utils.get_process_index(self.selected_process)
 
             self.config['processes'][index]['name'] = name
             self.config['processes'][index]['exe_path'] = exe_path
@@ -284,6 +280,9 @@ class OwletteConfigApp:
         self.update_email_config()  # Always update email config
 
     def add_process(self):
+        # Generate a unique ID for the new process
+        unique_id = str(uuid.uuid4())
+
         name = self.name_entry.get()
         exe_path = self.exe_path_entry.get()
         file_path = self.file_path_entry.get()
@@ -291,11 +290,6 @@ class OwletteConfigApp:
         time_to_init = self.time_to_init_entry.get() if self.time_to_init_entry.get() else 60 # Default to 60 if empty
         relaunch_attempts = self.relaunch_attempts_entry.get() if self.relaunch_attempts_entry.get() else 3 # Default to 3 if empty
         autostart_process = True if self.autostart_process_toggle.get() == 'on' else False
-
-        # Check for duplicate names
-        if any(process['name'] == name for process in self.config['processes']):
-            tk.messagebox.showwarning("Validation Error", "A process with this name already exists.")
-            return
         
         if not name or not exe_path:
             tk.messagebox.showwarning("Validation Error", "Name and Exe Path are required fields.")
@@ -310,6 +304,7 @@ class OwletteConfigApp:
             return
 
         new_process = {
+            'id': unique_id,
             'name': name,
             'exe_path': exe_path,
             'file_path': file_path,
@@ -345,11 +340,12 @@ class OwletteConfigApp:
 
     def remove_process(self):
         if self.selected_process:
-            process = self.fetch_process_by_name(self.selected_process, self.config)
-            if process:   
-                confirm = tk.messagebox.askyesno("Confirmation", f"Are you sure you want to remove {self.selected_process}?")
+            process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+            if process:
+                process_name = shared_utils.fetch_process_name_by_id(self.selected_process, self.config)
+                confirm = tk.messagebox.askyesno("Confirmation", f"Are you sure you want to remove {process_name}?")
                 if confirm:
-                    index = self.get_process_index(self.selected_process)
+                    index = shared_utils.get_process_index(self.selected_process)
                     if index is not None:
                         del self.config['processes'][index]
                         self.save_config(self.config)
@@ -359,7 +355,7 @@ class OwletteConfigApp:
 
     def move_up(self):
         if self.selected_process:
-            index = self.get_process_index(self.selected_process)
+            index = shared_utils.get_process_index(self.selected_process)
             if index > 0:
                 self.config['processes'][index], self.config['processes'][index-1] = self.config['processes'][index-1], self.config['processes'][index]
                 self.save_config(self.config)
@@ -368,22 +364,23 @@ class OwletteConfigApp:
 
     def move_down(self):
         if self.selected_process:
-            index = self.get_process_index(self.selected_process)
+            index = shared_utils.get_process_index(self.selected_process)
             if index < len(self.config['processes']) - 1:
                 self.config['processes'][index], self.config['processes'][index+1] = self.config['processes'][index+1], self.config['processes'][index]
                 self.save_config(self.config)
                 self.update_process_list()
                 self.process_list.activate(index+1)
 
-    def on_select(self, process):
-        self.selected_process = process
-        process = self.fetch_process_by_name(process, self.config)
+    def on_select(self, process_name):
+        process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
+        self.selected_process = process_id
+        process = shared_utils.fetch_process_by_id(process_id, self.config)
         self.name_entry.delete(0, tk.END)
-        self.name_entry.insert(0, process['name'])
+        self.name_entry.insert(0, process.get('name', ''))
         self.exe_path_entry.delete(0, tk.END)
-        self.exe_path_entry.insert(0, process['exe_path'])
+        self.exe_path_entry.insert(0, process.get('exe_path', ''))
         self.file_path_entry.delete(0, tk.END)
-        self.file_path_entry.insert(0, process['file_path'])
+        self.file_path_entry.insert(0, process.get('file_path', ''))
         self.time_delay_entry.delete(0, tk.END)
         self.time_delay_entry.insert(0, process.get('time_delay', ''))
         self.time_to_init_entry.delete(0, tk.END)

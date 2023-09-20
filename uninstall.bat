@@ -20,6 +20,10 @@ if errorlevel 1 (
 echo Stopping the Owlette Windows service if it's running...
 net stop OwletteService
 
+:: Close the Owlette Configuration window if it's open
+echo Closing the Owlette Configuration window if it's running...
+taskkill /F /FI "WINDOWTITLE eq Owlette Configuration"
+
 :: Uninstall the Owlette Windows service
 echo Uninstalling the Owlette Windows service...
 cd %~dp0
