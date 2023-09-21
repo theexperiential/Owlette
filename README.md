@@ -24,8 +24,8 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 - 📊 Monitors system metrics like CPU usage, memory usage, and disk space
 - 📧 Sends email notifications using Gmail API
 - 🍽️ Tray icon for easy access to features and settings
-- 🎚️ Autostart Process Toggle: Choose which processes to autostart
-- 🔄 Relaunch Attempts: Configurable number of relaunch attempts before triggering a restart
+- 🎚️ Autostart Process Toggle: Conveniently disable a process from autostarting during development
+- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a system restart
 
 <a id="installation"></a>
 ## 🛠️ Installation
@@ -142,16 +142,15 @@ The Configuration UI is built using the customtkinter library and is designed to
 - **Start Time Delay (s)**: Text field to specify a time delay before the process starts.
 - **Autostart Process**: Enable or disable autostart for each process.
 - **Relaunch Attempts til Restart**: Set the number of relaunch attempts before a system restart is triggered. Owlette will prompt you with a 30 second countdown window before starting, which you may either initiate, pause or cancel. If the countdown completes, the restart will continue.
+- **Add Process**: Adds a new process to the Process Startup List based on the details provided.
 
-- **Add Process**: Button to add a new process based on the details provided.
+#### 📋 Process Startup List
 
-#### 📋 Process List
-
-- **Listbox**: Displays the list of configured processes.
-- **Up**: Button to move the selected process up in the list.
-- **Down**: Button to move the selected process down in the list.
-- **Del**: Button to remove the selected process from the list.
-- **Save Changes**: Button to save any modifications to the selected process.
+- **Listbox**: Displays the list of configured processes. The list is ordered, so your processes will be started in the order you define.
+- **Up**: Move the selected process up in the list (start it before other processes).
+- **Down**: Move the selected process down in the list (start it after other processes).
+- **Del**: Remove the selected process from the list.
+- **Save Changes**: Save any modifications to the selected process and Alerts section.
 
 #### 📧 Email Alerts
 
