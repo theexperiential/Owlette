@@ -156,7 +156,7 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 ### 📑 Overview
 
-The Configuration UI is built using the customtkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
+The Configuration UI is built using the customtkinter library and is designed to manage processes and notifications. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
 
 ### 🧩 UI Components
 

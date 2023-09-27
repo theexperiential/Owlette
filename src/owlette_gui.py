@@ -62,8 +62,8 @@ class OwletteConfigApp:
         self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR)
         self.process_list_frame.grid(row=0, column=4, sticky='news', rowspan=7, columnspan=4, padx=(0, 10), pady=(10,0))
 
-        self.alerts_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR)
-        self.alerts_frame.grid(row=7, column=0, sticky='news', rowspan=3, columnspan=4, padx=(10,10), pady=(10,0))
+        self.notifications_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR)
+        self.notifications_frame.grid(row=7, column=0, sticky='news', rowspan=3, columnspan=4, padx=(10,10), pady=(10,0))
 
         # Create a toggle switch for process
         self.autolaunch_process_toggle = ctk.CTkSwitch(master=self.master, text="Autolaunch Process", command=self.toggle_launch_process, onvalue="on", offvalue="off")
@@ -163,9 +163,9 @@ class OwletteConfigApp:
         self.slack_toggle.configure(bg_color=shared_utils.FRAME_COLOR)
         self.slack_toggle.grid(row=9, column=2, sticky='e', padx=(5), pady=(10, 10))
 
-        # Create a label for the alerts section
-        self.alerts_label = ctk.CTkLabel(root, text="ALERTS", fg_color=shared_utils.FRAME_COLOR)
-        self.alerts_label.grid(row=7, column=0, sticky='w', padx=(20, 10), pady=(20, 10))
+        # Create a label for the notifications section
+        self.notifications_label = ctk.CTkLabel(root, text="NOTIFICATIONS", fg_color=shared_utils.FRAME_COLOR)
+        self.notifications_label.grid(row=7, column=0, sticky='w', padx=(20, 10), pady=(20, 10))
 
         # Create Labels and Entry widgets for email configuration
         self.emails_to_label = ctk.CTkLabel(self.master, text="Emails To:", fg_color=shared_utils.FRAME_COLOR)
