@@ -5,9 +5,10 @@ from logging.handlers import RotatingFileHandler
 import keyring
 import requests
 import ctypes
+import socket
 
 # GLOBAL VARS
-APP_VERSION = '0.3.0b'
+APP_VERSION = '0.3.1b'
 CONFIG_VERSION = '1.1.0'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
@@ -49,6 +50,9 @@ def initialize_logging(log_file_name, level=logging.INFO):
     logging.info(f"Starting {log_file_name}...")
 
 # OS
+
+def get_hostname():
+    return socket.gethostname()
 
 def get_path(filename=None):
     # Get the directory of the currently executing script

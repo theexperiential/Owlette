@@ -64,7 +64,7 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 2. Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
 
-### ☁️ Google Cloud Platform (GCP) Configuration for Gmail
+### ☁️ Gmail API Configuration (Google Cloud Platform)
 
 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
 2️⃣ Create a new project.
@@ -75,12 +75,12 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 ### 🤖 Slack API Configuration
 
-#### 🛠️ Step 1: Create Your Slack App 
+#### 🛠️ Part 1: Create Your Slack App 
 
 1. Head over to the [Slack API website](https://api.slack.com/).
 2. Click on "Create an App" and fill in your App Name and Development Slack Workspace.
 
-#### 🛡️ Step 2: OAuth & Permissions 
+#### 🛡️ Part 2: OAuth & Permissions 
 
 1. Once your app is up and running, navigate to the "OAuth & Permissions" page.
 2. Under "Bot Token Scopes," add the following scopes:
@@ -88,16 +88,17 @@ Run the `install.bat` file as an administrator to automatically install the requ
     - `channels:manage`
     - `chat:write`
 
-#### 🚀 Step 3: Install the App 
+#### 🚀 Part 3: Install the App 
 
 1. Scroll back to the top of the "OAuth & Permissions" page.
 2. Hit that "Install App to Workspace" button.
 3. Review the permissions and click "Allow."
 
-#### Step 4: Enable Slack & Enter OAuth Token
+#### Part 4: Enable Slack & Enter OAuth Token
 
 1. Enable the Slack toggle in Owlette Configuration.
 2. Enter your Bot User OAuth Token (from OAuth & Permissions page) and click on "Submit".
+3. Check your Slack workspace in the `#owlette` channel for a message from Owlette!
 
 <a id="usage"></a>
 ## 🚀 Usage
@@ -211,7 +212,7 @@ This will remove the Owlette service from your system.
 ## 🐞 Troubleshooting
 
 ### 📝 Logs 
-Logs are stored in `_service.log` for the service, `_email.log` for the email notifications, and `_tray.log` for the tray icon. Check these logs for debugging information.
+Logs are stored in the `logs` folder, per script. `service.log` for the service, `email.log` for the email sender, `tray.log` for the tray icon, etc. Check these logs for debugging information.
 
 ### 🔄 Restarting the service
 If you exit Owlette from the tray icon or stop the service and wish to restart it, you can go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service", or run the following command as an administrator:

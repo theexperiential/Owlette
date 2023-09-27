@@ -1,7 +1,6 @@
 import shared_utils
 import logging
 import json
-import socket
 import psutil
 import GPUtil
 import keyring
@@ -77,7 +76,7 @@ def send_email(app_name, reason):
     system_info = get_system_info()
 
     # Email subject and body
-    hostname = socket.gethostname()
+    hostname = shared_utils.get_hostname()
     # Modify the email subject and body based on the reason
     if reason == "restarted":
         subject = f"Owlette on {hostname} - {app_name} restarted"

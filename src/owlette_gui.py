@@ -153,12 +153,12 @@ class OwletteConfigApp:
         self.save_button = ctk.CTkButton(self.master, text="Save Changes", command=self.update_selected_process, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
         self.save_button.grid(row=9, column=5, columnspan=2, sticky='ew', padx=(10, 20), pady=(10, 10))
 
-        # Create Connect to Gmail button
+        # Create Gmail toggle
         self.gmail_toggle = ctk.CTkSwitch(master=self.master, text="Gmail", command=self.toggle_gmail, onvalue="on", offvalue="off")
         self.gmail_toggle.configure(bg_color=shared_utils.FRAME_COLOR)
         self.gmail_toggle.grid(row=9, column=1, sticky='w', padx=(5), pady=(10, 10))
 
-        # Create Connect to Slack button
+        # Create Slack toggle
         self.slack_toggle = ctk.CTkSwitch(master=self.master, text="Slack", command=self.toggle_slack, onvalue="on", offvalue="off")
         self.slack_toggle.configure(bg_color=shared_utils.FRAME_COLOR)
         self.slack_toggle.grid(row=9, column=2, sticky='e', padx=(5), pady=(10, 10))
@@ -413,12 +413,17 @@ class OwletteConfigApp:
     # GMAIL
 
     def toggle_gmail(self):
-        if self.gmail_toggle.get() == 'on':
-            self.start_google_auth_thread()
-            self.config['gmail']['enabled'] = True
+        if self.emails_to_entry.get():
+            if self.gmail_toggle.get() == 'on':
+                self.start_google_auth_thread()
+                self.config['gmail']['enabled'] = True
+            else:
+                self.config['gmail']['enabled'] = False
+            self.save_config(self.config)
         else:
-            self.config['gmail']['enabled'] = False
-        self.save_config(self.config)
+            self.gmail_toggle.deselect()
+            tk.messagebox.showwarning("No Emails", "Please enter at least one email address to use the Gmail API.")
+
 
     def validate_email_address(self, email):
         try:
@@ -518,7 +523,7 @@ class OwletteConfigApp:
 
         if channel_id:
             # Post a confirmation Slack message
-            msg = ":owl: Hoo hoo! I'm connected to Slack :thumbsup: What a _hoot_!"
+            msg = f":owl: Hoo hoo! :computer: {shared_utils.get_hostname()} :wave: I'm connected to Slack :thumbsup: What a _hoot_!"
             if owlette_slack.send_message(msg):
                 # message success, Slack is configured, set to true in JSON
                 shared_utils.update_config(['slack', 'enabled'], True)

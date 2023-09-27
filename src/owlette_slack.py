@@ -3,7 +3,6 @@ import logging
 import requests
 import shared_utils
 import argparse
-import socket
 
 # Load logging
 shared_utils.initialize_logging("slack")
@@ -119,7 +118,6 @@ def send_message(message_text):
 
 try:
     if process_name is not None and reason is not None:
-        hostname = socket.gethostname()
-        send_message(f":owl: Hoo! :computer: {hostname} :chart_with_downwards_trend: {process_name} :pencil2: {reason}")
+        send_message(f":owl: Hoo! :computer: {shared_utils.get_hostname()} :chart_with_downwards_trend: {process_name} :pencil2: {reason}")
 except Exception as e:
     logging.error(e)
