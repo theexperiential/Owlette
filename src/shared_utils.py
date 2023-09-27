@@ -1,6 +1,54 @@
 import os
 import json
 import logging
+from logging.handlers import RotatingFileHandler
+import keyring
+import requests
+import ctypes
+
+# GLOBAL VARS
+APP_VERSION = '0.3.0b'
+CONFIG_VERSION = '1.1.0'
+FRAME_COLOR = '#28292b'
+BUTTON_COLOR = '#374448'
+BUTTON_HOVER_COLOR = '#27424a'
+BUTTON_IMPORTANT_COLOR = '#2d5e6c'
+WINDOW_TITLES = {
+    "owlette_gui": "Owlette Configuration", 
+    "prompt_slack_config": "Connect to Slack",
+    "prompt_restart": "Process repeatedly failing!"
+}
+
+# LOGGING
+
+def initialize_logging(log_file_name, level=logging.INFO):
+    log_file_path = get_path(f'../logs/{log_file_name}.log')
+    
+    # Clear the log file
+    with open(log_file_path, 'w'):
+        pass
+    
+    # Create a formatter for the log messages
+    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Create a handler that writes log messages to a file, with a maximum
+    # log file size of 5 MB, keeping 2 old log files.
+    log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=5*1024*1024, backupCount=2, encoding=None, delay=0)
+    
+    # Set the formatter for the handler
+    log_handler.setFormatter(log_formatter)
+    
+    # Create the logger and set its level
+    logger = logging.getLogger()
+    logger.setLevel(level)
+    
+    # Add the handler to the logger
+    logger.addHandler(log_handler)
+    
+    # Log an initial message
+    logging.info(f"Starting {log_file_name}...")
+
+# OS
 
 def get_path(filename=None):
     # Get the directory of the currently executing script
@@ -14,6 +62,8 @@ def get_path(filename=None):
     path = os.path.normpath(path)
     
     return path
+
+# JSON 
 
 # Generic function to read JSON from a file
 def read_json_from_file(file_path):
@@ -30,29 +80,88 @@ def read_json_from_file(file_path):
         logging.error(f"An error occurred while reading the file: {e}")
         return None
 
-def generate_config_file():
-    config = {'processes': [], 'email': {'to': []}}
-    return config
+def generate_config_file(existing_config=None):
+    default_config = {
+        "version": CONFIG_VERSION, 
+        "processes": [], 
+        "gmail": {
+            "enabled": False, 
+            "to": []
+        },
+        "slack": {
+            "enabled": False
+        }
+    }
+    
+    if existing_config is None:
+        return default_config
 
-# Specific function to read config
-def read_config(key=None, process_list_id=None):
+    # Update only missing keys
+    for key, value in default_config.items():
+        if key not in existing_config:
+            existing_config[key] = value
+
+    return existing_config
+
+def validate_config(config):
+    return all(key in config for key in ['processes', 'gmail', 'slack'])
+
+# Read configuration JSON file
+def read_config(keys=None, process_list_id=None):
     config_path = get_path('../config/config.json')
     config = read_json_from_file(config_path)
-    
-    if config is None:
-        config = generate_config_file()
+
+    # If it doesn't exist or is missing keys, repair as needed
+    if config is None or not validate_config(config):
+        config = generate_config_file(config)
         with open(config_path, 'w') as f:
-            json.dump(config, f)
-    
-    if key and process_list_id:
+            json.dump(config, f, indent=4)
+
+    # If process_list_id is provided, find the corresponding process
+    if process_list_id:
         for process in config['processes']:
             if process['id'] == process_list_id:
-                return process.get(key, None)
-    
+                if keys:
+                    item = process
+                    for key in keys:
+                        item = item.get(key, None)
+                        if item is None:
+                            return None
+                    return item
+                else:
+                    return process
+
+    # If keys are provided, traverse the config to find the value
+    elif keys:
+        item = config
+        for key in keys:
+            item = item.get(key, None)
+            if item is None:
+                return None
+        return item
+
     return config
 
+def update_config(keys, value):
+    config_path = get_path('../config/config.json')
+    config = read_json_from_file(config_path)
+
+    # Traverse the config dictionary using the keys to find the item to update
+    item = config
+    for key in keys[:-1]:
+        item = item.get(key, {})
+
+    # Update the value
+    item[keys[-1]] = value
+
+    # Write the updated config back to the file
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=4)
+
+# PROCESSES 
+
 def fetch_process_by_id(id, data):
-        return next((process for process in data['processes'] if process['id'] == id), None)
+    return next((process for process in data['processes'] if process['id'] == id), None)
 
 def fetch_process_name_by_id(id, data):
     process = next((process for process in data['processes'] if process['id'] == id), None)
@@ -64,3 +173,25 @@ def fetch_process_id_by_name(name, data):
 
 def get_process_index(selected_process_id):
     return next((i for i, p in enumerate(read_config()['processes']) if p['id'] == selected_process_id), None)
+
+
+# WINDOWS / UI
+
+def get_scaling_factor():
+    hdc = ctypes.windll.user32.GetDC(0)
+    LOGPIXELSX = 88
+    actual_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
+    ctypes.windll.user32.ReleaseDC(0, hdc)
+    return actual_dpi / 96.0  # 96 DPI is the standard DPI, so we divide the actual by 96 to get the scaling factor
+
+def center_window(root, width, height):
+    scaling_factor = get_scaling_factor()
+
+    # Get screen width and height
+    screen_width = root.winfo_screenwidth() * scaling_factor
+    screen_height = root.winfo_screenheight() * scaling_factor
+
+    # Calculate position x and y coordinates
+    x = (screen_width / 2) - (width * scaling_factor / 2)
+    y = (screen_height / 2) - (height * scaling_factor / 2)
+    root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')

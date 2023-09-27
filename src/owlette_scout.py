@@ -41,7 +41,7 @@ current_time = int(time.time())
 time_since_launch = current_time - timestamp
 
 if time_since_launch < 60:
-    print("Ignoring the process as it was launched less than 60 seconds ago.")
+    logging.info("Ignoring the process as it was launched less than 60 seconds ago.")
     result = False
 else:
     result = is_app_hung(pid)

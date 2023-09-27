@@ -1,15 +1,21 @@
 import customtkinter as ctk
 import os
+import shared_utils
 
-class CountdownApp:
+class PromptRestart:
     FRAME_COLOR = '#28292b'
     BUTTON_COLOR = '#374448'
     BUTTON_HOVER_COLOR = '#27424a'
+    WINDOW_WIDTH = 400
+    WINDOW_HEIGHT = 200
 
     def __init__(self, master):
         self.master = master
         self.master.title("Process repeatedly failing!")
-        self.master.geometry("400x200")
+        shared_utils.center_window(master, self.WINDOW_WIDTH, self.WINDOW_HEIGHT)
+        self.master.lift()
+        self.master.focus_force()
+        
 
         self.paused = False
         self.time_left = 29
@@ -61,5 +67,5 @@ class CountdownApp:
 
 if __name__ == "__main__":
     root = ctk.CTk()
-    app = CountdownApp(root)
+    app = PromptRestart(root)
     root.mainloop()

@@ -14,9 +14,6 @@ import base64
 import platform
 import argparse
 
-# Load logging
-logging.basicConfig(filename=shared_utils.get_path('../logs/email.log'), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 # Take an input of the app name that was restarted
 parser = argparse.ArgumentParser(description='Send email notifications.')
 parser.add_argument('--process_name', type=str, help='Name of the process to notify about')
@@ -109,13 +106,17 @@ def send_email(app_name, reason):
     msg.attach(MIMEText(body, 'plain'))
 
     # Loop through each email in the 'to' list
-    for to_email in config['email']['to']:
+    for to_email in config['gmail']['to']:
         msg['To'] = to_email
         raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
         message = {'raw': raw_message}
         message = service.users().messages().send(userId='me', body=message).execute()
 
         logging.info(f"Sent email to {[msg['To']]} about {app_name}")
+
+    # confirmation print for initial email config
+    if app_name == 'Owlette Mail Service':
+        print('Sent successfully')
 
 try:
     send_email(process_name, reason)

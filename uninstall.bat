@@ -42,6 +42,19 @@ if "%uninstall_deps%"=="y" (
     echo Invalid choice. Skipping Python dependency removal.
 )
 
+:: Optional: Ask the user if they want to remove stored credentials
+set /p remove_creds=Do you want to remove stored credentials (Slack and/or Gmail Tokens)? (y/n):
+if "%remove_creds%"=="y" (
+    echo Removing stored credentials...
+    cd %~dp0
+    cd src
+    python remove_creds.py
+) else if "%remove_creds%"=="n" (
+    echo Skipping stored credential removal.
+) else (
+    echo Invalid choice. Skipping stored credential removal.
+)
+
 :: Done
 echo Uninstallation complete!
 endlocal
