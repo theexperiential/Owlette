@@ -9,10 +9,8 @@ import win32ts
 import win32con
 import servicemanager
 import logging
-from logging.handlers import RotatingFileHandler
 import psutil
 import time
-import subprocess
 import json
 import datetime
 
@@ -413,7 +411,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # The heart of Owlette
         while self.is_alive:
-            # Start the tray icon script as a subprocess (if it isn't running)
+            # Start the tray icon script as a process (if it isn't running)
             if not Util.is_script_running('owlette_tray.py'):
                 self.start_tray_icon()
 

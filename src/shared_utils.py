@@ -2,8 +2,6 @@ import os
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-import keyring
-import requests
 import ctypes
 import socket
 from packaging import version
