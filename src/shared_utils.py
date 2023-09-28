@@ -77,34 +77,44 @@ def initialize_logging(log_file_name, level=logging.INFO):
 def upgrade_config():
     # Directly read the original config file
     config = read_json_from_file(CONFIG_PATH)
+    if config:
+        # Check if 'version' key exists and its value
+        current_version = config.get('version', '0.0.0')
 
-    # Check if 'version' key exists and its value
-    current_version = config.get('version', '0.0.0')
+        # If version is less than 1.1.0, apply changes
+        if version.parse(current_version) < version.parse('1.1.0'):
+            # Add or update the 'version' key
+            config['version'] = '1.1.0'
 
-    # If version is less than 1.1.0, apply changes
-    if version.parse(current_version) < version.parse('1.1.0'):
-        # Add or update the 'version' key
-        config['version'] = '1.1.0'
+            # Update other keys as needed
+            if 'email' in config:
+                config['gmail'] = config.pop('email')
+                config['gmail']['enabled'] = True
 
-        # Update other keys as needed
-        if 'email' in config:
-            config['gmail'] = config.pop('email')
-            config['gmail']['enabled'] = True
+            # Update 'autostart_process' to 'autolaunch_process'
+            for process in config['processes']:
+                if 'autostart_process' in process:
+                    process['autolaunch_process'] = process.pop('autostart_process')
 
-        # Update 'autostart_process' to 'autolaunch_process'
-        for process in config['processes']:
-            if 'autostart_process' in process:
-                process['autolaunch_process'] = process.pop('autostart_process')
+                # Ensure all necessary keys are in each process object
+                for key in ['id', 'name', 'exe_path', 'file_path', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch_process']:
+                    process.setdefault(key, "")
 
-        # Reorder the keys so that 'version' is at the top
-        ordered_config = {'version': config['version']}
-        for key in config:
-            if key != 'version':
-                ordered_config[key] = config[key]
+            # Reorder the keys so that 'version' is at the top
+            ordered_config = {'version': config['version']}
+            for key in config:
+                if key != 'version':
+                    ordered_config[key] = config[key]
 
+            # Write the updated config back to the file
+            write_json_to_file(ordered_config, CONFIG_PATH)
+
+    else:
+        # if there are problems, just regenerate the config file
+        new_config = generate_config_file()
+        
         # Write the updated config back to the file
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(ordered_config, f, indent=4)
+        write_json_to_file(new_config, CONFIG_PATH)
 
 # Generic function to read JSON from a file
 def read_json_from_file(file_path):
