@@ -104,7 +104,7 @@ def upgrade_config():
 
         # Write the updated config back to the file
         with open(CONFIG_PATH, 'w') as f:
-            json.dump(order, f, indent=4)
+            json.dump(ordered_config, f, indent=4)
 
 # Generic function to read JSON from a file
 def read_json_from_file(file_path):
