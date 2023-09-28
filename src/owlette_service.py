@@ -70,6 +70,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         shared_utils.initialize_logging("service")
         Util.initialize_results_file()
 
+        # Upgrade JSON config to latest version
+        shared_utils.upgrade_config()
+
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
         self.tray_icon_pid = None
@@ -425,7 +428,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Load in all processes in config json
             processes = shared_utils.read_config(['processes'])
             for process in processes:
-                if process.get('autolaunch_process', False): # Default to False if not found:
+                if process.get('autolaunch_process', False): # Default to False if not found
                     self.handle_process(process)
 
             if self.first_start:

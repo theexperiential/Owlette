@@ -526,7 +526,7 @@ class OwletteConfigApp:
             msg = f":owl: Hoo hoo! :computer: {shared_utils.get_hostname()} :wave: I'm connected to Slack :thumbsup: What a _hoot_!"
             if owlette_slack.send_message(msg):
                 # message success, Slack is configured, set to true in JSON
-                shared_utils.update_config(['slack', 'enabled'], True)
+                shared_utils.write_config(['slack', 'enabled'], True)
 
                 # Let the user know that we really did send a message to their slack
                 messagebox.showwarning("Success", "Message delivered. Please check your Slack in the #owlette channel.")

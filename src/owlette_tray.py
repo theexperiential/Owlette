@@ -67,7 +67,7 @@ def open_config_gui(icon, item):
 # Function to exit
 def exit_action(icon, item):
     try:
-        for key, window_title in WINDOW_TITLES.items():
+        for key, window_title in shared_utils.WINDOW_TITLES.items():
             # Try to close the configuration window if it's open
             hwnd = win32gui.FindWindow(None, window_title)
             if hwnd:

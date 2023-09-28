@@ -6,8 +6,10 @@ import keyring
 import requests
 import ctypes
 import socket
+from packaging import version
 
 # GLOBAL VARS
+
 APP_VERSION = '0.3.1b'
 CONFIG_VERSION = '1.1.0'
 FRAME_COLOR = '#28292b'
@@ -19,6 +21,26 @@ WINDOW_TITLES = {
     "prompt_slack_config": "Connect to Slack",
     "prompt_restart": "Process repeatedly failing!"
 }
+
+# OS
+
+def get_hostname():
+    return socket.gethostname()
+
+def get_path(filename=None):
+    # Get the directory of the currently executing script
+    path = os.path.dirname(os.path.realpath(__file__))
+
+    # Build the full path to the file name
+    if filename is not None:
+        path = os.path.join(path, filename)
+
+    # Normalize the path
+    path = os.path.normpath(path)
+    
+    return path
+
+CONFIG_PATH = get_path('../config/config.json')
 
 # LOGGING
 
@@ -49,25 +71,41 @@ def initialize_logging(log_file_name, level=logging.INFO):
     # Log an initial message
     logging.info(f"Starting {log_file_name}...")
 
-# OS
+# JSON
 
-def get_hostname():
-    return socket.gethostname()
+# Maintain compatibility from JSON config versions < 1.1.0
+def upgrade_config():
+    # Directly read the original config file
+    with open(CONFIG_PATH, 'r') as f:
+        config = json.load(f)
 
-def get_path(filename=None):
-    # Get the directory of the currently executing script
-    path = os.path.dirname(os.path.realpath(__file__))
+    # Check if 'version' key exists and its value
+    current_version = config.get('version', '0.0.0')
 
-    # Build the full path to the file name
-    if filename is not None:
-        path = os.path.join(path, filename)
+    # If version is less than 1.1.0, apply changes
+    if version.parse(current_version) < version.parse('1.1.0'):
+        # Add or update the 'version' key
+        config['version'] = '1.1.0'
 
-    # Normalize the path
-    path = os.path.normpath(path)
-    
-    return path
+        # Update other keys as needed
+        if 'email' in config:
+            config['gmail'] = config.pop('email')
+            config['gmail']['enabled'] = True
 
-# JSON 
+        # Update 'autostart_process' to 'autolaunch_process'
+        for process in config['processes']:
+            if 'autostart_process' in process:
+                process['autolaunch_process'] = process.pop('autostart_process')
+
+        # Reorder the keys so that 'version' is at the top
+        ordered_config = {'version': config['version']}
+        for key in config:
+            if key != 'version':
+                ordered_config[key] = config[key]
+
+        # Write the updated config back to the file
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(ordered_config, f, indent=4)
 
 # Generic function to read JSON from a file
 def read_json_from_file(file_path):
@@ -83,6 +121,13 @@ def read_json_from_file(file_path):
     except Exception as e:
         logging.error(f"An error occurred while reading the file: {e}")
         return None
+
+def write_json_to_file(data, file_path):
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logging.error(f"An error occurred while writing to the file: {e}")
 
 def generate_config_file(existing_config=None):
     default_config = {
@@ -107,19 +152,9 @@ def generate_config_file(existing_config=None):
 
     return existing_config
 
-def validate_config(config):
-    return all(key in config for key in ['processes', 'gmail', 'slack'])
-
 # Read configuration JSON file
 def read_config(keys=None, process_list_id=None):
-    config_path = get_path('../config/config.json')
-    config = read_json_from_file(config_path)
-
-    # If it doesn't exist or is missing keys, repair as needed
-    if config is None or not validate_config(config):
-        config = generate_config_file(config)
-        with open(config_path, 'w') as f:
-            json.dump(config, f, indent=4)
+    config = read_json_from_file(CONFIG_PATH)
 
     # If process_list_id is provided, find the corresponding process
     if process_list_id:
@@ -146,9 +181,8 @@ def read_config(keys=None, process_list_id=None):
 
     return config
 
-def update_config(keys, value):
-    config_path = get_path('../config/config.json')
-    config = read_json_from_file(config_path)
+def write_config(keys, value):
+    config = read_json_from_file(CONFIG_PATH)
 
     # Traverse the config dictionary using the keys to find the item to update
     item = config
@@ -158,9 +192,8 @@ def update_config(keys, value):
     # Update the value
     item[keys[-1]] = value
 
-    # Write the updated config back to the file
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=4)
+    write_json_to_file(config, CONFIG_PATH)
+
 
 # PROCESSES 
 
@@ -199,3 +232,6 @@ def center_window(root, width, height):
     x = (screen_width / 2) - (width * scaling_factor / 2)
     y = (screen_height / 2) - (height * scaling_factor / 2)
     root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
+
+
+upgrade_config()
