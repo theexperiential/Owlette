@@ -71,13 +71,12 @@ def initialize_logging(log_file_name, level=logging.INFO):
     # Log an initial message
     logging.info(f"Starting {log_file_name}...")
 
-# JSON
+# CONFIG JSON
 
 # Maintain compatibility from JSON config versions < 1.1.0
 def upgrade_config():
     # Directly read the original config file
-    with open(CONFIG_PATH, 'r') as f:
-        config = json.load(f)
+    config = read_json_from_file(CONFIG_PATH)
 
     # Check if 'version' key exists and its value
     current_version = config.get('version', '0.0.0')
@@ -105,7 +104,7 @@ def upgrade_config():
 
         # Write the updated config back to the file
         with open(CONFIG_PATH, 'w') as f:
-            json.dump(ordered_config, f, indent=4)
+            json.dump(order, f, indent=4)
 
 # Generic function to read JSON from a file
 def read_json_from_file(file_path):
