@@ -168,7 +168,7 @@ The Configuration UI is built using the customtkinter library and is designed to
 - **File Path / Cmd Line Args**: Text field for additional file paths or command-line arguments. Includes a "Browse" button.
 - **Launch Time Delay (s)**: Text field to specify a time delay, in seconds, before the process starts.
 - **Time to Initialize (s)**: Text field to specify the total time, in seconds, to give a process to fully initialize before checking it's responsitivity.
-- **Autolaunch Process**: Enable or disable autostart for each process.
+- **Autolaunch Process**: Enable or disable monitoring for the selected process. If enabled, Owlette will check the process every 10 seconds. If it is unresponsive, it will attempt to close and relaunch it. If the process ID (PID) is no longer found, Owlette will attempt to relaunch it automatically.
 - **Relaunch Attempts til Restart**: Set the number of relaunch attempts before a system restart is triggered. Owlette will prompt you with a 30 second countdown window before starting, which you may either initiate, pause or cancel. If the countdown completes, the restart will continue.
 - **Add Process**: Adds a new process to the Process Startup List based on the details provided.
 
