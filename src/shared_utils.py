@@ -10,7 +10,7 @@ from packaging import version
 
 # GLOBAL VARS
 
-APP_VERSION = '0.3.1b'
+APP_VERSION = '0.3.2b'
 CONFIG_VERSION = '1.1.0'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
