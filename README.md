@@ -20,12 +20,12 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 ## 🌟 Features
 
 - 🚀 Starts specified processes upon system startup
-- 🔄 Automatically restarts applications if they crash or are accidentally closed
+- 🔄 Automatically restarts applications if they freeze, crash or are accidentally closed
 - 📊 Monitors system metrics like CPU usage, memory usage, and disk space
 - 📧 Sends email/Slack notifications using Gmail/Slack APIs
 - 🍽️ Tray icon for easy access to features and settings
 - 🎚️ Autolaunch Process Toggle: Conveniently disable a process from automatically launching during development
-- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a system restart
+- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a full system restart
 
 <a id="installation"></a>
 ## 🛠️ Installation
