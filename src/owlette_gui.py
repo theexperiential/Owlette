@@ -30,7 +30,7 @@ class OwletteConfigApp:
         self.setup_ui()
 
         # Load existing config after defining email entry widgets
-        self.config = self.load_config(self.emails_to_entry)
+        self.config = shared_utils.load_config(self.emails_to_entry)
 
         # Set default values if empty
         if not self.time_delay_entry.get():
@@ -191,23 +191,6 @@ class OwletteConfigApp:
         root.grid_columnconfigure(5, weight=1)
         root.grid_columnconfigure(6, weight=1)
 
-    # CONFIG JSON
-
-    def load_config(self, emails_to_entry):
-        try:
-            with open(shared_utils.get_path('../config/config.json'), 'r') as f:
-                config = json.load(f)
-                emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
-                return config
-        except FileNotFoundError:
-            logging.error(f"Failed to load config: {e}")
-            return {shared_utils.generateConfigFile()}
-                
-    def save_config(self, config):
-        config['gmail']['to'] = [email.strip() for email in self.emails_to_entry.get().split(',')]
-        with open(shared_utils.get_path('../config/config.json'), 'w') as f:
-            json.dump(config, f, indent=4)
-    
     # PROCESS HANDLING
 
     def toggle_launch_process(self):
@@ -215,7 +198,7 @@ class OwletteConfigApp:
             index = shared_utils.get_process_index(self.selected_process)
             current_state = self.config['processes'][index].get('autolaunch_process', False)
             self.config['processes'][index]['autolaunch_process'] = not current_state
-            self.save_config(self.config)
+            shared_utils.save_config(self.config)
         else:
             tk.messagebox.showwarning("No Process Selected", "Please select a process to toggle autolaunch.")
 
@@ -286,7 +269,7 @@ class OwletteConfigApp:
             self.config['processes'][index]['time_to_init'] = time_to_init
             self.config['processes'][index]['relaunch_attempts'] = relaunch_attempts
 
-            self.save_config(self.config)
+            shared_utils.save_config(self.config)
             self.update_process_list()
 
             # Re-select the process
@@ -330,7 +313,7 @@ class OwletteConfigApp:
         }
 
         self.config['processes'].append(new_process)
-        self.save_config(self.config)
+        shared_utils.save_config(self.config)
         self.update_process_list()
 
     # BROWSING FOR FILES
@@ -365,7 +348,7 @@ class OwletteConfigApp:
                     index = shared_utils.get_process_index(self.selected_process)
                     if index is not None:
                         del self.config['processes'][index]
-                        self.save_config(self.config)
+                        shared_utils.save_config(self.config)
                         self.update_process_list()            
             else:
                 tk.messagebox.showerror("Error", f"No process found with the name '{self.selected_process}'")
@@ -375,7 +358,7 @@ class OwletteConfigApp:
             index = shared_utils.get_process_index(self.selected_process)
             if index > 0:
                 self.config['processes'][index], self.config['processes'][index-1] = self.config['processes'][index-1], self.config['processes'][index]
-                self.save_config(self.config)
+                shared_utils.save_config(self.config)
                 self.update_process_list()
                 self.process_list.activate(index-1)
 
@@ -384,7 +367,7 @@ class OwletteConfigApp:
             index = shared_utils.get_process_index(self.selected_process)
             if index < len(self.config['processes']) - 1:
                 self.config['processes'][index], self.config['processes'][index+1] = self.config['processes'][index+1], self.config['processes'][index]
-                self.save_config(self.config)
+                shared_utils.save_config(self.config)
                 self.update_process_list()
                 self.process_list.activate(index+1)
 
@@ -419,7 +402,7 @@ class OwletteConfigApp:
                 self.config['gmail']['enabled'] = True
             else:
                 self.config['gmail']['enabled'] = False
-            self.save_config(self.config)
+            shared_utils.save_config(self.config)
         else:
             self.gmail_toggle.deselect()
             tk.messagebox.showwarning("No Emails", "Please enter at least one email address to use the Gmail API.")
@@ -444,7 +427,7 @@ class OwletteConfigApp:
                     return
 
         self.config['gmail']['to'] = [email.strip() for email in emails_to]
-        self.save_config(self.config)
+        shared_utils.save_config(self.config)
 
     def save_credentials_to_file(self, credentials, filename):
         with open(shared_utils.get_path(filename), 'w') as f:
@@ -503,7 +486,7 @@ class OwletteConfigApp:
             self.config['slack']['enabled'] = True
         else:
             self.config['slack']['enabled'] = False
-        self.save_config(self.config)
+        shared_utils.save_config(self.config)
           
     def setup_slack(self):
         # Check if the token exists

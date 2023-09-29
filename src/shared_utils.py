@@ -21,7 +21,7 @@ WINDOW_TITLES = {
 }
 
 # OS
-
+# Return the hostname of the machine where the script is running
 def get_hostname():
     return socket.gethostname()
 
@@ -41,7 +41,7 @@ def get_path(filename=None):
 CONFIG_PATH = get_path('../config/config.json')
 
 # LOGGING
-
+# Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
     log_file_path = get_path(f'../logs/{log_file_name}.log')
     
@@ -71,6 +71,31 @@ def initialize_logging(log_file_name, level=logging.INFO):
 
 # CONFIG JSON
 
+# Reads a JSON configuration file from a given path and optionally updates 
+# an emails_to_entry list with email addresses from the configuration.
+def load_config(emails_to_entry=None):
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+            if emails_to_entry is not None:
+                emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
+            return config
+    except FileNotFoundError as e:
+        logging.error(f"Failed to load config: {e}")
+        return generate_config_file()
+
+# Writes a given configuration to a JSON file at a specified path. 
+# If emails_to_entry is provided, the function updates the email addresses 
+# in the configuration before saving.
+def save_config(config=None, emails_to_entry=None):
+    if config is None:
+        config = read_json_from_file(CONFIG_PATH)
+    
+    if emails_to_entry is not None:
+        config['gmail']['to'] = [email.strip() for email in emails_to_entry.get().split(',')]
+    
+    write_json_to_file(config, CONFIG_PATH)
+  
 # Maintain compatibility from JSON config versions < 1.1.0
 def upgrade_config():
     # Directly read the original config file
@@ -114,7 +139,7 @@ def upgrade_config():
         # Write the updated config back to the file
         write_json_to_file(new_config, CONFIG_PATH)
 
-# Generic function to read JSON from a file
+# Read a JSON file and returns its content as a Python dictionary
 def read_json_from_file(file_path):
     try:
         with open(file_path, 'r') as f:
@@ -129,6 +154,7 @@ def read_json_from_file(file_path):
         logging.error(f"An error occurred while reading the file: {e}")
         return None
 
+# Writes a Python dictionary to a JSON file
 def write_json_to_file(data, file_path):
     try:
         with open(file_path, 'w') as f:
@@ -136,6 +162,7 @@ def write_json_to_file(data, file_path):
     except Exception as e:
         logging.error(f"An error occurred while writing to the file: {e}")
 
+# Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):
     default_config = {
         "version": CONFIG_VERSION, 
@@ -159,7 +186,7 @@ def generate_config_file(existing_config=None):
 
     return existing_config
 
-# Read configuration JSON file
+# Read specific keys from the configuration file or a specific process by its ID
 def read_config(keys=None, process_list_id=None):
     config = read_json_from_file(CONFIG_PATH)
 
@@ -188,6 +215,7 @@ def read_config(keys=None, process_list_id=None):
 
     return config
 
+# Write a specific value to a specific key in the configuration file
 def write_config(keys, value):
     config = read_json_from_file(CONFIG_PATH)
 
@@ -200,7 +228,6 @@ def write_config(keys, value):
     item[keys[-1]] = value
 
     write_json_to_file(config, CONFIG_PATH)
-
 
 # PROCESSES 
 
