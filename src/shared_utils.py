@@ -123,7 +123,11 @@ def upgrade_config():
 
                 # Ensure all necessary keys are in each process object
                 for key in ['id', 'name', 'exe_path', 'file_path', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch', 'visibility', 'priority']:
-                    process.setdefault(key, "")
+                    process.setdefault(key, '')
+                    if key == 'visibility':
+                        process.setdefault(key, 'Show')
+                    elif key == 'priority':
+                        process.setdefault(key, 'Normal')
 
             # Reorder the keys so that 'version' is at the top
             ordered_config = {'version': config['version']}
