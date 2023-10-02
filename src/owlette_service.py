@@ -55,6 +55,10 @@ class Util:
         except psutil.NoSuchProcess:
             return False
 
+    @staticmethod
+    def get_process_name(process):
+        return process.get('name', 'Error retrieving process name')
+
 
 # Main Owlette Windows Service logic
 class OwletteService(win32serviceutil.ServiceFramework):
@@ -98,7 +102,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"An unhandled exception occurred: {e}")
 
     # Log errors
-    def log_and_notify(self, process_name, reason):
+    def log_and_notify(self, process, reason):
+        process_name = Util.get_process_name(process)
+
         # Logging
         logging.error(reason)
 
@@ -190,10 +196,34 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Start a Windows process as a user
     def start_process_as_user(self, process):
-        # show window!
-        self.startup_info.wShowWindow = win32con.SW_SHOW
+        # Get visibility, default is shown
+        visibility = process.get('visibility', 'Show')
 
-        exe_path = process['exe_path']
+        # Map process priority, default is normal
+        priority = process.get('priority', 'Normal')
+        priority_mapping = {
+            "Low": win32con.IDLE_PRIORITY_CLASS,
+            #"Below Normal": win32con.BELOW_NORMAL_PRIORITY_CLASS,
+            "Normal": win32con.NORMAL_PRIORITY_CLASS,
+            #"Above Normal": win32con.ABOVE_NORMAL_PRIORITY_CLASS,
+            "High": win32con.HIGH_PRIORITY_CLASS,
+            "Realtime": win32con.REALTIME_PRIORITY_CLASS
+        }
+        priority_class = priority_mapping.get((priority), win32con.NORMAL_PRIORITY_CLASS)
+
+        # Show or hide window!
+        self.startup_info.wShowWindow = win32con.SW_SHOW if visibility == 'Show' else win32con.SW_HIDE
+
+        # Fetch and verify executable path
+        exe_path = process.get('exe_path', '')
+        try:
+            if not os.path.isfile(exe_path):
+                raise FileNotFoundError('Executable path not found!')
+        except Exception as e:
+            logging.error(f'Error: {e}')
+            return None
+
+        # Fetch file path
         file_path = process.get('file_path', '')
         # If file path, add double quotes, else leave as-is (cmd args)
         file_path = f"{file_path}" if os.path.isfile(file_path) else file_path
@@ -203,15 +233,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
         command_line = f'"{exe_path}" {file_path}' if file_path else exe_path
         
         # Start the process
-        process_info = win32process.CreateProcessAsUser(self.console_user_token,
+        process_info = win32process.CreateProcessAsUser(
+            self.console_user_token,
             None,  # Application Name
             command_line,  # Command Line
-            None,
-            None,
-            0,
-            win32con.NORMAL_PRIORITY_CLASS,
+            None, # Process Attributes
+            None, # Thread Attributes
+            0, # Inherit handles
+            priority_class, # Creation flags
             self.environment,  # To open in user's self.environment
-            None,
+            None, # Current directory
             self.startup_info)
 
         # Get PID
@@ -244,8 +275,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Record the timestamp for the newly started process
         self.results[str(pid)]['timestamp'] = self.current_timestamp
 
-        #logging.info(results)
-
         # Write the updated results back to the output file
         with open(RESULT_FILE_PATH, 'w') as f:
             json.dump(self.results, f)
@@ -253,7 +282,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         return pid
 
     # Check if process has been restarted more than n times already
-    def reached_max_relaunch_attempts(self, process_name):
+    def reached_max_relaunch_attempts(self, process):
+        process_name = Util.get_process_name(process)
         try:
             attempts = self.relaunch_attempts.get(process_name, 0 if self.first_start else 1)
 
@@ -264,7 +294,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if not Util.is_script_running('prompt_restart.py'):
                 if 0 < attempts <= (relaunches_to_attempt or MAX_RELAUNCH_ATTEMPTS):
                     self.log_and_notify(
-                        process_name,
+                        process,
                         f'Process relaunch attempt: {attempts}'
                     )
                 if attempts > (relaunches_to_attempt or MAX_RELAUNCH_ATTEMPTS) and relaunches_to_attempt != 0:
@@ -275,7 +305,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     )
                     if started_restart_prompt:
                         self.log_and_notify(
-                            process_name,
+                            process,
                             f'Terminated {process_name} {relaunches_to_attempt} times. System reboot imminent'
                         )
                         # Reset the counter for this process
@@ -295,13 +325,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # Kill and restart a process
     def kill_and_relaunch_process(self, pid, process):
         # Ensure process has not exceeded maximum relaunch attempts
-        process_name = process['name']
-        if not self.reached_max_relaunch_attempts(process_name):
+        process_name = Util.get_process_name(process)
+        if not self.reached_max_relaunch_attempts(process):
             try:
                 psutil.Process(pid).terminate()
                 new_pid = self.start_process_as_user(process)
                 self.log_and_notify(
-                    process_name,
+                    process,
                     f'Terminated PID {pid} and restarted with new PID {new_pid}'
                 )
 
@@ -309,7 +339,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             except Exception as e:
                 self.log_and_notify(
-                    process_name,
+                    process,
                     f"Could not kill and restart process {pid}. Error: {e}"
                 )
                 return None
@@ -317,8 +347,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
         # Ensure process has not exceeded maximum relaunch attempts
-        process_name = process['name']
-        if not self.reached_max_relaunch_attempts(process_name):
+        if not self.reached_max_relaunch_attempts(process):
             process_list_id = process['id']
             delay = float(process.get('time_delay', 0))
             
@@ -333,16 +362,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Delay starting of the app (if applicable)
                 time.sleep(delay)
 
+                logging.info('got here')
                 # Attempt to start the process
                 try:
                     pid = self.start_process_as_user(process)
                 except Exception as e:
-                    logging.error(f"Could not start process {process_name}.\n {e}")
+                    logging.error(f"Could not start process {Util.get_process_name(process)}.\n {e}")
                 
                 # Update the last started time and PID
                 self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
                 logging.info(f"PID {pid} started")
                 
+                logging.info(pid)
+
                 return pid  # Return the new PID
             
             return None  # Return None if the process was not started
@@ -350,7 +382,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # If process not responding, attempt to kill and relaunch
     def handle_unresponsive_process(self, pid, process):
         # Check JSON for process response status
-        process_name = process['name']
+        process_name = Util.get_process_name(process)
         try:
             is_not_responding = self.results.get(str(pid), {}).get('isNotResponding', False)
         except json.JSONDecodeError:
@@ -363,7 +395,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Attempt to kill and relaunch if unresponsive
         if is_not_responding:
             self.log_and_notify(
-                process_name,
+                process,
                 f"Process {process_name} (PID {pid}) is not responding"
             )
             time.sleep(1)
@@ -373,7 +405,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Main process handler
     def handle_process(self, process):
-        process_name = process['name']
         process_list_id = process['id']
         last_info = self.last_started.get(process_list_id, {})
         last_pid = last_info.get('pid')
@@ -426,7 +457,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Load in all processes in config json
             processes = shared_utils.read_config(['processes'])
             for process in processes:
-                if process.get('autolaunch_process', False): # Default to False if not found
+                if process.get('autolaunch', False): # Default to False if not found
                     self.handle_process(process)
 
             if self.first_start:

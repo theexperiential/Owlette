@@ -8,7 +8,7 @@ from packaging import version
 
 # GLOBAL VARS
 
-APP_VERSION = '0.3.2b'
+APP_VERSION = '0.3.3b'
 CONFIG_VERSION = '1.1.0'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
@@ -105,22 +105,24 @@ def upgrade_config():
         current_version = config.get('version', '0.0.0')
 
         # If version is less than 1.1.0, apply changes
-        if version.parse(current_version) < version.parse('1.1.0'):
+        if version.parse(current_version) < version.parse('1.2.0'):
             # Add or update the 'version' key
-            config['version'] = '1.1.0'
+            config['version'] = '1.2.0'
 
             # Update other keys as needed
             if 'email' in config:
                 config['gmail'] = config.pop('email')
                 config['gmail']['enabled'] = True
 
-            # Update 'autostart_process' to 'autolaunch_process'
+            # Update autostart to autolaunch
             for process in config['processes']:
                 if 'autostart_process' in process:
-                    process['autolaunch_process'] = process.pop('autostart_process')
+                    process['autolaunch'] = process.pop('autostart_process')
+                elif 'autolaunch_process' in process:
+                    process['autolaunch'] = process.pop('autolaunch_process')
 
                 # Ensure all necessary keys are in each process object
-                for key in ['id', 'name', 'exe_path', 'file_path', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch_process']:
+                for key in ['id', 'name', 'exe_path', 'file_path', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch', 'visibility', 'priority']:
                     process.setdefault(key, "")
 
             # Reorder the keys so that 'version' is at the top
@@ -131,6 +133,7 @@ def upgrade_config():
 
             # Write the updated config back to the file
             write_json_to_file(ordered_config, CONFIG_PATH)
+
 
     else:
         # if there are problems, just regenerate the config file
