@@ -1,13 +1,10 @@
 import shared_utils
-from shared_utils import WINDOW_TITLES
 import owlette_slack
+import tkinter as tk
+from tkinter import filedialog
 import customtkinter as ctk
 from CTkListbox import *
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
-from tkinter import filedialog
-from tkinter import Toplevel
+from CTkMessagebox import CTkMessagebox
 import os
 import json
 from email_validator import validate_email, EmailNotValidError
@@ -22,7 +19,7 @@ class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
-        self.master.title(WINDOW_TITLES.get("owlette_gui"))
+        self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
         shared_utils.center_window(master, 960, 550)
         self.selected_process = None
 
@@ -53,6 +50,8 @@ class OwletteConfigApp:
 
         # Update the process list based on JSON config contents
         self.update_process_list()
+
+        #CTkMessagebox(title="Info", message="This is a CTkMessagebox!", justify="center")
 
     def setup_ui(self):
         # Create frame for process details
@@ -120,16 +119,16 @@ class OwletteConfigApp:
         self.add_button.grid(row=6, column=3, sticky='w', padx=(5, 0), pady=(5, 10))
 
         # Create a label for the process details
-        self.process_details_label = ctk.CTkLabel(root, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR)
+        self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR)
         self.process_details_label.grid(row=0, column=0, sticky='w', padx=(20, 10), pady=(20, 0))
 
         # Create a label for the process list
-        self.process_list_label = ctk.CTkLabel(root, text="PROCESS LAUNCH LIST", fg_color=shared_utils.FRAME_COLOR)
+        self.process_list_label = ctk.CTkLabel(self.master, text="PROCESS LAUNCH LIST", fg_color=shared_utils.FRAME_COLOR)
         self.process_list_label.grid(row=0, column=4, sticky='w', padx=10, pady=(20, 0))
         self.process_list_label.configure(width=40)
 
         # Create a label for the app version
-        self.version_label = ctk.CTkLabel(root, text=f"v{shared_utils.APP_VERSION}", fg_color='transparent')
+        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color='transparent')
         self.version_label.grid(row=9, column=4, sticky='e', padx=10, pady=(0, 0))
         self.version_label.configure(width=40)
 
@@ -164,7 +163,7 @@ class OwletteConfigApp:
         self.slack_toggle.grid(row=9, column=2, sticky='e', padx=(5), pady=(10, 10))
 
         # Create a label for the notifications section
-        self.notifications_label = ctk.CTkLabel(root, text="NOTIFICATIONS", fg_color=shared_utils.FRAME_COLOR)
+        self.notifications_label = ctk.CTkLabel(self.master, text="NOTIFICATIONS", fg_color=shared_utils.FRAME_COLOR)
         self.notifications_label.grid(row=7, column=0, sticky='w', padx=(20, 10), pady=(20, 10))
 
         # Create Labels and Entry widgets for email configuration
@@ -183,13 +182,15 @@ class OwletteConfigApp:
         self.relaunch_attempts_entry.bind('<Return>', self.update_selected_process)
 
         # Make columns stretchable
-        root.grid_columnconfigure(0, weight=1) # labels
-        root.grid_columnconfigure(1, weight=2)
-        root.grid_columnconfigure(2, weight=2)
-        root.grid_columnconfigure(3, weight=2)
-        root.grid_columnconfigure(4, weight=1)
-        root.grid_columnconfigure(5, weight=1)
-        root.grid_columnconfigure(6, weight=1)
+        self.master.grid_columnconfigure(0, weight=1) # labels
+        self.master.grid_columnconfigure(1, weight=2)
+        self.master.grid_columnconfigure(2, weight=2)
+        self.master.grid_columnconfigure(3, weight=2)
+        self.master.grid_columnconfigure(4, weight=1)
+        self.master.grid_columnconfigure(5, weight=1)
+        self.master.grid_columnconfigure(6, weight=1)
+
+        self.master.rowconfigure((0,1,2,3,4,5), weight=1)
 
     # PROCESS HANDLING
 
@@ -200,7 +201,7 @@ class OwletteConfigApp:
             self.config['processes'][index]['autolaunch_process'] = not current_state
             shared_utils.save_config(self.config)
         else:
-            tk.messagebox.showwarning("No Process Selected", "Please select a process to toggle autolaunch.")
+            msg =CTkMessagebox(master=self.master, title="No Process Selected", message="Please select a process to toggle autolaunch.")
 
     def update_selected_process(self,event=None):
         # Field Validation
@@ -218,7 +219,7 @@ class OwletteConfigApp:
                     raise ValueError("Start Time Delay must be greater than or equal to 0.")
 
         except ValueError:
-            tk.messagebox.showerror("Validation Error", "Start Time Delay must be a number (integer or float).")
+            CTkMessagebox(master=self.master, title="Validation Error", message="Start Time Delay must be a number (integer or float).", icon="cancel")
             self.time_delay_entry.delete(0, tk.END)
             self.time_delay_entry.insert(0, 0)
             return
@@ -229,7 +230,7 @@ class OwletteConfigApp:
                 if float(time_to_init) < 10 or float(time_to_init) == 0:
                     raise ValueError("Time to initialize must be greater than or equal to 10 seconds.")
         except ValueError:
-            tk.messagebox.showerror("Validation Error", "Time to Initialize must be at least 10 seconds")
+            CTkMessagebox(master=self.master, title="Validation Error", message="Time to Initialize must be at least 10 seconds", icon="cancel")
             self.time_to_init_entry.delete(0, tk.END)
             self.time_to_init_entry.insert(0, 10)
             return
@@ -240,7 +241,7 @@ class OwletteConfigApp:
                 if int(relaunch_attempts) < 0:
                     raise ValueError("Relaunch attempts must be >=0")
         except ValueError:
-            tk.messagebox.showerror("Validation Error", "Relaunch attempts must be an integer. 3 is recommended. After 3 attempts, a system restart will be attempted. Set to 0 for unlimited attempts to relaunch (no system restart).")
+            CTkMessagebox(master=self.master, title="Validation Error", message="Relaunch attempts must be an integer. 3 is recommended. After 3 attempts, a system restart will be attempted. Set to 0 for unlimited attempts to relaunch (no system restart).", icon="cancel")
             self.relaunch_attempts_entry.delete(0, tk.END)
             self.relaunch_attempts_entry.insert(0, 3)
             return
@@ -257,7 +258,7 @@ class OwletteConfigApp:
         if self.selected_process:
             # Require Name/Exe Paths
             if not name or not exe_path:
-                tk.messagebox.showerror("Validation Error", "Name and Exe Path are required fields.")
+                CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required fields.", icon="cancel")
                 return
 
             index = shared_utils.get_process_index(self.selected_process)
@@ -290,15 +291,15 @@ class OwletteConfigApp:
         autolaunch_process = True if self.autolaunch_process_toggle.get() == 'on' else False
         
         if not name or not exe_path:
-            tk.messagebox.showerror("Validation Error", "Name and Exe Path are required fields.")
+            CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required fields.", icon="cancel")
             return
         
         if not os.path.exists(exe_path):
-            tk.messagebox.showerror("Validation Error", "The specified Exe Path does not exist.")
+            CTkMessagebox(master=self.master, title="Validation Error", message="The specified Exe Path does not exist.", icon="cancel")
             return
         
         if file_path and not os.path.exists(file_path):
-            tk.messagebox.showerror("Validation Error", "The specified File Path does not exist.")
+            CTkMessagebox(master=self.master, title="Validation Error", message="The specified File Path does not exist.", icon="cancel")
             return
 
         new_process = {
@@ -343,15 +344,15 @@ class OwletteConfigApp:
             process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
             if process:
                 process_name = shared_utils.fetch_process_name_by_id(self.selected_process, self.config)
-                confirm = tk.messagebox.askyesno("Confirmation", f"Are you sure you want to remove {process_name}?")
-                if confirm:
+                response = CTkMessagebox(master=self.master, title="Remove Process?", message=f"Are you sure you want to remove {process_name}?", icon="question", option_1="Yes", option_2="No")
+                if response.get() == 'Yes':
                     index = shared_utils.get_process_index(self.selected_process)
                     if index is not None:
                         del self.config['processes'][index]
                         shared_utils.save_config(self.config)
                         self.update_process_list()            
             else:
-                tk.messagebox.showerror("Error", f"No process found with the name '{self.selected_process}'")
+                CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
 
     def move_up(self):
         if self.selected_process:
@@ -405,7 +406,7 @@ class OwletteConfigApp:
             shared_utils.save_config(self.config)
         else:
             self.gmail_toggle.deselect()
-            tk.messagebox.showwarning("No Emails", "Please enter at least one email address to use the Gmail API.")
+            CTkMessagebox(master=self.master, title="No Emails", message="Please enter at least one email address to use the Gmail API.")
 
 
     def validate_email_address(self, email):
@@ -415,7 +416,7 @@ class OwletteConfigApp:
             return True
         except EmailNotValidError as e:
             # email is not valid, exception message is human-readable
-            tk.messagebox.showerror('Email address invalid', f"{e}")
+            CTkMessagebox(master=self.master, title='Email address invalid', message=f"{e}", icon="cancel")
             return False
 
     def update_email_config(self, event=None):
@@ -423,7 +424,7 @@ class OwletteConfigApp:
         for email in emails_to:
             if email.strip():  # Skip validation for empty items in the list
                 if not self.validate_email_address(email.strip()):
-                    tk.messagebox.showerror("Validation Error", f"The 'Email To' address {email} is not valid.")
+                    CTkMessagebox(master=self.master, title="Validation Error", message=f"The 'Email To' address {email} is not valid.", icon="cancel", justify="right")
                     return
 
         self.config['gmail']['to'] = [email.strip() for email in emails_to]
@@ -444,7 +445,7 @@ class OwletteConfigApp:
 
             if email:
                 # Let the user know that we really did send an email
-                messagebox.showwarning("Success", "Confirmation email sent. Please check your inbox.")
+                CTkMessagebox(master=self.master, title="Success", message="Confirmation email sent. Please check your inbox.")
 
         except Exception as e:
             logging.error(f'Error sending confirmation email: {e}')
@@ -512,7 +513,7 @@ class OwletteConfigApp:
                 shared_utils.write_config(['slack', 'enabled'], True)
 
                 # Let the user know that we really did send a message to their slack
-                messagebox.showwarning("Success", "Message delivered. Please check your Slack in the #owlette channel.")
+                CTkMessagebox(master=self.master, title="Success", message="Message delivered. Please check your Slack in the #owlette channel.")
 
 if __name__ == "__main__":
     # Initialize logging

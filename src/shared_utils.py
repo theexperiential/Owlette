@@ -266,6 +266,7 @@ def center_window(root, width, height):
     x = (screen_width / 2) - (width * scaling_factor / 2)
     y = (screen_height / 2) - (height * scaling_factor / 2)
     root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
+    root.minsize(width, height)
 
 
 upgrade_config()
