@@ -72,18 +72,18 @@ class CTkMessagebox(customtkinter.CTkToplevel):
             LOGPIXELSX = 88
             actual_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
             ctypes.windll.user32.ReleaseDC(0, hdc)
-            scaling_factor = actual_dpi / 96.0  # 96 DPI is the standard DPI, so we divide the actual by 96 to get the scaling factor
+            self.scaling_factor = actual_dpi / 96.0  # 96 DPI is the standard DPI, so we divide the actual by 96 to get the scaling factor
         except Exception as e:
             print(e)
-            scaling_factor = 1.0
+            self.scaling_factor = 1.0
 
         # Get screen width and height
-        screen_width = master.winfo_screenwidth() * scaling_factor
-        screen_height = master.winfo_screenheight() * scaling_factor
+        screen_width = master.winfo_screenwidth() * self.scaling_factor
+        screen_height = master.winfo_screenheight() * self.scaling_factor
 
         # Calculate position x and y coordinates
-        self.spawn_x = int((screen_width / 2) - (self.width * scaling_factor / 2))
-        self.spawn_y = int((screen_height / 2) - (self.height * scaling_factor / 2))
+        self.spawn_x = int((screen_width / 2) - (self.width * self.scaling_factor / 2))
+        self.spawn_y = int((screen_height / 2) - (self.height * self.scaling_factor / 2))
 
         self.geometry(f"{self.width}x{self.height}+{self.spawn_x}+{self.spawn_y}")
         self.title(title)
@@ -244,7 +244,7 @@ class CTkMessagebox(customtkinter.CTkToplevel):
         
         self.info = customtkinter.CTkButton(self.frame_top,  width=1, height=self.height/2, corner_radius=0, text=self.message, font=self.font,
                                             fg_color=self.fg_color, hover=False, text_color=self.text_color, image=self.icon)
-        self.info._text_label.configure(wraplength=self.width, justify="left")
+        self.info._text_label.configure(wraplength=self.width if self.scaling_factor > 1.0 else self.width / 2, justify="left")
         self.info.grid(row=1, column=0, columnspan=6, sticky="nwes", padx=self.border_width)
         
         if self.info._text_label.winfo_reqheight()>self.height/2:
