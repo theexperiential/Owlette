@@ -6,6 +6,7 @@ import customtkinter as ctk
 from CTkListbox import *
 from CTkMessagebox import CTkMessagebox
 import os
+import signal
 import json
 from email_validator import validate_email, EmailNotValidError
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -158,16 +159,20 @@ class OwletteConfigApp:
         self.process_list.grid(row=1, column=4, columnspan=3, rowspan=6, sticky='nsew', padx=(10,20), pady=10)
         self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, width=80)
 
+        # Create Kill button
+        self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
+        self.kill_button.grid(row=7, column=4, sticky='e', padx=(10, 20), pady=(5, 10))
+
+        # Create Delete button
+        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
+        self.remove_button.grid(row=7, column=4, sticky='w', padx=(10, 20), pady=(5, 10))
+
         # Up and down buttons
         self.up_button = ctk.CTkButton(self.master, text="Up", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
         self.up_button.grid(row=7, column=5, sticky='w', padx=(10, 10), pady=(5, 10))
 
         self.down_button = ctk.CTkButton(self.master, text="Down", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
         self.down_button.grid(row=7, column=6, sticky='e', padx=(10, 20), pady=(5, 10))
-
-        # Create Delete button
-        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
-        self.remove_button.grid(row=7, column=4, sticky='w', padx=(10, 20), pady=(5, 10))
 
         ## NOTIFICATIONS
         # Create a frame for the notifications section
@@ -375,6 +380,34 @@ class OwletteConfigApp:
 
     # PROCESS LIST
 
+    def get_os_pid_by_process_id(self, process_list_id, result_file_path):
+        app_states = shared_utils.read_json_from_file(result_file_path)
+        
+        # Filter the dictionary by the process_list_id
+        filtered_dict = {pid: info for pid, info in app_states.items() if info.get('id') == process_list_id}
+        
+        # Sort the filtered dictionary by the timestamp
+        sorted_dict = {k: v for k, v in sorted(filtered_dict.items(), key=lambda item: item[1]['timestamp'], reverse=True)}
+        
+        # Get the last (latest) pid
+        last_pid = next(iter(sorted_dict.keys()), None)
+        
+        return int(last_pid) if last_pid else None
+
+    def kill_process(self):
+        if self.selected_process:
+            # Assuming you have a way to get the actual OS process ID from the selected process
+            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+            if os_pid:
+                try:
+                    os.kill(os_pid, signal.SIGTERM)  # or signal.SIGKILL
+                except Exception as e:
+                    CTkMessagebox(master=self.master, title="Error", message=f"Failed to kill the process: {e}", icon="cancel")
+            else:
+                CTkMessagebox(master=self.master, title="Error", message="No OS process ID found for the selected process.", icon="cancel")
+        else:
+            CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to kill it.", icon="cancel")
+
     def update_process_list(self):
         for i in range(1, self.process_list.size()):
             self.process_list.delete(i)
@@ -395,6 +428,8 @@ class OwletteConfigApp:
                         self.update_process_list()            
             else:
                 CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
+        else:
+            CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to remove it.", icon="cancel")
 
     def move_up(self):
         if self.selected_process:
@@ -404,6 +439,8 @@ class OwletteConfigApp:
                 shared_utils.save_config(self.config)
                 self.update_process_list()
                 self.process_list.activate(index-1)
+        else:
+            CTkMessagebox(master=self.master, title="Error", message=f"You must select a process move it up in the list.", icon="cancel")
 
     def move_down(self):
         if self.selected_process:
@@ -413,6 +450,8 @@ class OwletteConfigApp:
                 shared_utils.save_config(self.config)
                 self.update_process_list()
                 self.process_list.activate(index+1)
+        else:
+            CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to move it down in the list.", icon="cancel")
 
     def on_select(self, process_name):
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)

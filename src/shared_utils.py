@@ -42,7 +42,9 @@ def get_path(filename=None):
     
     return path
 
+# PATHS
 CONFIG_PATH = get_path('../config/config.json')
+RESULT_FILE_PATH = get_path('../tmp/app_states.json')
 
 # LOGGING
 # Initialize logging with a rotating file handler

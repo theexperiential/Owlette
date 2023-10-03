@@ -23,7 +23,6 @@ python owlette_service.py install | start | stop | remove
 
 # Constants
 LOG_FILE_PATH = shared_utils.get_path('../logs/service.log')
-RESULT_FILE_PATH = shared_utils.get_path('../tmp/app_states.json')
 MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 10
 TIME_TO_INIT = 60
@@ -34,7 +33,7 @@ class Util:
     # Initialize results file
     @staticmethod
     def initialize_results_file():
-        with open(RESULT_FILE_PATH, 'w') as f:
+        with open(shared_utils.RESULT_FILE_PATH, 'w') as f:
             json.dump({}, f)
 
     # Check if the script is running
@@ -252,20 +251,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.current_timestamp = int(time.time())
 
         # Read existing results from the output file
-        if os.path.exists(RESULT_FILE_PATH):
-            try:
-                with open(RESULT_FILE_PATH, 'r') as f:
-                    self.results = json.load(f)
-            except json.JSONDecodeError:
-                logging.error("Failed to decode JSON from result file")
-                self.results = {}
-            except FileNotFoundError:
-                logging.error("File not found.")
-                self.results = {}
-            except Exception as e:
-                logging.error(f"An error occurred while reading the result file: {e}")
-                self.results = {}
-        else:
+        try:
+            self.results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+        except:
+            logging.error('JSON read error')
             self.results = {}
 
         # Initialize the entry for the PID if it doesn't exist
@@ -275,9 +264,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Record the timestamp for the newly started process
         self.results[str(pid)]['timestamp'] = self.current_timestamp
 
+        # Add process list ID
+        self.results[str(pid)]['id'] = process['id']
+
         # Write the updated results back to the output file
-        with open(RESULT_FILE_PATH, 'w') as f:
-            json.dump(self.results, f)
+        try:
+            shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
+        except:
+            logging.error('JSON write error')
 
         return pid
 
@@ -450,7 +444,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.current_time = datetime.datetime.now()
 
             # Load in latest results from the output file
-            content = shared_utils.read_json_from_file(RESULT_FILE_PATH)
+            content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
             if content:
                 self.results = content
 
