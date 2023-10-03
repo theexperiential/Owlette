@@ -8,6 +8,7 @@ from packaging import version
 import psutil
 import GPUtil
 import platform
+import subprocess
 
 # GLOBAL VARS
 
@@ -280,9 +281,20 @@ def center_window(root, width, height):
     root.minsize(width, height)
 
 # METRICS
+def get_cpu_name():
+    try:
+        cpu_name = subprocess.check_output('wmic cpu get name', shell=True, text=True, stderr=subprocess.STDOUT).strip().split('\n')[-1]
+        return cpu_name
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
 def get_system_info():
     # Get system information
-    cpu_info = platform.processor()
+    cpu_info = get_cpu_name()
+    if not cpu_info:
+        # Revert to platform info
+        cpu_info = platform.processor()
     cpu_usage = psutil.cpu_percent()
     memory_info = psutil.virtual_memory()
     disk_info = psutil.disk_usage('/')
