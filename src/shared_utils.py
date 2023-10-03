@@ -5,6 +5,9 @@ from logging.handlers import RotatingFileHandler
 import ctypes
 import socket
 from packaging import version
+import psutil
+import GPUtil
+import platform
 
 # GLOBAL VARS
 
@@ -276,5 +279,29 @@ def center_window(root, width, height):
     root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
     root.minsize(width, height)
 
+# METRICS
+def get_system_info():
+    # Get system information
+    cpu_info = platform.processor()
+    cpu_usage = psutil.cpu_percent()
+    memory_info = psutil.virtual_memory()
+    disk_info = psutil.disk_usage('/')
+    gpus = GPUtil.getGPUs()
+    gpu_info = gpus[0] if gpus else "No GPU detected"
+
+    # Convert bytes to gigabytes
+    bytes_to_gb = lambda x: round(x / (1024 ** 3), 2)
+
+    return {
+        'cpu_model': cpu_info,
+        'cpu_usage': cpu_usage,
+        'memory_used': bytes_to_gb(memory_info.used),
+        'memory_total': bytes_to_gb(memory_info.total),
+        'disk_used': bytes_to_gb(disk_info.used),
+        'disk_total': bytes_to_gb(disk_info.total),
+        'gpu_model': gpu_info.name if gpu_info else 'N/A',
+        'gpu_info': gpu_info.memoryUsed if gpu_info else 'N/A',
+        'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
+    }
 
 upgrade_config()

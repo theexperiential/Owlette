@@ -203,9 +203,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         priority = process.get('priority', 'Normal')
         priority_mapping = {
             "Low": win32con.IDLE_PRIORITY_CLASS,
-            #"Below Normal": win32con.BELOW_NORMAL_PRIORITY_CLASS,
+            #"Below Normal": win32con.BELOW_NORMAL_PRIORITY_CLASS, # doesn't seem to work?
             "Normal": win32con.NORMAL_PRIORITY_CLASS,
-            #"Above Normal": win32con.ABOVE_NORMAL_PRIORITY_CLASS,
+            #"Above Normal": win32con.ABOVE_NORMAL_PRIORITY_CLASS, # doesn't seem to work?
             "High": win32con.HIGH_PRIORITY_CLASS,
             "Realtime": win32con.REALTIME_PRIORITY_CLASS
         }

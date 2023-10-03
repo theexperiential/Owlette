@@ -1,8 +1,6 @@
 import shared_utils
 import logging
 import json
-import psutil
-import GPUtil
 import keyring
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -10,7 +8,6 @@ from email.mime.multipart import MIMEMultipart
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 import base64
-import platform
 import argparse
 
 # Take an input of the app name that was restarted
@@ -20,30 +17,6 @@ parser.add_argument('--reason', type=str, help='Reason for the email notificatio
 args = parser.parse_args()
 process_name = args.process_name
 reason = args.reason
-
-def get_system_info():
-    # Get system information
-    cpu_info = platform.processor()
-    cpu_usage = psutil.cpu_percent()
-    memory_info = psutil.virtual_memory()
-    disk_info = psutil.disk_usage('/')
-    gpus = GPUtil.getGPUs()
-    gpu_info = gpus[0] if gpus else "No GPU detected"
-
-    # Convert bytes to gigabytes
-    bytes_to_gb = lambda x: round(x / (1024 ** 3), 2)
-
-    return {
-        'cpu_model': cpu_info,
-        'cpu_usage': cpu_usage,
-        'memory_used': bytes_to_gb(memory_info.used),
-        'memory_total': bytes_to_gb(memory_info.total),
-        'disk_used': bytes_to_gb(disk_info.used),
-        'disk_total': bytes_to_gb(disk_info.total),
-        'gpu_model': gpu_info.name if gpu_info else 'N/A',
-        'gpu_info': gpu_info.memoryUsed if gpu_info else 'N/A',
-        'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
-    }
 
 def send_email(app_name, reason):
     # Load config
@@ -73,7 +46,7 @@ def send_email(app_name, reason):
     service = build('gmail', 'v1', credentials=credentials)
 
     # Get system info
-    system_info = get_system_info()
+    system_info = shared_utils.get_system_info()
 
     # Email subject and body
     hostname = shared_utils.get_hostname()

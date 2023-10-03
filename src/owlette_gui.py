@@ -186,12 +186,12 @@ class OwletteConfigApp:
 
         # Create Gmail toggle
         self.gmail_toggle = ctk.CTkSwitch(master=self.master, text="Gmail", command=self.toggle_gmail, onvalue="on", offvalue="off")
-        self.gmail_toggle.configure(bg_color=shared_utils.FRAME_COLOR)
+        self.gmail_toggle.configure(bg_color=shared_utils.FRAME_COLOR, progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
         self.gmail_toggle.grid(row=10, column=1, sticky='w', padx=(5), pady=(10, 10))
 
         # Create Slack toggle
         self.slack_toggle = ctk.CTkSwitch(master=self.master, text="Slack", command=self.toggle_slack, onvalue="on", offvalue="off")
-        self.slack_toggle.configure(bg_color=shared_utils.FRAME_COLOR)
+        self.slack_toggle.configure(bg_color=shared_utils.FRAME_COLOR, progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
         self.slack_toggle.grid(row=10, column=2, sticky='e', padx=(5), pady=(10, 10))
 
 
@@ -550,7 +550,7 @@ class OwletteConfigApp:
 
         if channel_id:
             # Post a confirmation Slack message
-            msg = f":owl: Hoo hoo! :computer: {shared_utils.get_hostname()} :wave: I'm connected to Slack :thumbsup: What a _hoot_!"
+            msg = f":owl: Hoo hoo! from :computer: {shared_utils.get_hostname()}\n> :wave: I'm connected to Slack :thumbsup: What a _hoot_!"
             if owlette_slack.send_message(msg):
                 # message success, Slack is configured, set to true in JSON
                 shared_utils.write_config(['slack', 'enabled'], True)

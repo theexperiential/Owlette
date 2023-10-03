@@ -106,7 +106,41 @@ def send_message(message_text):
     channel_id = get_cred('Owlette', 'ChannelID')
     if token and channel_id:
         url = "https://slack.com/api/chat.postMessage"
-        data = {"channel": channel_id, "text": message_text}
+
+        # Get system info
+        system_info = shared_utils.get_system_info()
+
+        # Create the alert block
+        alert_block = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":loudspeaker: *Alert!* @channel\n\n> {message_text}"
+            }
+        }
+
+        # Create the metrics block
+        metrics_block = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":mag: *System Metrics*\n\n> - :computer: *CPU Model*: {system_info['cpu_model']}\n> - :zap: *CPU Usage*: {system_info['cpu_usage']}%\n> - :bar_chart: *Memory Used/Total*: {system_info['memory_used']} GB/{system_info['memory_total']} GB\n> - :cd: *Disk Used/Total*: {system_info['disk_used']} GB/{system_info['disk_total']} GB\n> - :video_game: *GPU Model*: {system_info['gpu_model']}\n> - :film_frames: *GPU VRAM Used/Total*: {system_info['gpu_info']} MB/{system_info['gpu_total']} MB"
+            }
+        }
+
+
+        # Create the message payload
+        data = {
+            "channel": channel_id,
+            "blocks": [alert_block, metrics_block],
+            "attachments": [
+                {
+                    "color": "#36a64f",  # You can change the color
+                }
+            ]
+        }
+
+        # Send the message
         response_json = slack_api_call("POST", url, token, json=data)
         
         if response_json:
@@ -118,6 +152,7 @@ def send_message(message_text):
 
 try:
     if process_name is not None and reason is not None:
-        send_message(f":owl: Hoo! :computer: {shared_utils.get_hostname()} :chart_with_downwards_trend: {process_name} :pencil2: {reason}")
+        send_message(f":owl: Hoo! from :computer: {shared_utils.get_hostname()}\n> :chart_with_downwards_trend: {process_name}\n> :pencil2: {reason}")
+
 except Exception as e:
     logging.error(e)
