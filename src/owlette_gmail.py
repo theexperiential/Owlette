@@ -3,6 +3,7 @@ import logging
 import json
 import keyring
 from datetime import datetime
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from google.oauth2.credentials import Credentials
@@ -31,10 +32,6 @@ def send_email(app_name, reason):
         client_id = client_info['installed']['client_id']
         client_secret = client_info['installed']['client_secret']
         token_uri = client_info['installed']['token_uri']
-
-    #logging.info(f'client_id: {client_id}')
-    #logging.info(f'client_secret: {client_secret}')
-    #logging.info(f'refresh_token: {refresh_token}')
 
     # Initialize the Gmail API client
     credentials = Credentials.from_authorized_user_info({
