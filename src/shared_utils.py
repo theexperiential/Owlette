@@ -12,8 +12,8 @@ import subprocess
 
 # GLOBAL VARS
 
-APP_VERSION = '0.3.3b'
-CONFIG_VERSION = '1.1.0'
+APP_VERSION = '0.3.4b'
+CONFIG_VERSION = '1.2.0'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
 BUTTON_HOVER_COLOR = '#27424a'
@@ -109,9 +109,9 @@ def upgrade_config():
         current_version = config.get('version', '0.0.0')
 
         # If version is less than 1.1.0, apply changes
-        if version.parse(current_version) < version.parse('1.2.0'):
-            # Add or update the 'version' key
-            config['version'] = '1.2.0'
+        if version.parse(current_version) < version.parse(CONFIG_VERSION):
+            # Add or update the 'version' key to latest
+            config['version'] = CONFIG_VERSION
 
             # Update other keys as needed
             if 'email' in config:
