@@ -115,7 +115,7 @@ def send_message(message_text):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f":loudspeaker: *Alert!* @channel\n\n> {message_text}"
+                "text": f":owl: :loudspeaker: *Hoo!* @channel\n\n> {message_text}"
             }
         }
 
@@ -124,7 +124,7 @@ def send_message(message_text):
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f":mag: *System Metrics*\n\n> - :computer: *CPU Model*: {system_info['cpu_model']}\n> - :zap: *CPU Usage*: {system_info['cpu_usage']}%\n> - :bar_chart: *Memory Used/Total*: {system_info['memory_used']} GB/{system_info['memory_total']} GB\n> - :cd: *Disk Used/Total*: {system_info['disk_used']} GB/{system_info['disk_total']} GB\n> - :video_game: *GPU Model*: {system_info['gpu_model']}\n> - :film_frames: *GPU VRAM Used/Total*: {system_info['gpu_info']} MB/{system_info['gpu_total']} MB"
+                "text": f":mag: *System Metrics*\n\n> - :computer: CPU Model: *{system_info['cpu_model']}*\n> - :zap: CPU Usage: *{system_info['cpu_usage']}%*\n> - :thermometer: Memory Used/Total: *{system_info['memory_used']} GB*/{system_info['memory_total']} GB\n> - :cd: Disk Used/Total: *{system_info['disk_used']} GB*/{system_info['disk_total']} GB\n> - :video_game: GPU Model: *{system_info['gpu_model']}*\n> - :film_frames: GPU VRAM Used/Total: *{system_info['gpu_info']} MB*/{system_info['gpu_total']} MB"
             }
         }
 
@@ -152,7 +152,7 @@ def send_message(message_text):
 
 try:
     if process_name is not None and reason is not None:
-        send_message(f":owl: Hoo! from :computer: {shared_utils.get_hostname()}\n> :chart_with_downwards_trend: {process_name}\n> :pencil2: {reason}")
+        send_message(f":computer: Computer: *{shared_utils.get_hostname()}*\n> :carpentry_saw: Process: *{process_name}*\n> :pencil2: Status: *{reason}*")
 
 except Exception as e:
     logging.error(e)
