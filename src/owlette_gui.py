@@ -15,20 +15,27 @@ import logging
 import uuid
 import threading
 import subprocess
+import time
 
 class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
+        
+        # Initialize UI
         self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
         shared_utils.center_window(master, 1024, 550)
-        self.selected_process = None
-
-        # Initialize UI
         self.setup_ui()
 
         # Load existing config after defining email entry widgets
         self.config = shared_utils.load_config(self.emails_to_entry)
+
+        # Process list
+        self.prev_process_list = None
+        self.selected_process = None
+        self.selected_index = None
+        self.update_process_list()
+        self.master.after(1000, self.update_process_list_periodically)
 
         # Set default values if empty
         if not self.time_delay_entry.get():
@@ -242,6 +249,10 @@ class OwletteConfigApp:
             self.config['processes'][index]['autolaunch'] = not current_state
             shared_utils.save_config(self.config)
 
+            # Status message
+            pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
+            shared_utils.update_process_status_in_json(pid, 'UNKNOWN' if current_state else 'QUEUED')
+
     def update_selected_process(self,event=None):
         # Field Validation
         name = self.name_entry.get()
@@ -398,21 +409,64 @@ class OwletteConfigApp:
         if self.selected_process:
             # Assuming you have a way to get the actual OS process ID from the selected process
             os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+            killed = False
             if os_pid:
                 try:
                     os.kill(os_pid, signal.SIGTERM)  # or signal.SIGKILL
+                    killed = True
                 except Exception as e:
                     CTkMessagebox(master=self.master, title="Error", message=f"Failed to kill the process: {e}", icon="cancel")
             else:
                 CTkMessagebox(master=self.master, title="Error", message="No OS process ID found for the selected process.", icon="cancel")
+
+            if killed:
+                shared_utils.update_process_status_in_json(os_pid, 'KILLED')
         else:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to kill it.", icon="cancel")
 
+    def map_status_to_config(self, status_data, config_data):
+        id_to_status = {}
+        for pid, info in status_data.items():
+            id_ = info.get('id', None)
+            status = info.get('status', None)
+            if id_ and status:
+                id_to_status[id_] = status
+
+        for process in config_data['processes']:
+            id_ = process.get('id', None)
+            if id_:
+                process['status'] = id_to_status.get(id_, "UNKNOWN")
+
+        return config_data
+
     def update_process_list(self):
-        for i in range(1, self.process_list.size()):
-            self.process_list.delete(i)
-        for i, process in enumerate(self.config['processes']):
-            self.process_list.insert(i, process['name'])
+        # Get currently selected item
+        if self.process_list.curselection() is not None:
+            self.selected_index = self.process_list.curselection()
+
+        status_data = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+        config = shared_utils.read_config()
+        updated_config = self.map_status_to_config(status_data, config)
+        
+        new_list = [f"{process['status']} - {process['name']}" for process in updated_config['processes']]
+
+        if new_list != self.prev_process_list:
+            if self.process_list.size() > 0:
+                self.process_list.delete(0, 'end')  # Clear the existing listbox items
+            for item in new_list:
+                self.process_list.insert('end', item)
+            self.prev_process_list = new_list  # Update the previous list
+
+        # Try to reselect it automatically
+        if self.selected_index is not None:
+            try:
+                self.process_list.activate(self.selected_index)
+            except Exception as e:
+                print(e)
+
+    def update_process_list_periodically(self):
+        self.update_process_list()
+        self.master.after(1000, self.update_process_list_periodically)  # Schedule next run
 
     def remove_process(self):
         if self.selected_process:
@@ -454,6 +508,8 @@ class OwletteConfigApp:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to move it down in the list.", icon="cancel")
 
     def on_select(self, process_name):
+        if " - " in process_name:
+            process_name = process_name.split(" - ")[1]
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
         self.selected_process = process_id
         process = shared_utils.fetch_process_by_id(process_id, self.config)
@@ -596,6 +652,8 @@ class OwletteConfigApp:
 
                 # Let the user know that we really did send a message to their slack
                 CTkMessagebox(master=self.master, title="Success", message="Message delivered. Please check your Slack in the #owlette channel.")
+
+    # MISC
 
 if __name__ == "__main__":
     # Initialize logging

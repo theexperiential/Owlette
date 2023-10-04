@@ -243,7 +243,27 @@ def write_config(keys, value):
 
     write_json_to_file(config, CONFIG_PATH)
 
-# PROCESSES 
+# PROCESSES
+
+def fetch_pid_by_id(target_id):
+    data = read_json_from_file(RESULT_FILE_PATH)
+    
+    # Filter out the processes that match the target_id
+    matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
+    
+    if not matching_processes:
+        print(f"No processes found with id: {target_id}")
+        return None
+    
+    # Find the pid of the process with the newest timestamp
+    newest_pid = max(matching_processes.keys(), key=lambda pid: matching_processes[pid]['timestamp'])
+    
+    return newest_pid
+
+def update_process_status_in_json(pid, new_status):
+    data = read_json_from_file(RESULT_FILE_PATH)
+    data[str(pid)]['status'] = new_status
+    write_json_to_file(data, RESULT_FILE_PATH)
 
 def fetch_process_by_id(id, data):
     return next((process for process in data['processes'] if process['id'] == id), None)
@@ -258,7 +278,6 @@ def fetch_process_id_by_name(name, data):
 
 def get_process_index(selected_process_id):
     return next((i for i, p in enumerate(read_config()['processes']) if p['id'] == selected_process_id), None)
-
 
 # WINDOWS / UI
 
@@ -317,5 +336,3 @@ def get_system_info():
         'gpu_info': gpu_info.memoryUsed if gpu_info else 'N/A',
         'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
     }
-
-upgrade_config()

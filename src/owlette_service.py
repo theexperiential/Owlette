@@ -163,7 +163,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error(f"Unknown notification type: {notification_type}")
                 return
 
-            self.start_python_script_as_user(
+            self.launch_python_script_as_user(
                 script_path,
                 f'--process_name "{process_name}" --reason "{reason}"'
             )
@@ -173,7 +173,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
 
     # Start a python script as a user
-    def start_python_script_as_user(self, script_name, args):
+    def launch_python_script_as_user(self, script_name, args):
         try:
             self.startup_info.wShowWindow = win32con.SW_HIDE
             command_line = f'python "{shared_utils.get_path(script_name)}" {args}' if args else f'python "{shared_utils.get_path(script_name)}"'
@@ -194,7 +194,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return False
 
     # Start a Windows process as a user
-    def start_process_as_user(self, process):
+    def launch_process_as_user(self, process):
+        logging.info('got here')
+
         # Get visibility, default is shown
         visibility = process.get('visibility', 'Show')
 
@@ -267,11 +269,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Add process list ID
         self.results[str(pid)]['id'] = process['id']
 
+        # Update status
+        self.results[str(pid)]['status'] = 'LAUNCHING'
+
         # Write the updated results back to the output file
         try:
             shared_utils.write_json_to_file(self.results, shared_utils.RESULT_FILE_PATH)
         except:
             logging.error('JSON write error')
+
 
         return pid
 
@@ -283,17 +289,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             process_list_id = shared_utils.fetch_process_id_by_name(process_name, shared_utils.read_config())
             relaunches_to_attempt = int(shared_utils.read_config(keys=['relaunch_attempts'], process_list_id=process_list_id))
+            if not relaunches_to_attempt:
+                relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
 
             # Check if restart prompt is running
             if not Util.is_script_running('prompt_restart.py'):
-                if 0 < attempts <= (relaunches_to_attempt or MAX_RELAUNCH_ATTEMPTS):
+                if 0 < attempts <= relaunches_to_attempt:
                     self.log_and_notify(
                         process,
-                        f'Process relaunch attempt: {attempts}'
+                        f'Process relaunch attempt: {attempts} of {relaunches_to_attempt}'
                     )
-                if attempts > (relaunches_to_attempt or MAX_RELAUNCH_ATTEMPTS) and relaunches_to_attempt != 0:
+                if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
                     # If a restart prompt isn't already running, open one
-                    started_restart_prompt = self.start_python_script_as_user(
+                    started_restart_prompt = self.launch_python_script_as_user(
                         shared_utils.get_path('prompt_restart.py'),
                         None
                     )
@@ -322,13 +330,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
             try:
+                # Kill the process
                 psutil.Process(pid).terminate()
-                new_pid = self.start_process_as_user(process)
+                # Update status
+                shared_utils.update_process_status_in_json(pid, 'KILLED')
+                # Launch new process
+                new_pid = self.launch_process_as_user(process)
                 self.log_and_notify(
                     process,
                     f'Terminated PID {pid} and restarted with new PID {new_pid}'
                 )
-
                 return new_pid
 
             except Exception as e:
@@ -359,7 +370,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info('got here')
                 # Attempt to start the process
                 try:
-                    pid = self.start_process_as_user(process)
+                    pid = self.launch_process_as_user(process)
                 except Exception as e:
                     logging.error(f"Could not start process {Util.get_process_name(process)}.\n {e}")
                 
@@ -378,20 +389,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Check JSON for process response status
         process_name = Util.get_process_name(process)
         try:
-            is_not_responding = self.results.get(str(pid), {}).get('isNotResponding', False)
+            responsive = self.results.get(str(pid), {}).get('responsive', True)
         except json.JSONDecodeError:
             logging.error("Failed to decode JSON from result file")
-            is_not_responding = False
+            responsive = True
         except Exception:
             logging.error("An unexpected error occurred")
-            is_not_responding = False
+            responsive = True
 
         # Attempt to kill and relaunch if unresponsive
-        if is_not_responding:
+        if not responsive:
             self.log_and_notify(
                 process,
                 f"Process {process_name} (PID {pid}) is not responding"
             )
+            # Status message
+            shared_utils.update_process_status_in_json(pid, 'STALLED')
             time.sleep(1)
             new_pid = self.kill_and_relaunch_process(pid, process)
             return new_pid
@@ -410,17 +423,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Check if process is running
             if last_pid and Util.is_pid_running(last_pid):
                 # Launch scout to check if process is responsive
-                self.start_python_script_as_user(
+                self.launch_python_script_as_user(
                     shared_utils.get_path('owlette_scout.py'), 
                     str(last_pid)
                 )
                 new_pid = self.handle_unresponsive_process(last_pid, process)
             else:
-                # Launch the process if it isn't running
+                # Process was likely terminated, update status
+                shared_utils.update_process_status_in_json(last_pid, 'TERMINATED')
+
+                # Launch the process again if it isn't running
                 new_pid = self.handle_process_launch(process)
     
         if new_pid:
             self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
+        else:
+            # Status message
+            shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
 
     # Main main
     def main(self):
