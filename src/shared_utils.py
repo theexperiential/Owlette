@@ -9,10 +9,11 @@ import psutil
 import GPUtil
 import platform
 import subprocess
+import threading
 
 # GLOBAL VARS
 
-APP_VERSION = '0.3.4b'
+APP_VERSION = '0.3.5b'
 CONFIG_VERSION = '1.2.0'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
@@ -24,7 +25,11 @@ WINDOW_TITLES = {
     "prompt_restart": "Process repeatedly failing!"
 }
 
+
 # OS
+# Initialize a global lock
+json_lock = threading.Lock()
+
 # Return the hostname of the machine where the script is running
 def get_hostname():
     return socket.gethostname()
@@ -81,11 +86,11 @@ def initialize_logging(log_file_name, level=logging.INFO):
 # an emails_to_entry list with email addresses from the configuration.
 def load_config(emails_to_entry=None):
     try:
-        with open(CONFIG_PATH, 'r') as f:
-            config = json.load(f)
-            if emails_to_entry is not None:
-                emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
-            return config
+        config = read_json_from_file(CONFIG_PATH)
+        if emails_to_entry is not None:
+            emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
+        return config
+        
     except FileNotFoundError as e:
         logging.error(f"Failed to load config: {e}")
         return generate_config_file()
@@ -155,26 +160,28 @@ def upgrade_config():
 
 # Read a JSON file and returns its content as a Python dictionary
 def read_json_from_file(file_path):
-    try:
-        with open(file_path, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.info(f"{file_path} not found.")
-        return None
-    except json.JSONDecodeError:
-        logging.error("Failed to decode JSON.")
-        return None
-    except Exception as e:
-        logging.error(f"An error occurred while reading the file: {e}")
-        return None
+    with json_lock:
+        try:
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            logging.info(f"{file_path} not found.")
+            return None
+        except json.JSONDecodeError:
+            logging.error("Failed to decode JSON.")
+            return None
+        except Exception as e:
+            logging.error(f"An error occurred while reading the file: {e}")
+            return None
 
 # Writes a Python dictionary to a JSON file
 def write_json_to_file(data, file_path):
-    try:
-        with open(file_path, 'w') as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        logging.error(f"An error occurred while writing to the file: {e}")
+    with json_lock:
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            logging.error(f"An error occurred while writing to the file: {e}")
 
 # Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):

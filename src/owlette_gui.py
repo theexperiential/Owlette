@@ -249,9 +249,12 @@ class OwletteConfigApp:
             self.config['processes'][index]['autolaunch'] = not current_state
             shared_utils.save_config(self.config)
 
-            # Status message
-            pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
-            shared_utils.update_process_status_in_json(pid, 'UNKNOWN' if current_state else 'QUEUED')
+            # Status message if process has been launched
+            try:
+                pid = shared_utils.fetch_pid_by_id(self.config['processes'][index]['id'])
+                shared_utils.update_process_status_in_json(pid, 'UNKNOWN' if current_state else 'QUEUED')
+            except Exception as e:
+                logging.info(e)
 
     def update_selected_process(self,event=None):
         # Field Validation
@@ -407,7 +410,6 @@ class OwletteConfigApp:
 
     def kill_process(self):
         if self.selected_process:
-            # Assuming you have a way to get the actual OS process ID from the selected process
             os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
             killed = False
             if os_pid:
@@ -567,10 +569,6 @@ class OwletteConfigApp:
 
         self.config['gmail']['to'] = [email.strip() for email in emails_to]
         shared_utils.save_config(self.config)
-
-    def save_credentials_to_file(self, credentials, filename):
-        with open(shared_utils.get_path(filename), 'w') as f:
-            json.dump(json.loads(credentials.to_json()), f)
 
     def send_confirmation_email(self):
         try:

@@ -195,8 +195,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Start a Windows process as a user
     def launch_process_as_user(self, process):
-        logging.info('got here')
-
         # Get visibility, default is shown
         visibility = process.get('visibility', 'Show')
 
@@ -332,14 +330,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
             try:
                 # Kill the process
                 psutil.Process(pid).terminate()
-                # Update status
-                shared_utils.update_process_status_in_json(pid, 'KILLED')
+                
                 # Launch new process
                 new_pid = self.launch_process_as_user(process)
+
                 self.log_and_notify(
                     process,
                     f'Terminated PID {pid} and restarted with new PID {new_pid}'
                 )
+                # Status message
+                shared_utils.update_process_status_in_json(new_pid, 'LAUNCHING')
+                
                 return new_pid
 
             except Exception as e:
@@ -362,12 +363,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Give the app time to launch (if it's launching for the first time)
             last_info = self.last_started.get(process_list_id, {})
             last_time = last_info.get('time')
-            
+                        
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
                 # Delay starting of the app (if applicable)
                 time.sleep(delay)
 
-                logging.info('got here')
                 # Attempt to start the process
                 try:
                     pid = self.launch_process_as_user(process)
@@ -378,8 +378,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
                 logging.info(f"PID {pid} started")
                 
-                logging.info(pid)
-
                 return pid  # Return the new PID
             
             return None  # Return None if the process was not started
@@ -419,6 +417,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Launch process if this is the first startup
         if self.first_start:
             new_pid = self.handle_process_launch(process)
+
         else:
             # Check if process is running
             if last_pid and Util.is_pid_running(last_pid):
@@ -428,18 +427,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     str(last_pid)
                 )
                 new_pid = self.handle_unresponsive_process(last_pid, process)
-            else:
-                # Process was likely terminated, update status
-                shared_utils.update_process_status_in_json(last_pid, 'TERMINATED')
+                
+                #  Everything is fine, keep calm and carry on
+                if not new_pid:
+                    shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
 
+            else:
                 # Launch the process again if it isn't running
                 new_pid = self.handle_process_launch(process)
-    
+        
+        # Update last started info (for handling process startup timing)
         if new_pid:
             self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
-        else:
-            # Status message
-            shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
 
     # Main main
     def main(self):
