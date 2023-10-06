@@ -442,9 +442,11 @@ class OwletteConfigApp:
         return config_data
 
     def update_process_list(self):
+        current_focus = self.master.focus_get()
+
         # Get currently selected item
-        if self.process_list.curselection() is not None:
-            self.selected_index = self.process_list.curselection()
+        #if self.process_list.curselection() is not None:
+        #    self.selected_index = self.process_list.curselection()
 
         status_data = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
         config = shared_utils.read_config()
@@ -465,6 +467,9 @@ class OwletteConfigApp:
                 self.process_list.activate(self.selected_index)
             except Exception as e:
                 print(e)
+
+        if current_focus:
+            current_focus.focus_set()  # Restore the previous focus
 
     def update_process_list_periodically(self):
         self.update_process_list()
