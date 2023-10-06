@@ -21,6 +21,8 @@ class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
+        self.entry = ctk.CTkEntry(master)
+        self.entry.grid(row=0, column=0)
         
         # Initialize UI
         self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
@@ -227,6 +229,19 @@ class OwletteConfigApp:
         self.time_to_init_entry.bind('<Return>', self.update_selected_process)
         self.relaunch_attempts_entry.bind('<Return>', self.update_selected_process)
 
+        # Bind everything to mouse clicks
+        self.name_entry.bind('<Button-1>', self.on_click)
+        self.exe_path_entry.bind('<Button-1>', self.on_click)
+        self.file_path_entry.bind('<Button-1>', self.on_click)
+        self.emails_to_entry.bind('<Button-1>', self.on_click)
+        self.time_delay_entry.bind('<Button-1>', self.on_click)
+        self.time_to_init_entry.bind('<Button-1>', self.on_click)
+        self.relaunch_attempts_entry.bind('<Button-1>', self.on_click)
+        self.process_list.bind('<Button-1>', self.on_click)
+
+        # Bind a mouse click event to the root window to defocus the entry
+        self.master.bind("<Button-1>", self.defocus_entry)
+
         # Make columns stretchable
         self.master.grid_columnconfigure(0, weight=2) # labels
         self.master.grid_columnconfigure(1, weight=3)
@@ -335,6 +350,8 @@ class OwletteConfigApp:
 
         self.update_email_config()  # Always update email config
 
+        self.master.focus_set() # Defocus from the entry widget back to root
+
     def add_process(self):
         # Generate a unique ID for the new process
         unique_id = str(uuid.uuid4())
@@ -442,11 +459,12 @@ class OwletteConfigApp:
         return config_data
 
     def update_process_list(self):
-        current_focus = self.master.focus_get()
-
-        # Get currently selected item
-        #if self.process_list.curselection() is not None:
-        #    self.selected_index = self.process_list.curselection()
+        # Get current keyboard focus (selected entry widget)
+        current_focus = str(self.master.focus_get())
+        #print(f'current focus = {current_focus}')
+        
+        # Get currently selected item from process list
+        self.selected_index = self.process_list.curselection()
 
         status_data = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
         config = shared_utils.read_config()
@@ -461,15 +479,12 @@ class OwletteConfigApp:
                 self.process_list.insert('end', item)
             self.prev_process_list = new_list  # Update the previous list
 
-        # Try to reselect it automatically
-        if self.selected_index is not None:
+        # Try to reselect process list item automatically (if not editing an entry)
+        if self.selected_index is not None and current_focus == '.' or current_focus is None:
             try:
                 self.process_list.activate(self.selected_index)
             except Exception as e:
-                print(e)
-
-        if current_focus:
-            current_focus.focus_set()  # Restore the previous focus
+                logging.info(e)
 
     def update_process_list_periodically(self):
         self.update_process_list()
@@ -657,6 +672,16 @@ class OwletteConfigApp:
                 CTkMessagebox(master=self.master, title="Success", message="Message delivered. Please check your Slack in the #owlette channel.")
 
     # MISC
+    def on_click(self, event):
+        shared_utils.save_config(self.config)
+        if 'ButtonPress' in str(event):
+            self.update_process_list()
+
+    def defocus_entry(self, event):
+        widget = self.master.winfo_containing(event.x_root, event.y_root)
+        if 'ctkframe' in str(widget):
+            self.master.focus_set()  # Transfers focus to the root window
+            shared_utils.save_config(self.config) # Saves config
 
 if __name__ == "__main__":
     # Initialize logging
