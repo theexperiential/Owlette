@@ -16,7 +16,7 @@ import uuid
 import threading
 import subprocess
 import time
-import win32service
+import win32serviceutil
 
 class OwletteConfigApp:
 
@@ -695,12 +695,14 @@ class OwletteConfigApp:
 
     def check_service_is_running(self, service_name):
         try:
-            status = win32service.QueryServiceStatus(service_name)[1]
-            if status == win32service.SERVICE_RUNNING:
+            status = win32serviceutil.QueryServiceStatus(service_name)[1]
+            if status == 4:  # 4 means the service is running
                 return True
+            else:
+                return False
         except Exception as e:
-            print(f"Failed to query service: {e}")
-        return False
+            print(f"An error occurred: {e}")
+            return None
 
     def start_service(self):
         try:
