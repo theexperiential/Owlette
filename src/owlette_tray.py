@@ -48,7 +48,7 @@ def open_config_gui(icon, item):
     global pid
     if not is_process_running(pid):
         try:
-            process = subprocess.Popen(["python", shared_utils.get_path('owlette_gui.py')])
+            process = subprocess.Popen(["pythonw", shared_utils.get_path('owlette_gui.py')])
             pid = process.pid
         except Exception as e:
             logging.error(f"Failed to open Owlette Configuration: {e}")
@@ -130,21 +130,35 @@ def generate_menu():
         item('Exit', exit_action)
     )
 
+def is_script_running(script_name):
+    count = 0
+    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
+        if 'python' in process.info['name']:
+            cmdline = process.info.get('cmdline')
+            if cmdline:
+                if script_name in ' '.join(cmdline):
+                    count += 1
+    return count > 1
 
 if __name__ == "__main__":
     # Initialize logging
     shared_utils.initialize_logging("tray")
 
-    # Create the system tray icon
-    image = create_image()
-    icon = pystray.Icon(
-        "owlette_icon", 
-        image, 
-        "Owlette", 
-        menu=generate_menu()
-    )
+    if not is_script_running('owlette_tray.py'): 
+        # Create the system tray icon
+        image = create_image()
+        icon = pystray.Icon(
+            "owlette_icon", 
+            image, 
+            "Owlette", 
+            menu=generate_menu()
+        )
 
-    # Run the icon
-    icon.run()
+        # Run the icon
+        icon.run()
 
-    logging.info('Exiting Tray icon...')
+        logging.info('Exiting Tray icon...')
+
+    else:
+        logging.info('Tray icon is already running...')
+        sys.exit(0)

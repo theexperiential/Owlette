@@ -16,10 +16,18 @@ import uuid
 import threading
 import subprocess
 import time
+import win32service
 
 class OwletteConfigApp:
 
     def __init__(self, master):
+        # Check service is running
+        service_name = shared_utils.SERVICE_NAME
+        is_running = self.check_service_is_running(service_name)
+        # If not, start it
+        if not is_running:
+            self.start_service()
+
         self.master = master
         self.entry = ctk.CTkEntry(master)
         self.entry.grid(row=0, column=0)
@@ -461,7 +469,7 @@ class OwletteConfigApp:
     def update_process_list(self):
         # Get current keyboard focus (selected entry widget)
         current_focus = str(self.master.focus_get())
-        #print(f'current focus = {current_focus}')
+        #logging.error(f'current focus = {current_focus}')
         
         # Get currently selected item from process list
         self.selected_index = self.process_list.curselection()
@@ -569,7 +577,6 @@ class OwletteConfigApp:
             self.gmail_toggle.deselect()
             CTkMessagebox(master=self.master, title="No Emails", message="Please enter at least one email address to use the Gmail API.")
 
-
     def validate_email_address(self, email):
         try:
             # validate and get info
@@ -671,7 +678,8 @@ class OwletteConfigApp:
                 # Let the user know that we really did send a message to their slack
                 CTkMessagebox(master=self.master, title="Success", message="Message delivered. Please check your Slack in the #owlette channel.")
 
-    # MISC
+    # UI
+
     def on_click(self, event):
         shared_utils.save_config(self.config)
         if 'ButtonPress' in str(event):
@@ -682,6 +690,27 @@ class OwletteConfigApp:
         if 'ctkframe' in str(widget):
             self.master.focus_set()  # Transfers focus to the root window
             shared_utils.save_config(self.config) # Saves config
+
+    # SYSTEM/MISC
+
+    def check_service_is_running(self, service_name):
+        try:
+            status = win32service.QueryServiceStatus(service_name)[1]
+            if status == win32service.SERVICE_RUNNING:
+                return True
+        except Exception as e:
+            print(f"Failed to query service: {e}")
+        return False
+
+    def start_service(self):
+        try:
+            subprocess.Popen(
+                ["pythonw", shared_utils.get_path("start_service.py")],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            print("Service started successfully.")
+        except Exception as e:
+            print(f"Failed to start service: {e}")
 
 if __name__ == "__main__":
     # Initialize logging

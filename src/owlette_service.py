@@ -36,15 +36,6 @@ class Util:
         with open(shared_utils.RESULT_FILE_PATH, 'w') as f:
             json.dump({}, f)
 
-    # Check if the script is running
-    @staticmethod
-    def is_script_running(script_name):
-        for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-            if 'python' in process.info['name']:
-                if script_name in ' '.join(process.info['cmdline']):
-                    return True
-        return False
-
     # Check if a Process ID (PID) is running
     @staticmethod
     def is_pid_running(pid):
@@ -291,12 +282,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
 
             # Check if restart prompt is running
-            if not Util.is_script_running('prompt_restart.py'):
+            if not shared_utils.is_script_running('prompt_restart.py'):
+                # If attempts are less than or equal to the relaunch attempts, log it
                 if 0 < attempts <= relaunches_to_attempt:
                     self.log_and_notify(
                         process,
                         f'Process relaunch attempt: {attempts} of {relaunches_to_attempt}'
                     )
+                # If this is more than the maximum number of attempts allowed
                 if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
                     # If a restart prompt isn't already running, open one
                     started_restart_prompt = self.launch_python_script_as_user(
@@ -455,7 +448,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         while self.is_alive:
             # Start the tray icon script as a process (if it isn't running)
-            if not Util.is_script_running('owlette_tray.py'):
+            if not shared_utils.is_script_running('owlette_tray.py'):
                 self.start_tray_icon()
 
             # Get the current time

@@ -10,6 +10,7 @@ import GPUtil
 import platform
 import subprocess
 import threading
+import psutil
 
 # GLOBAL VARS
 
@@ -24,6 +25,7 @@ WINDOW_TITLES = {
     "prompt_slack_config": "Connect to Slack",
     "prompt_restart": "Process repeatedly failing!"
 }
+SERVICE_NAME = 'OwletteService'
 
 
 # OS
@@ -46,6 +48,15 @@ def get_path(filename=None):
     path = os.path.normpath(path)
     
     return path
+
+def is_script_running(script_name):
+    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
+        print(process.info['name'])
+        print(script_name)
+        if 'python' in process.info['name']:
+            if script_name in ' '.join(process.info['cmdline']):
+                return True
+    return False
 
 # PATHS
 CONFIG_PATH = get_path('../config/config.json')
