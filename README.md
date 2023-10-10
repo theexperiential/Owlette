@@ -22,12 +22,16 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 - 🚀 Starts specified processes upon system startup
 - 🔄 Automatically restarts applications if they freeze, crash or are accidentally closed
 - 📊 Monitors system metrics like CPU usage, memory usage, and disk space
-- 📧 Sends email/Slack notifications using Gmail/Slack APIs
+- 📧 Sends Gmail/Slack notifications using APIs
 - 🍽️ Tray icon for easy access to features and settings
-- 🎚️ Autolaunch Process Toggle: Conveniently disable a process from automatically launching during development
-- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a full system restart
+- 🎚️ Autolaunch/Manage toggle: Conveniently disable a process from automatically launching during development
+- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before issuing a full system restart
+- 🛑 Forcibly terminate processes via the Kill button
+- 📊 View the current status of each monitored process
+- 🎚️ Set the visibility and priority of processes
 
 <a id="installation"></a>
+
 ## 🛠️ Installation
 
 ### 📋 Prerequisites
@@ -163,24 +167,27 @@ The Configuration UI is built using the customtkinter library and is designed to
 
 #### 🔄 Process Details
 
+- **Autolaunch/Manage**: Enables or disables monitoring for the selected process. If enabled, Owlette will check the process every 10 seconds. If it is unresponsive, it will attempt to close and relaunch it. If the process ID (PID) is no longer found, Owlette will attempt to relaunch it automatically.
 - **Name**: Text field to enter the name of the process.
 - **Exe Path**: Text field to specify the executable path. Includes a "Browse" button.
 - **File Path / Cmd Line Args**: Text field for additional file paths or command-line arguments. Includes a "Browse" button.
 - **Launch Time Delay (s)**: Text field to specify a time delay, in seconds, before the process starts.
 - **Time to Initialize (s)**: Text field to specify the total time, in seconds, to give a process to fully initialize before checking it's responsitivity.
-- **Autolaunch Process**: Enable or disable monitoring for the selected process. If enabled, Owlette will check the process every 10 seconds. If it is unresponsive, it will attempt to close and relaunch it. If the process ID (PID) is no longer found, Owlette will attempt to relaunch it automatically.
 - **Relaunch Attempts til Restart**: Set the number of relaunch attempts before a system restart is triggered. Owlette will prompt you with a 30 second countdown window before starting, which you may either initiate, pause or cancel. If the countdown completes, the restart will continue.
-- **Add Process**: Adds a new process to the Process Startup List based on the details provided.
+- **Priority**: Dropdown menu to set the priority level of the process (how much CPU time the process gets compared to other running processes).
+- **Window Visibility**: Dropdown menu to set the process window to be shown or hidden.
+- **Add**: Adds a new process to the Process Startup List based on the details provided.
 
 #### 📋 Process Startup List
 
 - **Listbox**: Displays the list of configured processes. The list is ordered, so your processes will be started in the order you define.
-- **Up**: Move the selected process up in the list (start it before other processes).
-- **Down**: Move the selected process down in the list (start it after other processes).
-- **Del**: Remove the selected process from the list.
-- **Save Changes**: Save any modifications to the selected process and Alerts section.
+- **Kill**: Terminates the selected and running process.
+- **Del**: Removes the selected process from the list.
+- **Up**: Moves the selected process up in the list (start it before other processes).
+- **Down**: Moves the selected process down in the list (start it after other processes).
+- **Save Changes**: Saves any modifications to the selected process and Notifications section. Note that changes are also saved when you press your return key on your keyboard in a text field, or click anywhere outside of one in the UI.
 
-#### 📧 Email Alerts
+#### 📧 Notifications
 
 - **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
 - **Gmail**: Toggle to initiate (or disable) Gmail email notifications.
@@ -189,13 +196,7 @@ The Configuration UI is built using the customtkinter library and is designed to
 ### 🌟 Features
 
 - **Dark Theme**: The UI uses a dark color scheme for better visibility.
-- **Validation**: Includes validation for duplicate process names, invalid paths, and invalid email addresses.
-- **Keyboard Shortcuts**: The Return key can be used to update process and email configurations.
-
-### ⚙️ Additional Functionalities
-
-- **Google OAuth**: Includes a function to get Google OAuth tokens for Gmail.
-- **JSON Configuration**: Utilizes a JSON file (`config.json`) to load and save configurations.
+- **Validation**: Includes validation for invalid file paths and invalid email addresses.
 
 <a id="uninstallation"></a>
 ## 🗑️ Uninstallation 
@@ -215,12 +216,13 @@ This will remove the Owlette service from your system.
 Logs are stored in the `logs` folder, per script. `service.log` for the service, `email.log` for the email sender, `tray.log` for the tray icon, etc. Check these logs for debugging information.
 
 ### 🔄 Restarting the service
-If you exit Owlette from the tray icon or stop the service and wish to restart it, you can go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service", or run the following command as an administrator:
-
-    
+If you exit Owlette from the tray icon or stop the service and wish to restart it, you can: 
+1. Go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service"
+2. Run the `start_service.py` file in the `src` folder
+3. Run the following command as an administrator (from the `src` folder):
+   
     python owlette_service.py start
     
-
 <a id="contributing"></a>
 ## 🤝 Contributing
 
