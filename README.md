@@ -70,17 +70,12 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 ### ☁️ Gmail API Configuration (Google Cloud Platform)
 
-1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
-
-2️⃣ Create a new project.
-
-3️⃣ Navigate to "APIs & Services" > "Dashboard".
-
-4️⃣ Enable the Gmail API.
-
-5️⃣ Create OAuth client IDs and download the client secrets JSON file.
-
-6️⃣ Place the downloaded JSON file in the project `config` directory and rename it to `client_secrets.json`.
+- 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
+- 2️⃣ Create a new project.
+- 3️⃣ Navigate to "APIs & Services" > "Dashboard".
+- 4️⃣ Enable the Gmail API.
+- 5️⃣ Create OAuth client IDs and download the client secrets JSON file.
+- 6️⃣ Place the downloaded JSON file in the project `config` directory and rename it to `client_secrets.json`.
 
 ### 🤖 Slack API Configuration
 
