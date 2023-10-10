@@ -1,6 +1,6 @@
 # 🦉 Owlette
 
-Owlette is a Python-based Windows process watcher service designed for maximum flexibility and editability. 🛠️ It manages and monitors various processes and system metrics, automatically restarting applications if they crash or are accidentally closed. 🔄 It also sends email notifications when certain events occur. 📧
+Owlette is a Python-based Windows process watcher service designed for maximum flexibility and editability. 🛠️ It manages and monitors various processes and system metrics, automatically restarting applications if they crash or are accidentally closed. 🔄 It can also send email and/or Slack notifications when certain events occur. 📧
 
 <img src="img/screenshot.png" alt="Screenshot" width="100%"/>
 
@@ -20,12 +20,12 @@ Owlette is a Python-based Windows process watcher service designed for maximum f
 ## 🌟 Features
 
 - 🚀 Starts specified processes upon system startup
-- 🔄 Automatically restarts applications if they crash or are accidentally closed
+- 🔄 Automatically restarts applications if they freeze, crash or are accidentally closed
 - 📊 Monitors system metrics like CPU usage, memory usage, and disk space
-- 📧 Sends email notifications using Gmail API
+- 📧 Sends email/Slack notifications using Gmail/Slack APIs
 - 🍽️ Tray icon for easy access to features and settings
-- 🎚️ Autostart Process Toggle: Conveniently disable a process from autostarting during development
-- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a system restart
+- 🎚️ Autolaunch Process Toggle: Conveniently disable a process from automatically launching during development
+- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before triggering a full system restart
 
 <a id="installation"></a>
 ## 🛠️ Installation
@@ -56,22 +56,49 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 #### 🖐️ Manual Installation
 
-Install the required Python packages:
+1. Install the required Python packages:
 
     
     pip install -r requirements.txt
     
 
-Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
+2. Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
 
-### ☁️ Google Cloud Platform (GCP) Configuration
+### ☁️ Gmail API Configuration (Google Cloud Platform)
 
 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
 2️⃣ Create a new project.
 3️⃣ Navigate to "APIs & Services" > "Dashboard".
 4️⃣ Enable the Gmail API.
 5️⃣ Create OAuth client IDs and download the client secrets JSON file.
-6️⃣ Place the downloaded JSON file in the project directory and rename it to `client_secrets.json`.
+6️⃣ Place the downloaded JSON file in the project `config` directory and rename it to `client_secrets.json`.
+
+### 🤖 Slack API Configuration
+
+#### 🛠️ Part 1: Create Your Slack App 
+
+1. Head over to the [Slack API website](https://api.slack.com/).
+2. Click on "Create an App" and fill in your App Name and Development Slack Workspace.
+
+#### 🛡️ Part 2: OAuth & Permissions 
+
+1. Once your app is up and running, navigate to the "OAuth & Permissions" page.
+2. Under "Bot Token Scopes," add the following scopes:
+    - `channels:write`
+    - `channels:manage`
+    - `chat:write`
+
+#### 🚀 Part 3: Install the App 
+
+1. Scroll back to the top of the "OAuth & Permissions" page.
+2. Hit that "Install App to Workspace" button.
+3. Review the permissions and click "Allow."
+
+#### Part 4: Enable Slack & Enter OAuth Token
+
+1. Enable the Slack toggle in Owlette Configuration.
+2. Enter your Bot User OAuth Token (from OAuth & Permissions page) and click on "Submit".
+3. Check your Slack workspace in the `#owlette` channel for a message from Owlette!
 
 <a id="usage"></a>
 ## 🚀 Usage
@@ -130,7 +157,7 @@ Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
 
 ### 📑 Overview
 
-The Configuration UI is built using the customtkinter library and is designed to manage processes and email alerts. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
+The Configuration UI is built using the customtkinter library and is designed to manage processes and notifications. It features a dark theme and provides various functionalities like adding, removing, and reordering processes, as well as configuring email settings.
 
 ### 🧩 UI Components
 
@@ -139,8 +166,9 @@ The Configuration UI is built using the customtkinter library and is designed to
 - **Name**: Text field to enter the name of the process.
 - **Exe Path**: Text field to specify the executable path. Includes a "Browse" button.
 - **File Path / Cmd Line Args**: Text field for additional file paths or command-line arguments. Includes a "Browse" button.
-- **Start Time Delay (s)**: Text field to specify a time delay before the process starts.
-- **Autostart Process**: Enable or disable autostart for each process.
+- **Launch Time Delay (s)**: Text field to specify a time delay, in seconds, before the process starts.
+- **Time to Initialize (s)**: Text field to specify the total time, in seconds, to give a process to fully initialize before checking it's responsitivity.
+- **Autolaunch Process**: Enable or disable monitoring for the selected process. If enabled, Owlette will check the process every 10 seconds. If it is unresponsive, it will attempt to close and relaunch it. If the process ID (PID) is no longer found, Owlette will attempt to relaunch it automatically.
 - **Relaunch Attempts til Restart**: Set the number of relaunch attempts before a system restart is triggered. Owlette will prompt you with a 30 second countdown window before starting, which you may either initiate, pause or cancel. If the countdown completes, the restart will continue.
 - **Add Process**: Adds a new process to the Process Startup List based on the details provided.
 
@@ -155,7 +183,8 @@ The Configuration UI is built using the customtkinter library and is designed to
 #### 📧 Email Alerts
 
 - **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
-- **Connect to Gmail**: Button to initiate Gmail OAuth flow for sending emails.
+- **Gmail**: Toggle to initiate (or disable) Gmail email notifications.
+- **Slack**: Toggle to initiate (or disable) Slack notifications.
 
 ### 🌟 Features
 
@@ -183,7 +212,7 @@ This will remove the Owlette service from your system.
 ## 🐞 Troubleshooting
 
 ### 📝 Logs 
-Logs are stored in `_service.log` for the service, `_email.log` for the email notifications, and `_tray.log` for the tray icon. Check these logs for debugging information.
+Logs are stored in the `logs` folder, per script. `service.log` for the service, `email.log` for the email sender, `tray.log` for the tray icon, etc. Check these logs for debugging information.
 
 ### 🔄 Restarting the service
 If you exit Owlette from the tray icon or stop the service and wish to restart it, you can go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service", or run the following command as an administrator:

@@ -12,17 +12,6 @@ import winreg
 import win32gui
 import win32con
 
-# Initialize logging
-log_file_path = shared_utils.get_path('../logs/tray.log')
-# Clear the log file after system restart
-with open(log_file_path, 'w'):
-    pass
-
-logging.basicConfig(filename=log_file_path, level=logging.INFO)
-logging.info('Starting Owlette tray icon...')
-
-
-
 pid = None
 start_on_login = True
 
@@ -55,18 +44,18 @@ def is_process_running(pid):
         return False
 
 # Function to open configuration
-def open_config(icon, item):
+def open_config_gui(icon, item):
     global pid
     if not is_process_running(pid):
         try:
-            process = subprocess.Popen(["python", shared_utils.get_path('owlette_gui.py')])
+            process = subprocess.Popen(["pythonw", shared_utils.get_path('owlette_gui.py')])
             pid = process.pid
         except Exception as e:
             logging.error(f"Failed to open Owlette Configuration: {e}")
     else:
         try:
             # Assuming the window title contains "Owlette"
-            hwnd = win32gui.FindWindow(None, "Owlette Configuration")
+            hwnd = win32gui.FindWindow(None, shared_utils.WINDOW_TITLES.get("owlette_gui"))
             if hwnd:
                 # Restore window if minimized.
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
@@ -78,12 +67,13 @@ def open_config(icon, item):
 # Function to exit
 def exit_action(icon, item):
     try:
-        # Try to close the configuration window if it's open
-        hwnd = win32gui.FindWindow(None, "Owlette Configuration")
-        if hwnd:
-            # Close the window
-            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-        
+        for key, window_title in shared_utils.WINDOW_TITLES.items():
+            # Try to close the configuration window if it's open
+            hwnd = win32gui.FindWindow(None, window_title)
+            if hwnd:
+                # Close the window
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            
         # Stop the service
         ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} stop", None, 0)
     except Exception as e:
@@ -134,21 +124,41 @@ def check_service_status():
 # Dynamically generate the menu
 def generate_menu():
     return pystray.Menu(
-        item('Open Config', open_config),
+        item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),  # Read-only item
+        item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
         item('Exit', exit_action)
     )
 
-# Create the system tray icon
-image = create_image()
-icon = pystray.Icon(
-    "owlette_icon", 
-    image, 
-    "Owlette", 
-    menu=generate_menu()
-)
+def is_script_running(script_name):
+    count = 0
+    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
+        if 'python' in process.info['name']:
+            cmdline = process.info.get('cmdline')
+            if cmdline:
+                if script_name in ' '.join(cmdline):
+                    count += 1
+    return count > 1
 
-# Run the icon
-icon.run()
+if __name__ == "__main__":
+    # Initialize logging
+    shared_utils.initialize_logging("tray")
 
-logging.info('Exiting Tray icon...')
+    if not is_script_running('owlette_tray.py'): 
+        # Create the system tray icon
+        image = create_image()
+        icon = pystray.Icon(
+            "owlette_icon", 
+            image, 
+            "Owlette", 
+            menu=generate_menu()
+        )
+
+        # Run the icon
+        icon.run()
+
+        logging.info('Exiting Tray icon...')
+
+    else:
+        logging.info('Tray icon is already running...')
+        sys.exit(0)
