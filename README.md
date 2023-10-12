@@ -40,7 +40,8 @@ Owlette is a Python-based Windows process manager service designed for maximum f
 
 - 🐍 Python 3.9 or higher
 - 📦 pip (Python package installer)
-- ☁️ Google Cloud Platform (GCP) account for Gmail API
+- ☁️ (Optional) Google Cloud Platform (GCP) account for Gmail API
+- 🤖 (Optional) Slack workspace and admin account for Slack API
 
 1️⃣ Clone the repository:
 
