@@ -106,31 +106,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if shared_utils.read_config(['gmail', 'enabled']):
             self.send_notification('gmail', process_name, reason)
     
-    # Start the tray icon as a user process
-    def start_tray_icon(self):
-        try:
-            logging.info("Starting Owlette Tray...")
-            self.startup_info.wShowWindow = win32con.SW_HIDE
-            command_line = f'python "{shared_utils.get_path("owlette_tray.py")}"'
-            _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
-                None,
-                command_line,
-                None,
-                None,
-                0,
-                win32con.NORMAL_PRIORITY_CLASS,
-                self.environment,
-                None,
-                self.startup_info)
-            self.tray_icon_pid = pid
-
-        except win32process.error as e:
-            logging.error(f"Win32 Process Error while starting Owlette Tray: {e}")
-        except PermissionError as e:
-            logging.error(f"Permission Error while starting Owlette Tray: {e}")         
-        except Exception as e:
-            logging.error(f"Couldn't start Owlette Tray. {e}", exc_info=True)
-
     # Terminate the tray icon process if it exists
     def terminate_tray_icon(self):
         if self.tray_icon_pid:
@@ -164,12 +139,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
 
     # Start a python script as a user
-    def launch_python_script_as_user(self, script_name, args):
+    def launch_python_script_as_user(self, script_name, args=None):
         try:
             self.startup_info.wShowWindow = win32con.SW_HIDE
             command_line = f'python "{shared_utils.get_path(script_name)}" {args}' if args else f'python "{shared_utils.get_path(script_name)}"'
             #logging.info(command_line)
-            win32process.CreateProcessAsUser(self.console_user_token,
+            _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name
                 command_line,  # Command Line
                 None,
@@ -179,6 +154,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self.environment,  # To open in user's self.environment
                 None,
                 self.startup_info)
+            if 'owlette_tray.py' in script_name:
+                self.tray_icon_pid = pid
             return True
         except Exception as e:
             logging.error(f"Failed to start process: {e}")
@@ -448,8 +425,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         while self.is_alive:
             # Start the tray icon script as a process (if it isn't running)
-            if not shared_utils.is_script_running('owlette_tray.py'):
-                self.start_tray_icon()
+            tray_script = 'owlette_tray.py'
+            if not shared_utils.is_script_running(tray_script):
+                self.launch_python_script_as_user(tray_script)
 
             # Get the current time
             self.current_time = datetime.datetime.now()
