@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d %~dp0
 
 :: Check for Python installation
 where python >nul 2>nul
