@@ -1,5 +1,6 @@
 @echo off
 setlocal
+cd /d %~dp0
 
 :: Check for Python installation
 where python >nul 2>nul
@@ -30,18 +31,6 @@ cd %~dp0
 cd src
 python owlette_service.py remove
 
-:: Optional: Ask the user if they want to remove Python dependencies
-set /p uninstall_deps=Do you want to remove Python dependencies? (y/n):
-if "%uninstall_deps%"=="y" (
-    echo Uninstalling Python dependencies...
-    cd %~dp0
-    python -m pip uninstall -r requirements.txt -y
-) else if "%uninstall_deps%"=="n" (
-    echo Skipping Python dependency removal.
-) else (
-    echo Invalid choice. Skipping Python dependency removal.
-)
-
 :: Optional: Ask the user if they want to remove stored credentials
 set /p remove_creds=Do you want to remove stored credentials (Slack and/or Gmail Tokens)? (y/n):
 if "%remove_creds%"=="y" (
@@ -53,6 +42,18 @@ if "%remove_creds%"=="y" (
     echo Skipping stored credential removal.
 ) else (
     echo Invalid choice. Skipping stored credential removal.
+)
+
+:: Optional: Ask the user if they want to remove Python dependencies
+set /p uninstall_deps=Do you want to remove Python dependencies? (y/n):
+if "%uninstall_deps%"=="y" (
+    echo Uninstalling Python dependencies...
+    cd %~dp0
+    python -m pip uninstall -r requirements.txt -y
+) else if "%uninstall_deps%"=="n" (
+    echo Skipping Python dependency removal.
+) else (
+    echo Invalid choice. Skipping Python dependency removal.
 )
 
 :: Done

@@ -11,3 +11,4 @@ customtkinter==5.2.0
 CTkListbox==0.9
 CTkMessagebox==2.5
 packaging==23.1
+pyqt6==6.6.1
