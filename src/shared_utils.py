@@ -14,12 +14,14 @@ import psutil
 
 # GLOBAL VARS
 
-APP_VERSION = '0.4.0b'
+APP_VERSION = '0.4.1b'
 CONFIG_VERSION = '1.2.0'
+WINDOW_COLOR = '#151617'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
 BUTTON_HOVER_COLOR = '#27424a'
 BUTTON_IMPORTANT_COLOR = '#2d5e6c'
+TEXT_COLOR = "white"
 WINDOW_TITLES = {
     "owlette_gui": "Owlette Configuration", 
     "prompt_slack_config": "Connect to Slack",
