@@ -34,7 +34,7 @@ class OwletteConfigApp:
         
         # Initialize UI
         self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
-        shared_utils.center_window(master, 1024, 550)
+        shared_utils.center_window(master, 1024, 600)
         self.setup_ui()
 
         # Load existing config after defining email entry widgets
@@ -78,7 +78,7 @@ class OwletteConfigApp:
         # PROCESS DETAILS
         # Create frame for process details
         self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR)
-        self.process_details_frame.grid(row=0, column=0, sticky='news', rowspan=8, columnspan=4, padx=10, pady=(10,0))
+        self.process_details_frame.grid(row=0, column=0, sticky='news', rowspan=9, columnspan=4, padx=10, pady=(10,0))
 
         # Create a label for the process details
         self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -97,6 +97,18 @@ class OwletteConfigApp:
         self.name_label.grid(row=2, column=0, sticky='e', padx=5, pady=5)
         self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.BUTTON_COLOR)
         self.name_entry.grid(row=2, column=1, columnspan=2, sticky='ew', padx=5, pady=5)
+
+        # Create CWD path field
+        self.cwd_label = ctk.CTkLabel(self.master, text="Working Directory:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.cwd_label.grid(row=5, column=0, sticky='e', padx=5, pady=5)
+        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process")
+        self.cwd_entry.grid(row=5, column=1, columnspan=2, sticky='ew', padx=5, pady=5)
+        self.cwd_entry.configure(fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.BUTTON_COLOR)
+
+        # Create Browse button for CWD
+        self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
+        self.cwd_browse_button.grid(row=5, column=3, sticky='w', padx=5, pady=5)
+        self.cwd_browse_button.configure(width=80)
 
         # Create Exe path field
         self.exe_path_label = ctk.CTkLabel(self.master, text="Executable Path:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -123,46 +135,46 @@ class OwletteConfigApp:
 
         # Create Time delay label and field
         self.time_delay_label = ctk.CTkLabel(self.master, text="Launch Time Delay (s):", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_delay_label.grid(row=5, column=0, sticky='e', padx=5, pady=5)
+        self.time_delay_label.grid(row=6, column=0, sticky='e', padx=5, pady=5)
         self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=60, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_delay_entry.grid(row=5, column=1, sticky='w', padx=5, pady=5)
+        self.time_delay_entry.grid(row=6, column=1, sticky='w', padx=5, pady=5)
         self.time_delay_entry.configure(width=80)
 
         # Create a label and entry for "Time to Initialize"
         self.time_to_init_label = ctk.CTkLabel(self.master, text="Time to Initialize (s):", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_to_init_label.grid(row=6, column=0, sticky='e', padx=5, pady=5)
+        self.time_to_init_label.grid(row=7, column=0, sticky='e', padx=5, pady=5)
         self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=60, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.time_to_init_entry.grid(row=6, column=1, sticky='w', padx=5, pady=5)
+        self.time_to_init_entry.grid(row=7, column=1, sticky='w', padx=5, pady=5)
         self.time_to_init_entry.configure(width=80)
 
         # Create a label and entry for "Restart Attempts"
         self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Relaunch attempts til Restart:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.relaunch_attempts_label.grid(row=7, column=0, sticky='e', padx=5, pady=5)
+        self.relaunch_attempts_label.grid(row=8, column=0, sticky='e', padx=5, pady=5)
         self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=60, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.relaunch_attempts_entry.grid(row=7, column=1, sticky='w', padx=5, pady=5)
+        self.relaunch_attempts_entry.grid(row=8, column=1, sticky='w', padx=5, pady=5)
         self.relaunch_attempts_entry.configure(width=80)
 
         # Create Priority dropdown
         self.priority_label = ctk.CTkLabel(self.master, text="Priority:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.priority_label.grid(row=5, column=2, sticky='e', padx=5, pady=5)
+        self.priority_label.grid(row=6, column=2, sticky='e', padx=5, pady=5)
         self.priority_options = ["Low", "Normal", "High", "Realtime"]
         self.priority_menu = ctk.CTkOptionMenu(self.master, values=self.priority_options, command=self.update_selected_process)
         self.priority_menu.configure(fg_color=shared_utils.BUTTON_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, width=140)
-        self.priority_menu.grid(row=5, column=3, sticky='w', padx=5, pady=5)
+        self.priority_menu.grid(row=6, column=3, sticky='w', padx=5, pady=5)
         self.priority_menu.set('Normal')
 
         # Create Visibility dropdown
         self.visibility_label = ctk.CTkLabel(self.master, text="Window Visibility:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.visibility_label.grid(row=6, column=2, sticky='e', padx=5, pady=5)
+        self.visibility_label.grid(row=7, column=2, sticky='e', padx=5, pady=5)
         self.visibility_options = ["Show", "Hide"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
         self.visibility_menu.configure(width=80, fg_color=shared_utils.BUTTON_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR)
-        self.visibility_menu.grid(row=6, column=3, sticky='w', padx=5, pady=5)
+        self.visibility_menu.grid(row=7, column=3, sticky='w', padx=5, pady=5)
         self.visibility_menu.set('Show')
 
         # Create Add Process button
         self.add_button = ctk.CTkButton(self.master, text="Add", command=self.add_process, width=60, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
-        self.add_button.grid(row=7, column=3, sticky='w', padx=(5, 0), pady=(5, 10))
+        self.add_button.grid(row=8, column=3, sticky='w', padx=(5, 0), pady=(5, 10))
         self.add_button.configure(width=140)
 
         # PROCESS LIST
@@ -198,37 +210,37 @@ class OwletteConfigApp:
         ## NOTIFICATIONS
         # Create a frame for the notifications section
         self.notifications_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR)
-        self.notifications_frame.grid(row=8, column=0, sticky='news', rowspan=3, columnspan=4, padx=(10,10), pady=(10,10))
+        self.notifications_frame.grid(row=9, column=0, sticky='news', rowspan=3, columnspan=4, padx=(10,10), pady=(10,10))
         
         # Create a label for the notifications section
         self.notifications_label = ctk.CTkLabel(self.master, text="NOTIFICATIONS", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.notifications_label.grid(row=8, column=0, sticky='w', padx=(20, 10), pady=(20, 0))
+        self.notifications_label.grid(row=9, column=0, sticky='w', padx=(20, 10), pady=(0, 0))
 
         # Create Labels and Entry widgets for email configuration
         self.emails_to_label = ctk.CTkLabel(self.master, text="Emails To:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.emails_to_label.grid(row=9, column=0, sticky='e', padx=5, pady=10)
+        self.emails_to_label.grid(row=10, column=0, sticky='e', padx=5, pady=10)
         self.emails_to_entry = ctk.CTkEntry(self.master, placeholder_text="Email Addresses (comma separated)", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.emails_to_entry.grid(row=9, column=1, columnspan=2, sticky='ew', padx=5, pady=10)
+        self.emails_to_entry.grid(row=10, column=1, columnspan=2, sticky='ew', padx=5, pady=10)
 
         # Create Gmail toggle
         self.gmail_toggle = ctk.CTkSwitch(master=self.master, text="Gmail", command=self.toggle_gmail, onvalue="on", offvalue="off", text_color=shared_utils.TEXT_COLOR)
         self.gmail_toggle.configure(bg_color=shared_utils.FRAME_COLOR, progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
-        self.gmail_toggle.grid(row=10, column=1, sticky='w', padx=(5), pady=(10, 10))
+        self.gmail_toggle.grid(row=11, column=1, sticky='w', padx=(5), pady=(10, 30))
 
         # Create Slack toggle
         self.slack_toggle = ctk.CTkSwitch(master=self.master, text="Slack", command=self.toggle_slack, onvalue="on", offvalue="off", text_color=shared_utils.TEXT_COLOR)
         self.slack_toggle.configure(bg_color=shared_utils.FRAME_COLOR, progress_color=shared_utils.BUTTON_IMPORTANT_COLOR)
-        self.slack_toggle.grid(row=10, column=2, sticky='e', padx=(5), pady=(10, 10))
+        self.slack_toggle.grid(row=11, column=2, sticky='e', padx=(5), pady=(10, 30))
 
 
         # SAVE SECTION / MISC
         # Create Save Changes button
         self.save_button = ctk.CTkButton(self.master, text="Save Changes", command=self.update_selected_process, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR)
-        self.save_button.grid(row=10, column=5, columnspan=2, sticky='ew', padx=(10, 20), pady=(10, 10))
+        self.save_button.grid(row=11, column=5, columnspan=2, sticky='ew', padx=(10, 20), pady=(10, 10))
 
         # Create a label for the app version
         self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.version_label.grid(row=10, column=4, sticky='e', padx=10, pady=(0, 0))
+        self.version_label.grid(row=11, column=4, sticky='e', padx=10, pady=(0, 0))
         self.version_label.configure(width=40)
 
         # BINDINGS
@@ -236,6 +248,7 @@ class OwletteConfigApp:
         self.name_entry.bind('<Return>', self.update_selected_process)
         self.exe_path_entry.bind('<Return>', self.update_selected_process)
         self.file_path_entry.bind('<Return>', self.update_selected_process)
+        self.cwd_entry.bind('<Return>', self.update_selected_process)
         self.emails_to_entry.bind('<Return>', self.update_email_config)
         self.time_delay_entry.bind('<Return>', self.update_selected_process)
         self.time_to_init_entry.bind('<Return>', self.update_selected_process)
@@ -288,6 +301,7 @@ class OwletteConfigApp:
         name = self.name_entry.get()
         exe_path = self.exe_path_entry.get()
         file_path = self.file_path_entry.get()
+        cwd = self.cwd_entry.get()
         priority = self.priority_menu.get()
         visibility = self.visibility_menu.get()
         time_delay = self.time_delay_entry.get()
@@ -315,6 +329,11 @@ class OwletteConfigApp:
             CTkMessagebox(master=self.master, title="Validation Error", message="Time to Initialize must be at least 10 seconds", icon="cancel")
             self.time_to_init_entry.delete(0, tk.END)
             self.time_to_init_entry.insert(0, 10)
+            return
+
+        # Validate CWD
+        if cwd and not os.path.isdir(cwd):
+            CTkMessagebox(master=self.master, title="Validation Error", message="The specified working directory does not exist.", icon="cancel")
             return
 
         # Validate Relaunch Attempts
@@ -348,6 +367,7 @@ class OwletteConfigApp:
             self.config['processes'][index]['name'] = name
             self.config['processes'][index]['exe_path'] = exe_path
             self.config['processes'][index]['file_path'] = file_path
+            self.config['processes'][index]['cwd'] = cwd
             self.config['processes'][index]['priority'] = priority
             self.config['processes'][index]['visibility'] = visibility
             self.config['processes'][index]['time_delay'] = time_delay
@@ -371,6 +391,7 @@ class OwletteConfigApp:
         name = self.name_entry.get()
         exe_path = self.exe_path_entry.get()
         file_path = self.file_path_entry.get()
+        cwd = self.cwd_entry.get()
         priority = self.priority_menu.get()
         visibility = self.visibility_menu.get()
         time_delay = self.time_delay_entry.get() if self.time_delay_entry.get() else 0 # Default to 0 if empty
@@ -395,6 +416,7 @@ class OwletteConfigApp:
             'name': name,
             'exe_path': exe_path,
             'file_path': file_path,
+            'cwd': cwd,
             'priority': priority,
             'visibility': visibility,
             'time_delay': time_delay,
@@ -419,6 +441,12 @@ class OwletteConfigApp:
         file_path = filedialog.askopenfilename(initialdir="C:/", title="Select File")
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, file_path)
+        self.update_selected_process()
+
+    def browse_cwd(self):
+        cwd = filedialog.askdirectory(initialdir="C:/", title="Select Working Directory")
+        self.cwd_entry.delete(0, tk.END)
+        self.cwd_entry.insert(0, cwd)
         self.update_selected_process()
 
     # PROCESS LIST
@@ -555,6 +583,8 @@ class OwletteConfigApp:
         self.priority_menu.set(process.get('priority', 'Normal'))
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, process.get('file_path', ''))
+        self.cwd_entry.delete(0, tk.END)
+        self.cwd_entry.insert(0, process.get('cwd', ''))
         self.time_delay_entry.delete(0, tk.END)
         self.time_delay_entry.insert(0, process.get('time_delay', ''))
         self.time_to_init_entry.delete(0, tk.END)

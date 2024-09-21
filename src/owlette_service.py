@@ -198,19 +198,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Build the command line
         command_line = f'"{exe_path}" {file_path}' if file_path else exe_path
+
+        # Fetch working directory
+        cwd = process.get('cwd', None)
+        if cwd and not os.path.isdir(cwd):
+            logging.error(f"Working directory {cwd} does not exist.")
+            return None
         
         # Start the process
-        process_info = win32process.CreateProcessAsUser(
-            self.console_user_token,
-            None,  # Application Name
-            command_line,  # Command Line
-            None, # Process Attributes
-            None, # Thread Attributes
-            0, # Inherit handles
-            priority_class, # Creation flags
-            self.environment,  # To open in user's self.environment
-            None, # Current directory
-            self.startup_info)
+        try:
+            process_info = win32process.CreateProcessAsUser(
+                self.console_user_token,
+                None,  # Application Name
+                command_line,  # Command Line
+                None, # Process Attributes
+                None, # Thread Attributes
+                0, # Inherit handles
+                priority_class, # Creation flags
+                self.environment,  # To open in user's self.environment
+                cwd, # Current directory
+                self.startup_info
+            )
+        except Exception as e:
+            logging.error(f"Failed to start process: {e}")
+            return None
 
         # Get PID
         pid = process_info[2]

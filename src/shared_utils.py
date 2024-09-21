@@ -14,8 +14,8 @@ import psutil
 
 # GLOBAL VARS
 
-APP_VERSION = '0.4.1b'
-CONFIG_VERSION = '1.2.0'
+APP_VERSION = '0.4.2b'
+CONFIG_VERSION = '1.3.0'
 WINDOW_COLOR = '#151617'
 FRAME_COLOR = '#28292b'
 BUTTON_COLOR = '#374448'
@@ -146,11 +146,13 @@ def upgrade_config():
                     process['autolaunch'] = process.pop('autolaunch_process')
 
                 # Ensure all necessary keys are in each process object
-                for key in ['id', 'name', 'exe_path', 'file_path', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch', 'visibility', 'priority']:
+                for key in ['id', 'name', 'exe_path', 'file_path', 'cwd', 'time_delay', 'time_to_init', 'relaunch_attempts', 'autolaunch', 'visibility', 'priority']:
                     if key == 'visibility':
                         process.setdefault(key, 'Show')
                     elif key == 'priority':
                         process.setdefault(key, 'Normal')
+                    elif key == 'cwd':
+                        process.setdefault(key, None)
                     else:
                         process.setdefault(key, '')
 
