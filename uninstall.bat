@@ -1,7 +1,14 @@
 @echo off
+:: Check for admin rights and self-elevate if needed
+net session >nul 2>&1
+if errorlevel 1 (
+    echo Requesting administrative privileges...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 setlocal
 cd /d %~dp0
-
 :: Check for Python installation
 where python >nul 2>nul
 if errorlevel 1 (
@@ -59,5 +66,4 @@ if "%uninstall_deps%"=="y" (
 :: Done
 echo Uninstallation complete!
 endlocal
-
 pause

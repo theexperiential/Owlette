@@ -1,4 +1,12 @@
 @echo off
+:: Check for admin rights and self-elevate if needed
+net session >nul 2>&1
+if errorlevel 1 (
+    echo Requesting administrative privileges...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
+
 setlocal
 cd /d %~dp0
 
@@ -49,5 +57,4 @@ python owlette_service.py start
 :: Done
 echo Installation complete!
 endlocal
-
 pause
