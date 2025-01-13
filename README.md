@@ -1,5 +1,7 @@
 # 🦉 Owlette
-
+<div align="center">
+<img src="img/icon.png" alt="Owlette" width="50%"/>
+</div>
 ### _It's a hoot!_
 
 Owlette is a Python-based Windows process manager service designed for maximum flexibility and editability. 🛠️ It monitors various processes, automatically relaunching them if they crash or are accidentally closed. 🔄 It can also send email and/or Slack notifications with system metrics when the going gets weird. 📧
