@@ -29,7 +29,7 @@ This phase adds Firebase Firestore integration to the Owlette Python service, en
 2. Go to the "Service accounts" tab
 3. Click "Generate new private key"
 4. A dialog will appear warning you to keep this key secret - click "Generate key"
-5. Save the downloaded JSON file as `firebase-credentials.json` in your `config/` directory
+5. Save the downloaded JSON file as `firebase-credentials.json` in your `agent/config/` directory
 6. **IMPORTANT**: This file is already in `.gitignore` to prevent committing credentials to git
 
 ### 1.4 Configure Firestore Security Rules
@@ -215,7 +215,7 @@ We've successfully integrated the Firebase client into the Owlette Windows servi
 
 ### Changes Made:
 
-**1. Configuration (config/config.json)**
+**1. Configuration (agent/config/config.json)**
 - Updated version to 2.0.0
 - Added `firebase` section:
   ```json
@@ -225,7 +225,7 @@ We've successfully integrated the Firebase client into the Owlette Windows servi
   }
   ```
 
-**2. Service Integration (src/owlette_service.py)**
+**2. Service Integration (agent/src/owlette_service.py)**
 - Imported Firebase client with fallback if not available
 - Initialize Firebase in `__init__()` method
 - Start Firebase and register command callback in `main()` method
@@ -265,10 +265,14 @@ Service Stop Flow:
 Now it's time to test the integration! Here's what to test:
 
 ### Test 1: Basic Operation
-1. Make sure you have `firebase-credentials.json` in the Owlette root directory
-2. Update `config/config.json` with your `site_id`
-3. Restart the Owlette service
-4. Check `logs/service.log` for Firebase connection messages
+1. Make sure you have `firebase-credentials.json` in the `agent/config/` directory
+2. Update `agent/config/config.json` with your `site_id`
+3. Restart the Owlette service or run from `agent/src/`:
+   ```bash
+   cd agent/src
+   python owlette_service.py
+   ```
+4. Check `agent/logs/service.log` for Firebase connection messages
 
 **Expected Log Messages:**
 ```
