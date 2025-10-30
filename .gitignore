@@ -25,11 +25,16 @@ ENV/
 *.log
 logs/
 tmp/
+agent/logs/
+agent/tmp/
 
 # Build artifacts
 build/
 dist/
 installer/
+agent/build/
+agent/dist/
+agent/installer/
 *.exe
 *.msi
 
@@ -37,11 +42,15 @@ installer/
 client_secrets.json
 config/config.json
 config/app_states.json
+agent/config/config.json
+agent/config/app_states.json
 
 # Firebase
 firebase-credentials.json
 config/firebase-credentials.json
 config/firebase_cache.json
+agent/config/firebase-credentials.json
+agent/config/firebase_cache.json
 
 # Temporary/generated files
 Manage
