@@ -358,3 +358,40 @@ def get_system_info():
         'gpu_info': gpu_info.memoryUsed if gpu_info else 'N/A',
         'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
     }
+
+def get_system_metrics():
+    """
+    Get system metrics in percentage format for Firebase.
+    Returns CPU, memory, disk, and GPU usage as percentages.
+    """
+    try:
+        cpu = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory().percent
+        disk = psutil.disk_usage('/').percent
+
+        # Get GPU usage
+        gpu = 0
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                # Use first GPU's load (0-100)
+                gpu = int(gpus[0].load * 100)
+        except:
+            pass
+
+        return {
+            'cpu': cpu,
+            'memory': memory,
+            'disk': disk,
+            'gpu': gpu,
+            'processes': {}  # Can be extended later to include process info
+        }
+    except Exception as e:
+        logging.error(f"Error getting system metrics: {e}")
+        return {
+            'cpu': 0,
+            'memory': 0,
+            'disk': 0,
+            'gpu': 0,
+            'processes': {}
+        }

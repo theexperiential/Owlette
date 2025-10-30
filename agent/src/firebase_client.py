@@ -160,7 +160,7 @@ class FirebaseClient:
         while self.running:
             try:
                 if self.connected:
-                    metrics = get_system_metrics()
+                    metrics = shared_utils.get_system_metrics()
                     self._upload_metrics(metrics)
                     self.logger.debug(f"Metrics uploaded: CPU={metrics.get('cpu')}%")
             except Exception as e:
