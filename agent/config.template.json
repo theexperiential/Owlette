@@ -1,0 +1,19 @@
+{
+  "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
+  "version": "2.0.0",
+  "processes": [],
+  "gmail": {
+    "_comment": "Legacy email notifications (optional)",
+    "enabled": false,
+    "to": []
+  },
+  "slack": {
+    "_comment": "Legacy Slack notifications (optional)",
+    "enabled": false
+  },
+  "firebase": {
+    "_comment": "Cloud features: remote control, web dashboard, metrics (OPTIONAL - works great without it!)",
+    "enabled": false,
+    "site_id": "my_site"
+  }
+}
