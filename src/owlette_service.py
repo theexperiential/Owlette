@@ -14,6 +14,14 @@ import time
 import json
 import datetime
 
+# Firebase integration
+try:
+    from firebase_client import FirebaseClient
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    logging.warning("Firebase client not available - running in local-only mode")
+
 """
 To install/run this as a service, 
 switch to the current working directory in 
@@ -74,10 +82,35 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.results = {} # App process response esults
         self.current_time = datetime.datetime.now()
 
+        # Initialize Firebase client
+        self.firebase_client = None
+        if FIREBASE_AVAILABLE and shared_utils.read_config(['firebase', 'enabled']):
+            try:
+                site_id = shared_utils.read_config(['firebase', 'site_id'])
+                credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                self.firebase_client = FirebaseClient(
+                    credentials_path=credentials_path,
+                    site_id=site_id,
+                    config_cache_path=shared_utils.get_path('../config/firebase_cache.json')
+                )
+                logging.info(f"Firebase client initialized for site: {site_id}")
+            except Exception as e:
+                logging.error(f"Failed to initialize Firebase client: {e}")
+                self.firebase_client = None
+
     # On service stop
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.is_alive = False
+
+        # Stop Firebase client
+        if self.firebase_client:
+            try:
+                self.firebase_client.stop()
+                logging.info("Firebase client stopped")
+            except Exception as e:
+                logging.error(f"Error stopping Firebase client: {e}")
+
         self.terminate_tray_icon()
         win32event.SetEvent(self.hWaitStop)
 
@@ -421,6 +454,74 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if new_pid:
             self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
 
+    # Handle commands from Firebase
+    def handle_firebase_command(self, cmd_id, cmd_data):
+        """
+        Handle commands received from Firebase web portal.
+
+        Args:
+            cmd_id: Command ID
+            cmd_data: Command data dict with 'type' and parameters
+
+        Returns:
+            Result message string
+        """
+        try:
+            cmd_type = cmd_data.get('type')
+            logging.info(f"Received Firebase command: {cmd_type} (ID: {cmd_id})")
+
+            if cmd_type == 'restart_process':
+                # Restart a specific process by name
+                process_name = cmd_data.get('process_name')
+                processes = shared_utils.read_config(['processes'])
+                for process in processes:
+                    if process.get('name') == process_name:
+                        process_list_id = process['id']
+                        last_info = self.last_started.get(process_list_id, {})
+                        last_pid = last_info.get('pid')
+                        if last_pid and Util.is_pid_running(last_pid):
+                            new_pid = self.kill_and_relaunch_process(last_pid, process)
+                            return f"Process {process_name} restarted with new PID {new_pid}"
+                        else:
+                            new_pid = self.handle_process_launch(process)
+                            return f"Process {process_name} started with PID {new_pid}"
+                return f"Process {process_name} not found in configuration"
+
+            elif cmd_type == 'kill_process':
+                # Kill a specific process by name
+                process_name = cmd_data.get('process_name')
+                processes = shared_utils.read_config(['processes'])
+                for process in processes:
+                    if process.get('name') == process_name:
+                        process_list_id = process['id']
+                        last_info = self.last_started.get(process_list_id, {})
+                        last_pid = last_info.get('pid')
+                        if last_pid and Util.is_pid_running(last_pid):
+                            psutil.Process(last_pid).terminate()
+                            return f"Process {process_name} (PID {last_pid}) terminated"
+                        else:
+                            return f"Process {process_name} is not running"
+                return f"Process {process_name} not found in configuration"
+
+            elif cmd_type == 'update_config':
+                # Update configuration from Firebase
+                new_config = cmd_data.get('config')
+                if new_config:
+                    shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
+                    logging.info("Configuration updated from Firebase")
+                    return "Configuration updated successfully"
+                else:
+                    return "No configuration data provided"
+
+            else:
+                logging.warning(f"Unknown command type: {cmd_type}")
+                return f"Unknown command type: {cmd_type}"
+
+        except Exception as e:
+            error_msg = f"Error executing command {cmd_type}: {e}"
+            logging.error(error_msg)
+            return error_msg
+
     # Main main
     def main(self):
         # Process startup info
@@ -432,6 +533,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
         # Get self.environment for logged-in user
         self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+
+        # Start Firebase client and upload local config
+        if self.firebase_client:
+            try:
+                # Register command callback
+                self.firebase_client.register_command_callback(self.handle_firebase_command)
+
+                # Start Firebase background threads
+                self.firebase_client.start()
+                logging.info("Firebase client started successfully")
+
+                # Upload local config to Firebase on first run
+                local_config = shared_utils.read_config()
+                if local_config:
+                    self.firebase_client.upload_config(local_config)
+                    logging.info("Local config uploaded to Firebase")
+
+            except Exception as e:
+                logging.error(f"Error starting Firebase client: {e}")
 
         # The heart of Owlette
         while self.is_alive:

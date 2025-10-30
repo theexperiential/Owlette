@@ -13,3 +13,7 @@ CTkMessagebox==2.5
 packaging==23.1
 pyqt6==6.6.1
 setuptools==75.6.0
+
+# Firebase integration
+firebase-admin==6.4.0
+google-cloud-firestore==2.14.0

@@ -1,8 +1,48 @@
+# Python
 __pycache__/
-*.log
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
 *.swp
+*.swo
+*~
 .DS_Store
+
+# Logs
+*.log
+logs/
+tmp/
+
+# Build artifacts
+build/
+dist/
+installer/
+*.exe
+*.msi
+
+# Configuration files with secrets
 client_secrets.json
-config.json
-app_states.json
+config/config.json
+config/app_states.json
+
+# Firebase
+firebase-credentials.json
+config/firebase-credentials.json
+config/firebase_cache.json
+
+# Temporary/generated files
+Manage
+*.spec.bak
