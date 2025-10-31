@@ -32,7 +32,7 @@ class OwletteConfigApp:
         self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
         # Set window icon
         try:
-            icon_path = shared_utils.get_path('../icons/owlette.ico')
+            icon_path = shared_utils.get_path('../../icons/owlette.ico')
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
