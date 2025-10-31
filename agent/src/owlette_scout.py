@@ -36,7 +36,7 @@ current_time = int(time.time())
 time_since_launch = current_time - timestamp
 
 if time_since_launch < 60:
-    print("Ignoring the process as it was launched less than 60 seconds ago.")
+    # Process is still initializing, don't check responsiveness yet
     result = True
 else:
     result = is_app_responsive(pid)

@@ -304,18 +304,63 @@ class FirebaseClient:
         try:
             self.logger.info(f"Processing command: {cmd_id} - Type: {cmd_data.get('type')}")
 
+            # Extract deployment_id if present (needed for web app to track deployment status)
+            deployment_id = cmd_data.get('deployment_id')
+
             # Call the registered callback
             if self.command_callback:
                 result = self.command_callback(cmd_id, cmd_data)
-                self._mark_command_completed(cmd_id, result)
+                self._mark_command_completed(cmd_id, result, deployment_id)
             else:
                 self.logger.warning(f"No command callback registered, ignoring command {cmd_id}")
 
         except Exception as e:
             self.logger.error(f"Error processing command {cmd_id}: {e}")
-            self._mark_command_failed(cmd_id, str(e))
+            self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'))
 
-    def _mark_command_completed(self, cmd_id: str, result: Any):
+    def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
+        """
+        Update command progress in Firestore (for intermediate states like downloading/installing).
+
+        Args:
+            cmd_id: Command ID
+            status: Current status (e.g., 'downloading', 'installing')
+            deployment_id: Optional deployment ID to track
+            progress: Optional progress percentage (0-100)
+        """
+        if not self.connected or not self.db:
+            return
+
+        try:
+            # Update in completed collection (web app listens here for progress)
+            completed_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('completed')
+
+            # Build the progress data
+            progress_data = {
+                'status': status,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            }
+
+            # Include deployment_id if present
+            if deployment_id:
+                progress_data['deployment_id'] = deployment_id
+
+            # Include progress percentage if present
+            if progress is not None:
+                progress_data['progress'] = progress
+
+            completed_ref.set({
+                cmd_id: progress_data
+            }, merge=True)
+
+            self.logger.debug(f"Command {cmd_id} progress: {status}" + (f" ({progress}%)" if progress is not None else ""))
+
+        except Exception as e:
+            self.logger.error(f"Failed to update command {cmd_id} progress: {e}")
+
+    def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None):
         """Mark a command as completed in Firestore."""
         if not self.connected or not self.db:
             return
@@ -335,12 +380,19 @@ class FirebaseClient:
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
 
+            # Build the completed command data
+            completed_data = {
+                'result': result,
+                'status': 'completed',
+                'completedAt': firestore.SERVER_TIMESTAMP
+            }
+
+            # Include deployment_id if present (needed for web app to track deployment status)
+            if deployment_id:
+                completed_data['deployment_id'] = deployment_id
+
             completed_ref.set({
-                cmd_id: {
-                    'result': result,
-                    'status': 'completed',
-                    'completedAt': firestore.SERVER_TIMESTAMP
-                }
+                cmd_id: completed_data
             }, merge=True)
 
             self.logger.info(f"Command {cmd_id} marked as completed")
@@ -348,7 +400,7 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to mark command {cmd_id} as completed: {e}")
 
-    def _mark_command_failed(self, cmd_id: str, error: str):
+    def _mark_command_failed(self, cmd_id: str, error: str, deployment_id: Optional[str] = None):
         """Mark a command as failed in Firestore."""
         if not self.connected or not self.db:
             return
@@ -368,12 +420,19 @@ class FirebaseClient:
                 .collection('machines').document(self.machine_id)\
                 .collection('commands').document('completed')
 
+            # Build the failed command data
+            failed_data = {
+                'error': error,
+                'status': 'failed',
+                'completedAt': firestore.SERVER_TIMESTAMP
+            }
+
+            # Include deployment_id if present (needed for web app to track deployment status)
+            if deployment_id:
+                failed_data['deployment_id'] = deployment_id
+
             completed_ref.set({
-                cmd_id: {
-                    'error': error,
-                    'status': 'failed',
-                    'completedAt': firestore.SERVER_TIMESTAMP
-                }
+                cmd_id: failed_data
             }, merge=True)
 
             self.logger.error(f"Command {cmd_id} marked as failed: {error}")
@@ -457,21 +516,81 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to save cached config: {e}")
 
-    def _try_reconnect(self):
-        """Try to reconnect to Firestore."""
+    def _check_internet_connectivity(self) -> bool:
+        """
+        Check if internet is available before attempting Firebase reconnection.
+        Uses multiple methods for reliability.
+
+        Returns:
+            True if internet appears to be available, False otherwise
+        """
         try:
-            self.logger.info("Attempting to reconnect to Firestore...")
+            # Method 1: Try to connect to Google's DNS (8.8.8.8)
+            import socket
+            socket.create_connection(("8.8.8.8", 53), timeout=3)
+            return True
+        except OSError:
+            pass
+
+        try:
+            # Method 2: Try to connect to Cloudflare DNS (1.1.1.1)
+            import socket
+            socket.create_connection(("1.1.1.1", 53), timeout=3)
+            return True
+        except OSError:
+            pass
+
+        # No connectivity detected
+        return False
+
+    def _try_reconnect(self):
+        """
+        Try to reconnect to Firestore with smart internet detection.
+        Only attempts reconnection when internet is available.
+        """
+        try:
+            # First check if internet is available
+            if not self._check_internet_connectivity():
+                self.logger.debug("No internet connectivity detected, skipping Firebase reconnection attempt")
+                return
+
+            self.logger.info("Internet connectivity detected, attempting to reconnect to Firestore...")
             self._initialize_firebase()
+
             if self.connected:
                 self.logger.info("Reconnected to Firestore successfully")
-                # Restart command listener if needed
+
+                # Properly cleanup and restart command listener if needed
                 if not self.command_listener_thread or not self.command_listener_thread.is_alive():
+                    # Cleanup old thread object if it exists
+                    if self.command_listener_thread:
+                        try:
+                            # Wait briefly for thread to fully terminate (it's daemon, so won't block long)
+                            self.command_listener_thread.join(timeout=1)
+                        except:
+                            pass
+                        self.command_listener_thread = None
+
+                    # Create new thread
                     self.command_listener_thread = threading.Thread(target=self._command_listener_loop, daemon=True)
                     self.command_listener_thread.start()
-                # Restart config listener if needed
+                    self.logger.info("Command listener thread restarted")
+
+                # Properly cleanup and restart config listener if needed
                 if not self.config_listener_thread or not self.config_listener_thread.is_alive():
+                    # Cleanup old thread object if it exists
+                    if self.config_listener_thread:
+                        try:
+                            # Wait briefly for thread to fully terminate
+                            self.config_listener_thread.join(timeout=1)
+                        except:
+                            pass
+                        self.config_listener_thread = None
+
+                    # Create new thread
                     self.config_listener_thread = threading.Thread(target=self._config_listener_loop, daemon=True)
                     self.config_listener_thread.start()
+                    self.logger.info("Config listener thread restarted")
         except Exception as e:
             self.logger.error(f"Reconnection failed: {e}")
 

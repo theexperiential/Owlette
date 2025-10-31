@@ -182,6 +182,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         On service restart, check if processes from previous session are still running.
         If they are, adopt them instead of launching new instances.
+        Also cleans up dead PIDs to prevent unbounded file growth.
         """
         try:
             # Read the persisted state
@@ -192,6 +193,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return
 
             logging.info(f"Found {len(app_states)} PID(s) in app_states.json")
+
+            # Clean up dead PIDs immediately to prevent unbounded growth
+            cleaned_states = {}
+            dead_pid_count = 0
 
             # Get current config
             config = shared_utils.read_config()
@@ -215,31 +220,67 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if Util.is_pid_running(pid):
                         logging.info(f"PID {pid} is still running")
 
+                        # Validate that this PID is actually the expected process (prevent PID reuse/hijacking)
                         if process_id:
-                            # Find the corresponding process in config
                             process = next((p for p in processes if p.get('id') == process_id), None)
 
                             if process:
-                                # Only recover if autolaunch is enabled
-                                if process.get('autolaunch', False):
-                                    # Adopt this process
-                                    self.last_started[process_id] = {
-                                        'time': datetime.datetime.now(),
-                                        'pid': pid
-                                    }
-                                    recovered_count += 1
-                                    logging.info(f"✓ Recovered process '{process.get('name')}' with PID {pid}")
-                                else:
-                                    logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
+                                # Validate executable path matches
+                                try:
+                                    import psutil
+                                    actual_process = psutil.Process(pid)
+                                    actual_exe = actual_process.exe().lower()
+                                    expected_exe = process.get('exe_path', '').replace('/', '\\').lower()
+
+                                    # Check if the executable matches
+                                    if expected_exe and expected_exe in actual_exe:
+                                        # Valid process - keep in cleaned state
+                                        cleaned_states[pid_str] = state_info
+
+                                        # Only recover if autolaunch is enabled
+                                        if process.get('autolaunch', False):
+                                            # Adopt this process
+                                            self.last_started[process_id] = {
+                                                'time': datetime.datetime.now(),
+                                                'pid': pid
+                                            }
+                                            recovered_count += 1
+                                            logging.info(f"✓ Recovered process '{process.get('name')}' with PID {pid}")
+                                        else:
+                                            logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
+                                    else:
+                                        # PID reused for different process - don't recover
+                                        dead_pid_count += 1
+                                        logging.warning(f"PID {pid} is running but executable mismatch (expected: {expected_exe}, actual: {actual_exe}) - likely PID reuse, not recovering")
+                                except psutil.NoSuchProcess:
+                                    # Process died between is_running check and exe() call
+                                    dead_pid_count += 1
+                                    logging.debug(f"PID {pid} died during validation")
+                                except Exception as e:
+                                    # On validation error, keep the PID to be safe
+                                    cleaned_states[pid_str] = state_info
+                                    logging.warning(f"Could not validate PID {pid}: {e} - keeping in state")
                             else:
+                                # Process ID not found in config - keep in state but don't recover
+                                cleaned_states[pid_str] = state_info
                                 logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
                         else:
+                            # No process ID in state - keep but warn
+                            cleaned_states[pid_str] = state_info
                             logging.warning(f"PID {pid} has no process ID in state file")
                     else:
-                        # PID is no longer running
-                        logging.debug(f"PID {pid_str} is no longer running (process ended)")
+                        # PID is no longer running - don't add to cleaned_states
+                        dead_pid_count += 1
+                        logging.debug(f"PID {pid_str} is no longer running (will be removed from state file)")
                 except Exception as e:
                     logging.error(f"Error checking PID {pid_str}: {e}")
+                    # On error, keep the PID to be safe
+                    cleaned_states[pid_str] = state_info
+
+            # Write cleaned state back to file (removes dead PIDs)
+            if dead_pid_count > 0:
+                shared_utils.write_json_to_file(cleaned_states, shared_utils.RESULT_FILE_PATH)
+                logging.info(f"✓ Cleaned up {dead_pid_count} dead PID(s) from state file")
 
             if recovered_count > 0:
                 logging.info(f"✓ Successfully recovered {recovered_count} running process(es) from previous session")
@@ -499,18 +540,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
+        # Validate executable path before attempting launch
+        exe_path = process.get('exe_path', '').strip()
+        if not exe_path:
+            process_name = Util.get_process_name(process)
+            logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and disable/re-enable autolaunch.")
+            return None
+
+        if not os.path.isfile(exe_path):
+            process_name = Util.get_process_name(process)
+            logging.error(f"Cannot launch '{process_name}': Executable path does not exist: {exe_path}")
+            return None
+
         # Ensure process has not exceeded maximum relaunch attempts
         if not self.reached_max_relaunch_attempts(process):
             process_list_id = process['id']
             delay = float(process.get('time_delay', 0))
-            
+
             # Fetch the time to init (how long to give the app to initialize itself / start up)
             time_to_init = float(shared_utils.read_config(keys=['time_to_init'], process_list_id=process_list_id))
 
             # Give the app time to launch (if it's launching for the first time)
             last_info = self.last_started.get(process_list_id, {})
             last_time = last_info.get('time')
-                        
+
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
                 # Delay starting of the app (if applicable)
                 time.sleep(delay)
@@ -520,13 +573,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     pid = self.launch_process_as_user(process)
                 except Exception as e:
                     logging.error(f"Could not start process {Util.get_process_name(process)}.\n {e}")
-                
+
                 # Update the last started time and PID
                 self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
                 logging.info(f"PID {pid} started")
-                
+
                 return pid  # Return the new PID
-            
+
             return None  # Return None if the process was not started
 
     # If process not responding, attempt to kill and relaunch
@@ -595,10 +648,43 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if new_pid:
             self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
 
+    # Clean up stale entries in tracking dictionaries
+    def cleanup_stale_tracking_data(self):
+        """
+        Remove entries from tracking dictionaries for processes that no longer exist in config.
+        Prevents memory leaks from accumulation over time.
+        """
+        try:
+            # Get current process IDs from config
+            config = shared_utils.read_config()
+            if not config:
+                return
+
+            current_process_ids = {p.get('id') for p in config.get('processes', []) if p.get('id')}
+
+            # Clean up last_started dictionary
+            stale_ids = [pid for pid in self.last_started.keys() if pid not in current_process_ids]
+            if stale_ids:
+                for pid in stale_ids:
+                    del self.last_started[pid]
+                logging.info(f"✓ Cleaned up {len(stale_ids)} stale entries from last_started tracking")
+
+            # Clean up relaunch_attempts dictionary (uses process names, need to map)
+            current_process_names = {p.get('name') for p in config.get('processes', []) if p.get('name')}
+            stale_names = [name for name in self.relaunch_attempts.keys() if name not in current_process_names]
+            if stale_names:
+                for name in stale_names:
+                    del self.relaunch_attempts[name]
+                logging.info(f"✓ Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
+
+        except Exception as e:
+            logging.error(f"Error cleaning up stale tracking data: {e}")
+
     # Handle config updates from Firebase
     def handle_config_update(self, new_config):
         """
         Handle configuration updates from Firebase.
+        Performs intelligent diffing to terminate removed processes and respect autolaunch changes.
 
         Args:
             new_config: New configuration dict from Firestore
@@ -606,7 +692,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         try:
             logging.info("Applying config update from Firestore")
 
-            # Read old config before overwriting (for logging changes)
+            # Read old config before overwriting (for diffing)
             old_config = shared_utils.read_config()
 
             # Write the new config to local config.json
@@ -614,36 +700,73 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             logging.info("Local config.json updated from Firestore")
 
-            # Log what changed (for debugging)
+            # Perform config diffing if old config exists
             if old_config:
-                # Check for process changes
-                old_process_count = len(old_config.get('processes', []))
-                new_process_count = len(new_config.get('processes', []))
-                if old_process_count != new_process_count:
-                    logging.info(f"Process count changed: {old_process_count} -> {new_process_count}")
+                old_processes = old_config.get('processes', [])
+                new_processes = new_config.get('processes', [])
 
-                # Check for autolaunch changes
-                for new_proc in new_config.get('processes', []):
-                    old_proc = next((p for p in old_config.get('processes', []) if p.get('id') == new_proc.get('id')), None)
-                    if old_proc:
-                        if old_proc.get('autolaunch') != new_proc.get('autolaunch'):
-                            logging.info(f"Autolaunch changed for {new_proc.get('name')}: {old_proc.get('autolaunch')} -> {new_proc.get('autolaunch')}")
+                # Create lookup maps
+                old_process_map = {p.get('id'): p for p in old_processes if p.get('id')}
+                new_process_map = {p.get('id'): p for p in new_processes if p.get('id')}
+
+                # Find removed processes
+                removed_process_ids = set(old_process_map.keys()) - set(new_process_map.keys())
+
+                # Terminate removed processes
+                for removed_id in removed_process_ids:
+                    removed_proc = old_process_map[removed_id]
+                    logging.info(f"Process removed from config: {removed_proc.get('name')}")
+
+                    # Find and terminate the running process
+                    if removed_id in self.last_started:
+                        pid_info = self.last_started[removed_id]
+                        pid = pid_info.get('pid')
+
+                        if pid and Util.is_pid_running(pid):
+                            try:
+                                psutil.Process(pid).terminate()
+                                logging.info(f"✓ Terminated removed process: {removed_proc.get('name')} (PID {pid})")
+                            except Exception as e:
+                                logging.error(f"Failed to terminate removed process PID {pid}: {e}")
+
+                        # Clean up tracking
+                        del self.last_started[removed_id]
+
+                # Check for autolaunch changes (disable -> terminate)
+                for process_id, new_proc in new_process_map.items():
+                    if process_id in old_process_map:
+                        old_proc = old_process_map[process_id]
+                        old_autolaunch = old_proc.get('autolaunch', False)
+                        new_autolaunch = new_proc.get('autolaunch', False)
+
+                        if old_autolaunch and not new_autolaunch:
+                            # Autolaunch disabled - terminate the process
+                            logging.info(f"Autolaunch disabled for {new_proc.get('name')} - terminating process")
+
+                            if process_id in self.last_started:
+                                pid_info = self.last_started[process_id]
+                                pid = pid_info.get('pid')
+
+                                if pid and Util.is_pid_running(pid):
+                                    try:
+                                        psutil.Process(pid).terminate()
+                                        logging.info(f"✓ Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
+                                    except Exception as e:
+                                        logging.error(f"Failed to terminate PID {pid}: {e}")
+                        elif new_autolaunch and not old_autolaunch:
+                            logging.info(f"Autolaunch enabled for {new_proc.get('name')} - will start on next cycle")
+
+                # Log summary
+                logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
             # Push metrics immediately so web dashboard updates instantly
-            logging.info(f"Attempting to push metrics immediately... firebase_client exists: {self.firebase_client is not None}")
             if self.firebase_client:
                 try:
-                    logging.info("Fetching system metrics after config update...")
                     metrics = shared_utils.get_system_metrics()
-                    logging.info(f"Got metrics with {len(metrics.get('processes', {}))} processes")
-                    logging.info("Uploading metrics to Firestore...")
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("✅ Metrics pushed immediately after config update")
+                    logging.info("Metrics pushed immediately after config update")
                 except Exception as e:
-                    logging.error(f"❌ Failed to push metrics after config update: {e}")
-                    logging.exception("Full traceback:")
-            else:
-                logging.warning("⚠️ Cannot push metrics - firebase_client is None")
+                    logging.error(f"Failed to push metrics after config update: {e}")
 
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
@@ -727,6 +850,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
                 verify_path = cmd_data.get('verify_path')  # Optional verification path
+                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
+                deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
                 if not installer_url:
                     return "Error: No installer URL provided"
@@ -734,11 +860,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info(f"Starting software installation: {installer_name}")
                 logging.info(f"URL: {installer_url}")
                 logging.info(f"Flags: {silent_flags}")
+                logging.info(f"Timeout: {timeout_seconds} seconds")
+                if expected_sha256:
+                    logging.info(f"Checksum verification enabled: {expected_sha256[:16]}...")
 
                 # Get temporary path for installer
                 temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
 
                 try:
+                    # Update status: downloading
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
+
                     # Download the installer
                     logging.info(f"Downloading installer to: {temp_installer_path}")
                     download_success = installer_utils.download_file(installer_url, temp_installer_path)
@@ -746,13 +879,29 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if not download_success:
                         return f"Error: Failed to download installer from {installer_url}"
 
+                    # Verify checksum if provided (SECURITY: recommended for remote installations)
+                    if expected_sha256:
+                        logging.info("Verifying installer checksum...")
+                        checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
+                        if not checksum_valid:
+                            installer_utils.cleanup_installer(temp_installer_path)
+                            return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
+                        logging.info("✓ Checksum verification passed")
+                    else:
+                        logging.warning("⚠ No checksum provided - skipping verification (security risk)")
+
+                    # Update status: installing
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
+
                     # Execute the installer (pass active_installations for cancellation support)
                     logging.info("Executing installer with silent flags")
                     success, exit_code, error_msg = installer_utils.execute_installer(
                         temp_installer_path,
                         silent_flags,
                         installer_name,
-                        self.active_installations
+                        self.active_installations,
+                        timeout_seconds
                     )
 
                     if not success:
@@ -844,6 +993,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.recover_running_processes()
 
         # The heart of Owlette
+        cleanup_counter = 0  # Counter for periodic cleanup
         while self.is_alive:
             # Start the tray icon script as a process (if it isn't running)
             tray_script = 'owlette_tray.py'
@@ -868,6 +1018,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info('Owlette initialized')
 
             self.first_start = False
+
+            # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
+            cleanup_counter += 1
+            if cleanup_counter >= 30:
+                self.cleanup_stale_tracking_data()
+                cleanup_counter = 0
 
             # Sleep for 10 seconds
             time.sleep(SLEEP_INTERVAL)

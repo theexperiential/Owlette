@@ -22,7 +22,16 @@
       "Bash(git check-ignore:*)",
       "Bash(cmd /c \"dir /B \"\"C:\\Program Files\\Notepad++\"\" 2>nul\")",
       "Bash(cmd /c \"dir /B \"\"C:\\Program Files (x86)\\Notepad++\"\" 2>nul\")",
-      "Bash(cmd /c \"dir /B \"C:Program FilesNotepad++\" 2>nul\")"
+      "Bash(cmd /c \"dir /B \"C:Program FilesNotepad++\" 2>nul\")",
+      "Bash(netstat:*)",
+      "Bash(copy:*)",
+      "Bash(git rm:*)",
+      "Bash(taskkill /F /PID 14672)",
+      "Bash(taskkill //F //PID 14672)",
+      "Bash(test:*)",
+      "Bash(call install.bat restart)",
+      "Bash(cmd /c \"cd /d c:\\Users\\admin\\Documents\\Git\\Owlette\\agent && install.bat restart\")",
+      "Bash(rm:*)"
     ],
     "deny": [],
     "ask": []

@@ -129,7 +129,7 @@ goto continue_install
 echo.
 echo Firebase setup skipped. Owlette will run in local-only mode.
 echo You can enable Firebase later by:
-echo  1. Following the Firebase setup guide in docs\phase1-firebase-setup.md
+echo  1. Following the Firebase setup guide in docs\firebase-setup.md
 echo  2. Re-running install.bat
 echo.
 

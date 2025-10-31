@@ -1,11 +1,21 @@
 # 🦉 Owlette
+
 <div align="center">
 <img src=".github/images/icon.png" alt="Owlette" width="50%"/>
 </div>
 
-### _It's a hoot!_
+### _Cloud-Connected Process Management & Remote Deployment System_
 
-Owlette is a Python-based Windows process manager service designed for maximum flexibility and editability. 🛠️ It monitors various processes, automatically relaunching them if they crash or are accidentally closed. 🔄 It can also send email and/or Slack notifications with system metrics when the going gets weird. 📧
+**Version 2.0.0** - A modern, cloud-connected process management system for Windows that combines:
+
+- 🖥️ **Windows Service** - Monitors and auto-restarts applications
+- 🌐 **Web Dashboard** - Real-time monitoring and control from anywhere
+- 🚀 **Remote Deployment** - Install software across multiple machines
+- 📊 **Live Metrics** - CPU, memory, disk, and GPU tracking
+- 🔄 **Firebase Sync** - Bidirectional cloud communication
+- 🏢 **Multi-Site Management** - Manage machines across multiple locations
+
+Perfect for managing TouchDesigner installations, digital signage, kiosks, media servers, and any Windows application fleet.
 
 <img src=".github/images/screenshot.png" alt="Screenshot" width="100%"/>
 
@@ -13,50 +23,81 @@ Owlette is a Python-based Windows process manager service designed for maximum f
 
 1. [🌟 Features](#features)
 2. [🛠️ Installation](#installation)
-3. [🚀 Usage](#usage)
-4. [🎛️ UI Features](#ui-features)
-5. [🛠️ Configuration](#configuration)
-6. [🗑️ Uninstallation](#uninstallation)
-7. [🐞 Troubleshooting](#troubleshooting)
-8. [🤝 Contributing](#contributing)
-9. [📜 License](#license)
+   - [Agent (Windows Service)](#agent-installation)
+   - [Web Dashboard](#web-dashboard-setup)
+3. [🌐 Web Dashboard](#web-dashboard)
+4. [🚀 Remote Deployment](#remote-deployment)
+5. [🚀 Usage](#usage)
+6. [🎛️ UI Features](#ui-features)
+7. [🛠️ Configuration](#configuration)
+8. [🗑️ Uninstallation](#uninstallation)
+9. [🐞 Troubleshooting](#troubleshooting)
+10. [🤝 Contributing](#contributing)
+11. [📜 License](#license)
 
 <a id="features"></a>
 ## 🌟 Features
 
-- 🚀 Starts specified processes upon system startup
-- 🔄 Automatically restarts applications if they freeze, crash or are accidentally closed
-- 📊 Monitors system metrics like CPU usage, memory usage, and disk space
-- 📧 Sends Gmail/Slack notifications using APIs
-- 🍽️ Tray icon for easy access to features and settings
-- 🎚️ Autolaunch/Manage toggle: Conveniently disable a process from automatically launching during development
-- 🔄 Relaunch Attempts til Restart: Configurable number of relaunch attempts before issuing a full system restart
-- 🛑 Forcibly terminate processes via the Kill button
-- 📊 View the current status of each monitored process
-- 🎚️ Set the visibility and priority of processes
+### 🌐 Cloud & Remote Management
+- **Web Dashboard** - Modern Next.js dashboard for monitoring and control from anywhere
+- **Real-Time Sync** - Bidirectional Firebase/Firestore synchronization
+- **Multi-Machine Management** - Control multiple Windows machines from one interface
+- **Multi-Site Support** - Organize machines across different locations/installations
+- **Remote Software Deployment** - Install applications silently across multiple machines
+- **Live Metrics Dashboard** - Real-time CPU, memory, disk, and GPU monitoring
+
+### 🖥️ Windows Service (Agent)
+- **Auto-Start Processes** - Launch applications automatically on system boot
+- **Crash Recovery** - Automatically restart applications if they freeze or crash
+- **Process Monitoring** - Real-time status tracking and responsiveness checking
+- **PID Recovery** - Reconnect to existing processes after service restart
+- **Priority Control** - Set process priority (Low, Normal, High, Realtime)
+- **Visibility Control** - Show or hide process windows
+- **Configurable Retries** - Set relaunch attempts before system restart
+
+### 🎛️ Configuration & Control
+- **System Tray Icon** - Quick access to features and service control
+- **Configuration GUI** - Easy-to-use Windows application for setup
+- **Web-Based Config** - Edit process settings from the dashboard
+- **Autolaunch Toggle** - Enable/disable processes without editing config
+- **Instant Sync** - Changes sync between GUI, service, and web in ~1-2 seconds
+
+### 🚀 Advanced Features
+- **Silent Deployment** - Install software with automatic silent flags detection
+- **Deployment Templates** - Save and reuse installer configurations
+- **Deployment Cancellation** - Stop installations remotely
+- **Installation Verification** - Confirm successful deployments
+- **Offline Mode** - Agent continues working even if cloud disconnects
+- **Comprehensive Logging** - Detailed logs for troubleshooting
 
 <a id="installation"></a>
 
 ## 🛠️ Installation
 
+Owlette consists of two components:
+1. **Agent** - Windows service running on each managed machine
+2. **Web Dashboard** - Next.js web application for remote management
+
 ### 📋 Prerequisites
 
+**For Agent (Windows Service):**
 - 🐍 Python 3.9 or higher
 - 📦 pip (Python package installer)
-- ☁️ (Optional) Google Cloud Platform (GCP) account for Gmail API
-- 🤖 (Optional) Slack workspace and admin account for Slack API
+- 🔥 Firebase project with Firestore enabled (see [Firebase Setup Guide](docs/firebase-setup.md))
 
-1️⃣ Clone the repository:
+**For Web Dashboard:**
+- 🟢 Node.js 18.x or higher
+- 🔥 Same Firebase project as agent
 
-    
-    git clone https://github.com/theexperiential/Owlette.git
-    
+**Quick Start:**
+```bash
+# Clone the repository
+git clone https://github.com/theexperiential/Owlette.git
+cd Owlette
+```
 
-2️⃣ Navigate to the project directory:
-
-    
-    cd Owlette
-    
+<a id="agent-installation"></a>
+### 🖥️ Agent (Windows Service) Installation
 
 ### 📦 Installation Methods
 
@@ -74,7 +115,130 @@ Run the `install.bat` file as an administrator to automatically install the requ
 
 2. Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
 
-### ☁️ Gmail API Configuration (Google Cloud Platform)
+3. **Configure Firebase:**
+   - Follow the comprehensive [Firebase Setup Guide](docs/firebase-setup.md)
+   - Place your `firebase-credentials.json` in `agent/config/`
+   - Update `agent/config/config.json` with your site ID
+
+<a id="web-dashboard-setup"></a>
+### 🌐 Web Dashboard Installation
+
+See the full [Web Dashboard README](web/README.md) for detailed instructions.
+
+**Quick Setup:**
+```bash
+cd web
+npm install
+
+# Configure environment variables
+cp .env.example .env.local
+# Edit .env.local with your Firebase config
+
+# Development
+npm run dev
+# Access at http://localhost:3000
+
+# Production
+npm run build
+npm start
+```
+
+**Firebase Configuration:**
+The web dashboard uses the same Firebase project as the agent. See [Firebase Setup Guide](docs/firebase-setup.md) for details.
+
+**Deployment:**
+Deploy to Railway, Vercel, or any Node.js hosting platform. See [web/README.md](web/README.md) for platform-specific instructions.
+
+---
+
+<a id="web-dashboard"></a>
+## 🌐 Web Dashboard
+
+The Owlette web dashboard provides a modern interface for managing all your machines from anywhere.
+
+### Features
+
+**Machine Monitoring:**
+- Real-time status of all managed machines
+- Live system metrics (CPU, memory, disk, GPU)
+- Process status and health monitoring
+- Connection status and last heartbeat
+
+**Process Management:**
+- Start/stop processes remotely
+- Edit process configuration from web
+- Toggle autolaunch for any process
+- View process runtime information
+
+**Multi-Site Organization:**
+- Create multiple sites (locations/installations)
+- Organize machines by site
+- Switch between sites instantly
+- Site-level management and permissions
+
+**Dashboard Views:**
+- Card view for overview
+- List view for detailed information
+- Collapsible machine details
+- Real-time updates via Firebase listeners
+
+### Accessing the Dashboard
+
+1. **Locally:** `http://localhost:3000` after running `npm run dev`
+2. **Production:** Your deployed URL (e.g., Railway, Vercel)
+3. **Authentication:** Email + Password or Google OAuth
+
+### Managing Machines
+
+Machines automatically appear in the dashboard when the agent connects to Firebase. No manual registration required!
+
+---
+
+<a id="remote-deployment"></a>
+## 🚀 Remote Deployment
+
+Deploy software silently across multiple machines from the web dashboard.
+
+### Features
+
+- **Silent Installation** - Unattended software deployment
+- **Multi-Machine Targets** - Deploy to one or many machines at once
+- **Deployment Templates** - Save configurations for reuse
+- **Real-Time Progress** - Watch installations as they happen
+- **Cancellation** - Stop in-progress installations
+- **Verification** - Confirm successful deployment
+
+### Usage
+
+1. Navigate to the **Deploy Software** section in the web dashboard
+2. Create a new deployment or use a template
+3. Configure:
+   - Installer URL (direct download link)
+   - Silent flags (e.g., `/S`, `/VERYSILENT`)
+   - Optional verification path
+4. Select target machines
+5. Deploy!
+
+### Supported Installers
+
+Works with any installer that supports silent/unattended mode:
+- ✅ NSIS installers (`/S`)
+- ✅ InnoSetup (`/VERYSILENT /SUPPRESSMSGBOXES`)
+- ✅ MSI packages (`/quiet /norestart`)
+- ✅ Custom installers (specify your own flags)
+
+**Examples:**
+- TouchDesigner: `/S`
+- Notepad++: `/S`
+- Chrome: `/silent /install`
+
+See the [Deployment Guide](docs/deployment.md) for detailed setup and examples.
+
+---
+
+### ☁️ Legacy Features (Optional)
+
+#### Gmail API Configuration (Google Cloud Platform)
 
 - 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
 - 2️⃣ Create a new project.

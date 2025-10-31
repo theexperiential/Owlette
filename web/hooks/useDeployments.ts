@@ -92,7 +92,7 @@ export function useDeploymentTemplates(siteId: string) {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     const templateId = `template-${Date.now()}`;
-    const templateRef = doc(db, 'sites', siteId, 'installer_templates', templateId);
+    const templateRef = doc(db!, 'sites', siteId, 'installer_templates', templateId);
 
     await setDoc(templateRef, {
       ...template,
@@ -102,14 +102,21 @@ export function useDeploymentTemplates(siteId: string) {
     return templateId;
   };
 
+  const updateTemplate = async (templateId: string, template: Partial<Omit<DeploymentTemplate, 'id' | 'createdAt'>>) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    const templateRef = doc(db!, 'sites', siteId, 'installer_templates', templateId);
+    await setDoc(templateRef, template, { merge: true });
+  };
+
   const deleteTemplate = async (templateId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const templateRef = doc(db, 'sites', siteId, 'installer_templates', templateId);
+    const templateRef = doc(db!, 'sites', siteId, 'installer_templates', templateId);
     await deleteDoc(templateRef);
   };
 
-  return { templates, loading, error, createTemplate, deleteTemplate };
+  return { templates, loading, error, createTemplate, updateTemplate, deleteTemplate };
 }
 
 export function useDeployments(siteId: string) {
@@ -168,6 +175,103 @@ export function useDeployments(siteId: string) {
     }
   }, [siteId]);
 
+  // Listen for command completions and update deployment status
+  useEffect(() => {
+    if (!db || !siteId || deployments.length === 0) return;
+
+    const unsubscribes: (() => void)[] = [];
+
+    // Get all unique machine IDs from in-progress deployments
+    const machineIds = new Set<string>();
+    deployments.forEach(deployment => {
+      if (deployment.status === 'in_progress' || deployment.status === 'pending') {
+        deployment.targets.forEach(target => machineIds.add(target.machineId));
+      }
+    });
+
+    // Listen to completed commands for each machine
+    machineIds.forEach(machineId => {
+      const completedRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
+
+      const unsubscribe = onSnapshot(completedRef, async (snapshot) => {
+        if (!snapshot.exists()) return;
+
+        const completedCommands = snapshot.data();
+
+        // Check each completed command for deployment_id
+        for (const [commandId, commandData] of Object.entries(completedCommands)) {
+          const command = commandData as any;
+
+          if (command.deployment_id) {
+            const deployment = deployments.find(d => d.id === command.deployment_id);
+            if (!deployment) continue;
+
+            const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
+
+            if (command.status === 'completed') {
+              // Handle completed installations
+              const updatedTargets = deployment.targets.map(target =>
+                target.machineId === machineId
+                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || Date.now() }
+                  : target
+              );
+
+              // Calculate overall status
+              const allCompleted = updatedTargets.every(t => t.status === 'completed');
+              const anyFailed = updatedTargets.some(t => t.status === 'failed');
+              const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
+
+              // Update deployment
+              await setDoc(deploymentRef, {
+                targets: updatedTargets,
+                status: newStatus,
+                ...(allCompleted ? { completedAt: Date.now() } : {}),
+              }, { merge: true });
+            } else if (command.status === 'failed') {
+              // Handle failed installations
+              const updatedTargets = deployment.targets.map(target =>
+                target.machineId === machineId
+                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || Date.now() }
+                  : target
+              );
+
+              // Calculate overall status
+              const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
+              const anyCompleted = updatedTargets.some(t => t.status === 'completed');
+              const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
+
+              // Update deployment
+              await setDoc(deploymentRef, {
+                targets: updatedTargets,
+                status: newStatus,
+                ...(allDone ? { completedAt: Date.now() } : {}),
+              }, { merge: true });
+            } else if (command.status === 'downloading' || command.status === 'installing') {
+              // Handle intermediate states (downloading, installing)
+              const updatedTargets = deployment.targets.map(target =>
+                target.machineId === machineId
+                  ? { ...target, status: command.status as 'downloading' | 'installing', progress: command.progress }
+                  : target
+              );
+
+              // Update deployment with new target status
+              await setDoc(deploymentRef, {
+                targets: updatedTargets,
+                status: 'in_progress',
+              }, { merge: true });
+            }
+          }
+        }
+      });
+
+      unsubscribes.push(unsubscribe);
+    });
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub());
+    };
+  }, [siteId, deployments]);
+
   const createDeployment = async (
     deployment: Omit<Deployment, 'id' | 'createdAt' | 'status'>,
     machineIds: string[]
@@ -175,7 +279,7 @@ export function useDeployments(siteId: string) {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     const deploymentId = `deploy-${Date.now()}`;
-    const deploymentRef = doc(db, 'sites', siteId, 'deployments', deploymentId);
+    const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
 
     // Initialize targets with pending status
     const targets: DeploymentTarget[] = machineIds.map(machineId => ({
@@ -193,8 +297,10 @@ export function useDeployments(siteId: string) {
 
     // Send install command to each machine in parallel
     const commandPromises = machineIds.map(async (machineId) => {
-      // Use hyphens instead of underscores to avoid Firestore field path errors
-      const commandId = `install-${deploymentId}-${machineId}-${Date.now()}`;
+      // Use underscores to avoid Firestore field path parsing issues with hyphens
+      const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
+      const sanitizedMachineId = machineId.replace(/-/g, '_');
+      const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
       const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
       await setDoc(commandRef, {
@@ -226,8 +332,9 @@ export function useDeployments(siteId: string) {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
     // Send cancel command to the machine
-    const commandId = `cancel-${Date.now()}-${machineId}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    const sanitizedMachineId = machineId.replace(/-/g, '_');
+    const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
+    const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
     await setDoc(commandRef, {
       [commandId]: {
@@ -239,7 +346,7 @@ export function useDeployments(siteId: string) {
     }, { merge: true });
 
     // Update deployment target status to cancelled
-    const deploymentRef = doc(db, 'sites', siteId, 'deployments', deploymentId);
+    const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
     const deploymentSnap = await getDocs(query(collection(db, 'sites', siteId, 'deployments'), limit(1)));
 
     // This is a workaround - need to fetch current deployment to update targets
@@ -250,7 +357,7 @@ export function useDeployments(siteId: string) {
   const deleteDeployment = async (deploymentId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const deploymentRef = doc(db, 'sites', siteId, 'deployments', deploymentId);
+    const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
     await deleteDoc(deploymentRef);
   };
 
@@ -267,6 +374,7 @@ export function useDeploymentManager(siteId: string) {
     templatesLoading: templates.loading,
     templatesError: templates.error,
     createTemplate: templates.createTemplate,
+    updateTemplate: templates.updateTemplate,
     deleteTemplate: templates.deleteTemplate,
 
     deployments: deployments.deployments,

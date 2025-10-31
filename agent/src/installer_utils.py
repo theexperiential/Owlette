@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import requests
 import psutil
+import hashlib
 from typing import Optional, Callable, Dict
 
 
@@ -62,7 +63,8 @@ def execute_installer(
     installer_path: str,
     flags: str = "",
     installer_name: str = "",
-    active_processes: Optional[Dict[str, subprocess.Popen]] = None
+    active_processes: Optional[Dict[str, subprocess.Popen]] = None,
+    timeout_seconds: int = 600
 ) -> tuple[bool, int, str]:
     """
     Execute an installer with silent flags.
@@ -72,6 +74,7 @@ def execute_installer(
         flags: Silent installation flags (e.g., "/VERYSILENT /DIR=C:\\Program")
         installer_name: Name of the installer (for tracking cancellable processes)
         active_processes: Dictionary to track active installations (for cancellation)
+        timeout_seconds: Maximum time to wait for installation (default: 600 seconds / 10 minutes)
 
     Returns:
         Tuple of (success, exit_code, error_message)
@@ -106,15 +109,15 @@ def execute_installer(
             active_processes[installer_name] = process
             logging.info(f"Tracking installer process: {installer_name} (PID: {process.pid})")
 
-        # Wait for installation to complete (10 minute timeout)
+        # Wait for installation to complete (configurable timeout)
         try:
-            stdout, stderr = process.communicate(timeout=600)
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
             exit_code = process.returncode
         except subprocess.TimeoutExpired:
             process.kill()
             if active_processes and installer_name in active_processes:
                 del active_processes[installer_name]
-            error_msg = "Installer execution timeout (exceeded 10 minutes)"
+            error_msg = f"Installer execution timeout (exceeded {timeout_seconds} seconds)"
             logging.error(error_msg)
             return False, -1, error_msg
 
@@ -140,6 +143,42 @@ def execute_installer(
         error_msg = f"Unexpected error executing installer: {e}"
         logging.error(error_msg)
         return False, -1, error_msg
+
+
+def verify_checksum(file_path: str, expected_sha256: str) -> bool:
+    """
+    Verify the SHA256 checksum of a downloaded file.
+
+    Args:
+        file_path: Path to the file to verify
+        expected_sha256: Expected SHA256 hash (case-insensitive)
+
+    Returns:
+        True if checksum matches, False otherwise
+    """
+    try:
+        sha256_hash = hashlib.sha256()
+
+        # Read file in chunks to handle large files efficiently
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                sha256_hash.update(chunk)
+
+        actual_hash = sha256_hash.hexdigest().lower()
+        expected_hash = expected_sha256.lower()
+
+        if actual_hash == expected_hash:
+            logging.info(f"Checksum verification passed: {actual_hash}")
+            return True
+        else:
+            logging.error(f"Checksum verification FAILED!")
+            logging.error(f"Expected: {expected_hash}")
+            logging.error(f"Actual:   {actual_hash}")
+            return False
+
+    except Exception as e:
+        logging.error(f"Error verifying checksum: {e}")
+        return False
 
 
 def verify_installation(path: str) -> bool:

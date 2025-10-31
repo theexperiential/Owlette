@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Download, Loader2 } from 'lucide-react';
+import { Plus, Download, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMachines } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
@@ -20,6 +20,8 @@ interface DeploymentDialogProps {
   templates: DeploymentTemplate[];
   onCreateDeployment: (deployment: Omit<Deployment, 'id' | 'createdAt' | 'status'>, machineIds: string[]) => Promise<string>;
   onCreateTemplate: (template: Omit<DeploymentTemplate, 'id' | 'createdAt'>) => Promise<string>;
+  onUpdateTemplate: (templateId: string, template: Partial<Omit<DeploymentTemplate, 'id' | 'createdAt'>>) => Promise<void>;
+  onDeleteTemplate: (templateId: string) => Promise<void>;
 }
 
 export default function DeploymentDialog({
@@ -29,6 +31,8 @@ export default function DeploymentDialog({
   templates,
   onCreateDeployment,
   onCreateTemplate,
+  onUpdateTemplate,
+  onDeleteTemplate,
 }: DeploymentDialogProps) {
   const { machines } = useMachines(siteId);
   const [deploymentName, setDeploymentName] = useState('');
@@ -40,6 +44,7 @@ export default function DeploymentDialog({
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
+  const [editingTemplate, setEditingTemplate] = useState<string>('');  // ID of template being edited
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
@@ -47,6 +52,7 @@ export default function DeploymentDialog({
   const handleTemplateSelect = (templateId: string) => {
     if (templateId === 'none') {
       setSelectedTemplate('');
+      setEditingTemplate('');
       return;
     }
 
@@ -58,16 +64,52 @@ export default function DeploymentDialog({
       setInstallerUrl(template.installer_url);
       setSilentFlags(template.silent_flags);
       setVerifyPath(template.verify_path || '');
+      setEditingTemplate('');
+    }
+  };
+
+  const handleEditTemplate = () => {
+    if (selectedTemplate) {
+      setEditingTemplate(selectedTemplate);
+      setSaveAsTemplate(false);
+      toast.info('Edit the template fields below and deploy to save changes');
+    }
+  };
+
+  const handleDeleteTemplate = async () => {
+    if (!selectedTemplate) return;
+
+    const template = templates.find(t => t.id === selectedTemplate);
+    if (!template) return;
+
+    if (!confirm(`Delete template "${template.name}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await onDeleteTemplate(selectedTemplate);
+      toast.success('Template deleted successfully');
+
+      // Clear form
+      setSelectedTemplate('');
+      setEditingTemplate('');
+      setDeploymentName('');
+      setInstallerName('');
+      setInstallerUrl('');
+      setSilentFlags('');
+      setVerifyPath('');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete template');
     }
   };
 
   const handleTouchDesignerPreset = () => {
     setDeploymentName('TouchDesigner Deployment');
-    setInstallerName('TouchDesigner.exe');
-    setInstallerUrl('');  // User needs to provide the actual URL
-    setSilentFlags('/VERYSILENT /DIR="C:\\TouchDesigner"');
-    setVerifyPath('C:\\TouchDesigner\\bin\\TouchDesigner.exe');
-    toast.info('TouchDesigner preset loaded. Please provide the installer URL.');
+    setInstallerName('TouchDesigner.2025.31550.exe');
+    setInstallerUrl('https://download.derivative.ca/TouchDesignerWebInstaller.2025.31550.exe');
+    setSilentFlags('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="C:\\Program Files\\Derivative\\TouchDesigner.2025.31550" /TDDesktopIcon=false /Codemeter /LOG="C:\\TouchDesigner_Install.log"');
+    setVerifyPath('C:\\Program Files\\Derivative\\TouchDesigner.2025.31550\\bin\\TouchDesigner.exe');
+    toast.success('TouchDesigner preset loaded with all configuration.');
   };
 
   const toggleMachine = (machineId: string) => {
@@ -125,8 +167,20 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
-      // Save as template if requested
-      if (saveAsTemplate) {
+      // Update existing template if in edit mode
+      if (editingTemplate) {
+        await onUpdateTemplate(editingTemplate, {
+          name: deploymentName,
+          installer_name: installerName,
+          installer_url: installerUrl,
+          silent_flags: silentFlags,
+          verify_path: verifyPath || undefined,
+        });
+        toast.success('Template updated successfully!');
+        setEditingTemplate('');
+      }
+      // Save as new template if requested
+      else if (saveAsTemplate) {
         await onCreateTemplate({
           name: deploymentName,
           installer_name: installerName,
@@ -192,25 +246,57 @@ export default function DeploymentDialog({
           {templates.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="template" className="text-white">Load from Template</Label>
-              <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
-                  <SelectValue placeholder="Select a template..." />
-                </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-800">
-                  <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                    None
-                  </SelectItem>
-                  {templates.map((template) => (
-                    <SelectItem
-                      key={template.id}
-                      value={template.id}
-                      className="text-white focus:bg-slate-700 focus:text-white"
-                    >
-                      {template.name}
+              <div className="flex gap-2">
+                <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
+                  <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
+                    <SelectValue placeholder="Select a template..." />
+                  </SelectTrigger>
+                  <SelectContent className="border-slate-700 bg-slate-800">
+                    <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                      None
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    {templates.map((template) => (
+                      <SelectItem
+                        key={template.id}
+                        value={template.id}
+                        className="text-white focus:bg-slate-700 focus:text-white"
+                      >
+                        {template.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedTemplate && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleEditTemplate}
+                      className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                      title="Edit template"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={handleDeleteTemplate}
+                      className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+              {editingTemplate && (
+                <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
+                  <Pencil className="h-3 w-3 text-blue-400" />
+                  <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -262,7 +348,7 @@ export default function DeploymentDialog({
               placeholder="https://example.com/installer.exe"
               value={installerUrl}
               onChange={(e) => setInstallerUrl(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-white"
+              className="border-slate-700 bg-slate-900 text-white font-mono text-sm"
             />
             <p className="text-xs text-slate-500">Direct download link to the installer</p>
           </div>
@@ -303,7 +389,7 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer text-xs"
+                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
                 >
                   Online Only ({onlineMachines.length})
                 </Button>
@@ -312,7 +398,7 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer text-xs"
+                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
                 >
                   {allMachinesSelected ? 'Deselect All' : 'Select All'}
                 </Button>
@@ -364,7 +450,7 @@ export default function DeploymentDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
             disabled={deploying}
           >
             Cancel

@@ -114,7 +114,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 3. Click "Generate new private key"
 4. Save the JSON file as `config/firebase-credentials.json`
 
-See [docs/phase1-firebase-setup.md](../docs/phase1-firebase-setup.md) for detailed Firebase setup.
+See [docs/firebase-setup.md](../docs/firebase-setup.md) for detailed Firebase setup.
 
 ---
 
@@ -307,7 +307,7 @@ agent/
 
 - **Documentation**: See [docs/](../docs/) folder
 - **Issues**: https://github.com/theexperiential/Owlette/issues
-- **Firebase Setup**: [docs/phase1-firebase-setup.md](../docs/phase1-firebase-setup.md)
+- **Firebase Setup**: [docs/firebase-setup.md](../docs/firebase-setup.md)
 
 ---
 

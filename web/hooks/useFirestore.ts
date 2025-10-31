@@ -20,6 +20,7 @@ export interface Process {
   relaunch_attempts: string;
   responsive: boolean;
   last_updated: number;
+  index: number; // Order from config file
   // For optimistic UI updates
   _optimisticAutolaunch?: boolean;
 }
@@ -173,13 +174,26 @@ export function useMachines(siteId: string) {
                   relaunch_attempts: processData.relaunch_attempts || '3',
                   responsive: processData.responsive ?? true,
                   last_updated: processData.last_updated || 0,
+                  index: processData.index ?? 999, // Preserve config order, default to end
                 }))
-                .sort((a, b) => a.name.localeCompare(b.name)); // Sort by name alphabetically
+                .sort((a, b) => a.index - b.index); // Sort by config order (index field)
+            }
+
+            // Convert Firestore Timestamp to Unix timestamp in seconds
+            let lastHeartbeat = 0;
+            if (data.lastHeartbeat) {
+              if (typeof data.lastHeartbeat === 'object' && 'seconds' in data.lastHeartbeat) {
+                // Firestore Timestamp object
+                lastHeartbeat = data.lastHeartbeat.seconds;
+              } else if (typeof data.lastHeartbeat === 'number') {
+                // Already a number
+                lastHeartbeat = data.lastHeartbeat;
+              }
             }
 
             machineData.push({
               machineId: doc.id,
-              lastHeartbeat: data.lastHeartbeat || 0,
+              lastHeartbeat,
               online: data.online || false,
               metrics: data.metrics,
               processes,

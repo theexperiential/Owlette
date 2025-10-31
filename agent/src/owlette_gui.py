@@ -70,6 +70,7 @@ class OwletteConfigApp:
 
         # Process list
         self.prev_process_list = None
+        self.prev_config_hash = None  # Track config changes to prevent overwriting user input
         self.selected_process = None
         self.selected_index = None
         self.update_process_list()
@@ -289,9 +290,16 @@ class OwletteConfigApp:
             # If turning ON, validate required fields
             if new_state:
                 name = self.config['processes'][index].get('name', '')
-                exe_path = self.config['processes'][index].get('exe_path', '')
+                exe_path = self.config['processes'][index].get('exe_path', '').strip()
+
                 if not name or not exe_path:
                     CTkMessagebox(master=self.master, title="Validation Error", message="Name and Exe Path are required to enable Autolaunch.", icon="cancel")
+                    self.autolaunch_toggle.deselect()
+                    return
+
+                # Validate that executable path actually exists
+                if not os.path.isfile(exe_path):
+                    CTkMessagebox(master=self.master, title="Validation Error", message=f"Cannot enable Autolaunch: Executable path does not exist.\n\n{exe_path}\n\nPlease set a valid executable path first.", icon="cancel")
                     self.autolaunch_toggle.deselect()
                     return
 
@@ -299,16 +307,12 @@ class OwletteConfigApp:
             shared_utils.save_config(self.config)
 
             # Upload to Firestore immediately for fast sync (in background thread)
+            # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
             if self.firebase_client:
                 def upload_in_background():
                     try:
                         self.firebase_client.upload_config(self.config)
                         logging.info("Config uploaded to Firestore immediately after toggle")
-
-                        # Also upload metrics immediately to update the web dashboard
-                        metrics = shared_utils.get_system_metrics()
-                        self.firebase_client._upload_metrics(metrics)
-                        logging.info("Metrics pushed immediately after config change")
                     except Exception as e:
                         logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -346,6 +350,20 @@ class OwletteConfigApp:
         # Add to config and save
         self.config['processes'].append(new_process)
         shared_utils.save_config(self.config)
+
+        # Upload to Firestore immediately for fast sync (in background thread)
+        # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
+        if self.firebase_client:
+            def upload_in_background():
+                try:
+                    self.firebase_client.upload_config(self.config)
+                    logging.info("Config uploaded to Firestore immediately after new process")
+                except Exception as e:
+                    logging.error(f"Failed to upload to Firestore: {e}")
+
+            # Run in background thread so GUI stays responsive
+            upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+            upload_thread.start()
 
         # Update the process list to show the new entry
         self.update_process_list()
@@ -390,9 +408,12 @@ class OwletteConfigApp:
         except ValueError:
             if not is_soft_save:
                 CTkMessagebox(master=self.master, title="Validation Error", message="Start Time Delay must be a number (integer or float).", icon="cancel")
-            self.time_delay_entry.delete(0, tk.END)
-            self.time_delay_entry.insert(0, 0)
-            return
+                self.time_delay_entry.delete(0, tk.END)
+                self.time_delay_entry.insert(0, 0)
+                return
+            else:
+                # For soft saves, just use default value but continue saving
+                time_delay = '0'
 
         # Validate Time To Init
         try:
@@ -402,15 +423,19 @@ class OwletteConfigApp:
         except ValueError:
             if not is_soft_save:
                 CTkMessagebox(master=self.master, title="Validation Error", message="Time to Initialize must be at least 10 seconds", icon="cancel")
-            self.time_to_init_entry.delete(0, tk.END)
-            self.time_to_init_entry.insert(0, 10)
-            return
+                self.time_to_init_entry.delete(0, tk.END)
+                self.time_to_init_entry.insert(0, 10)
+                return
+            else:
+                # For soft saves, just use default value but continue saving
+                time_to_init = '10'
 
         # Validate CWD
         if cwd and not os.path.isdir(cwd):
             if not is_soft_save:
                 CTkMessagebox(master=self.master, title="Validation Error", message="The specified working directory does not exist.", icon="cancel")
-            return
+                return
+            # For soft saves, allow invalid paths (user might be typing)
 
         # Validate Relaunch Attempts
         try:
@@ -420,9 +445,12 @@ class OwletteConfigApp:
         except ValueError:
             if not is_soft_save:
                 CTkMessagebox(master=self.master, title="Validation Error", message="Relaunch attempts must be an integer. 3 is recommended. After 3 attempts, a system restart will be attempted. Set to 0 for unlimited attempts to relaunch (no system restart).", icon="cancel")
-            self.relaunch_attempts_entry.delete(0, tk.END)
-            self.relaunch_attempts_entry.insert(0, 3)
-            return
+                self.relaunch_attempts_entry.delete(0, tk.END)
+                self.relaunch_attempts_entry.insert(0, 3)
+                return
+            else:
+                # For soft saves, just use default value but continue saving
+                relaunch_attempts = '3'
 
         # Check if relaunch attempts is empty and set to default if so
         if not relaunch_attempts:
@@ -461,6 +489,26 @@ class OwletteConfigApp:
             self.config['processes'][index]['relaunch_attempts'] = relaunch_attempts
 
             shared_utils.save_config(self.config)
+
+            # Update the config hash to prevent auto-refresh from reverting the change
+            import hashlib
+            config_str = json.dumps(self.config['processes'][index], sort_keys=True)
+            self.prev_config_hash = hashlib.md5(config_str.encode()).hexdigest()
+
+            # Upload to Firestore immediately for fast sync (in background thread)
+            # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
+            if self.firebase_client:
+                def upload_in_background():
+                    try:
+                        self.firebase_client.upload_config(self.config)
+                        logging.info("Config uploaded to Firestore immediately after process update")
+                    except Exception as e:
+                        logging.error(f"Failed to upload to Firestore: {e}")
+
+                # Run in background thread so GUI stays responsive
+                upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+                upload_thread.start()
+
             self.update_process_list()
 
             # Re-select the process
@@ -671,18 +719,9 @@ class OwletteConfigApp:
             except Exception as e:
                 logging.info(e)
 
-        # Refresh displayed fields if a process is selected and config changed
-        # (Only if not actively editing ANY field - check if focus is on an Entry widget)
-        is_editing = 'entry' in current_focus.lower() or 'text' in current_focus.lower()
-        if self.selected_process and not is_editing:
-            try:
-                # Get fresh process data
-                process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
-                if process:
-                    # Update all fields from fresh config
-                    self.refresh_displayed_fields(process)
-            except Exception as e:
-                logging.debug(f"Could not refresh fields: {e}")
+        # Don't auto-refresh displayed fields - only refresh when user explicitly selects a process
+        # This prevents overwriting user input before they save
+        # External changes from Firestore will be visible when switching processes
 
     def update_process_list_periodically(self):
         self.update_process_list()
@@ -699,6 +738,21 @@ class OwletteConfigApp:
                     if index is not None:
                         del self.config['processes'][index]
                         shared_utils.save_config(self.config)
+
+                        # Upload to Firestore immediately for fast sync (in background thread)
+                        # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
+                        if self.firebase_client:
+                            def upload_in_background():
+                                try:
+                                    self.firebase_client.upload_config(self.config)
+                                    logging.info("Config uploaded to Firestore immediately after process removal")
+                                except Exception as e:
+                                    logging.error(f"Failed to upload to Firestore: {e}")
+
+                            # Run in background thread so GUI stays responsive
+                            upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+                            upload_thread.start()
+
                         self.update_process_list()            
             else:
                 CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
@@ -711,6 +765,21 @@ class OwletteConfigApp:
             if index > 0:
                 self.config['processes'][index], self.config['processes'][index-1] = self.config['processes'][index-1], self.config['processes'][index]
                 shared_utils.save_config(self.config)
+
+                # Upload to Firestore immediately for fast sync (in background thread)
+                # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
+                if self.firebase_client:
+                    def upload_in_background():
+                        try:
+                            self.firebase_client.upload_config(self.config)
+                            logging.info("Config uploaded to Firestore immediately after move up")
+                        except Exception as e:
+                            logging.error(f"Failed to upload to Firestore: {e}")
+
+                    # Run in background thread so GUI stays responsive
+                    upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+                    upload_thread.start()
+
                 self.update_process_list()
                 self.process_list.activate(index-1)
         else:
@@ -722,6 +791,21 @@ class OwletteConfigApp:
             if index < len(self.config['processes']) - 1:
                 self.config['processes'][index], self.config['processes'][index+1] = self.config['processes'][index+1], self.config['processes'][index]
                 shared_utils.save_config(self.config)
+
+                # Upload to Firestore immediately for fast sync (in background thread)
+                # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
+                if self.firebase_client:
+                    def upload_in_background():
+                        try:
+                            self.firebase_client.upload_config(self.config)
+                            logging.info("Config uploaded to Firestore immediately after move down")
+                        except Exception as e:
+                            logging.error(f"Failed to upload to Firestore: {e}")
+
+                    # Run in background thread so GUI stays responsive
+                    upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+                    upload_thread.start()
+
                 self.update_process_list()
                 self.process_list.activate(index+1)
         else:

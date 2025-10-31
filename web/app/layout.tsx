@@ -17,6 +17,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Owlette - Process Management Dashboard",
   description: "Monitor and manage your Windows processes from the cloud",
+  icons: {
+    icon: '/owlette-icon.png',
+    shortcut: '/owlette-icon.png',
+    apple: '/owlette-icon.png',
+  },
 };
 
 export default function RootLayout({

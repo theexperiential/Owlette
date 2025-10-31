@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Image from 'next/image';
 import DeploymentDialog from '@/components/DeploymentDialog';
+import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -40,6 +41,7 @@ export default function DeploymentsPage() {
     templatesLoading,
     createDeployment,
     createTemplate,
+    updateTemplate,
     deleteTemplate,
     cancelDeployment,
     deleteDeployment,
@@ -182,6 +184,8 @@ export default function DeploymentsPage() {
       in_progress: 'bg-blue-600 hover:bg-blue-700',
       partial: 'bg-yellow-600 hover:bg-yellow-700',
       pending: 'bg-slate-600 hover:bg-slate-700',
+      downloading: 'bg-cyan-600 hover:bg-cyan-700',
+      installing: 'bg-purple-600 hover:bg-purple-700',
     };
 
     return (
@@ -203,11 +207,15 @@ export default function DeploymentsPage() {
               <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
               <h1 className="text-xl font-bold text-white">Owlette</h1>
 
-              {/* Navigation Menu */}
+              {/* Breadcrumb separator */}
+              <ChevronRight className="h-4 w-4 text-slate-600" />
+
+              {/* Navigation Menu - Breadcrumb style */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
-                    <ChevronDown className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer">
+                    <span className="text-lg">Deploy Software</span>
+                    <ChevronDown className="h-4 w-4 ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800">
@@ -225,8 +233,6 @@ export default function DeploymentsPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-
-              <h2 className="text-lg text-slate-300">Deployments</h2>
             </div>
 
             {/* Site Selector */}
@@ -234,7 +240,7 @@ export default function DeploymentsPage() {
               <div className="flex items-center gap-2">
                 <ChevronRight className="h-4 w-4 text-slate-600" />
                 <Select value={currentSiteId} onValueChange={handleSiteChange}>
-                  <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white">
+                  <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white cursor-pointer">
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
                   <SelectContent className="border-slate-700 bg-slate-800">
@@ -249,6 +255,150 @@ export default function DeploymentsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                {/* Manage Sites Dialog */}
+                <Dialog open={manageDialogOpen} onOpenChange={setManageDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl">
+                    <DialogHeader>
+                      <DialogTitle className="text-white">Manage Sites</DialogTitle>
+                      <DialogDescription className="text-slate-400">
+                        Rename or delete your sites
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2 py-4 max-h-96 overflow-y-auto">
+                      {sites.map((site) => (
+                        <div
+                          key={site.id}
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            site.id === currentSiteId
+                              ? 'border-blue-600 bg-slate-750'
+                              : 'border-slate-700 bg-slate-900'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            {site.id === currentSiteId && (
+                              <div className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0" />
+                            )}
+                            {editingSiteId === site.id ? (
+                              <Input
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleRenameSite(site.id);
+                                  if (e.key === 'Escape') cancelEditingSite();
+                                }}
+                                className="border-slate-700 bg-slate-800 text-white flex-1"
+                                autoFocus
+                              />
+                            ) : (
+                              <div className="flex-1 min-w-0">
+                                <p className="text-white font-medium truncate">{site.name}</p>
+                                <p className="text-xs text-slate-400">{site.id}</p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                            {editingSiteId === site.id ? (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRenameSite(site.id)}
+                                  className="text-green-500 hover:text-green-400 hover:bg-slate-700 cursor-pointer"
+                                >
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={cancelEditingSite}
+                                  className="text-slate-400 hover:text-slate-300 hover:bg-slate-700 cursor-pointer"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => startEditingSite(site.id, site.name)}
+                                  className="text-blue-400 hover:text-blue-300 hover:bg-slate-700 cursor-pointer"
+                                  title="Rename site"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => confirmDeleteSite(site.id)}
+                                  className="text-red-400 hover:text-red-300 hover:bg-slate-700 cursor-pointer"
+                                  disabled={sites.length === 1}
+                                  title={sites.length === 1 ? "Cannot delete the last site" : "Delete site"}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                {/* Create Site Dialog */}
+                <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="border-slate-700 bg-slate-800 text-white">
+                    <DialogHeader>
+                      <DialogTitle className="text-white">Create New Site</DialogTitle>
+                      <DialogDescription className="text-slate-400">
+                        Add a new site to organize your machines
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="site-id" className="text-white">Site ID</Label>
+                        <Input
+                          id="site-id"
+                          placeholder="e.g., nyc_office"
+                          value={newSiteId}
+                          onChange={(e) => setNewSiteId(e.target.value.toLowerCase().replace(/\s+/g, '_'))}
+                          className="border-slate-700 bg-slate-900 text-white"
+                        />
+                        <p className="text-xs text-slate-500">Lowercase, use underscores instead of spaces</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="site-name" className="text-white">Site Name</Label>
+                        <Input
+                          id="site-name"
+                          placeholder="e.g., NYC Office"
+                          value={newSiteName}
+                          onChange={(e) => setNewSiteName(e.target.value)}
+                          className="border-slate-700 bg-slate-900 text-white"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setCreateDialogOpen(false)} className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
+                        Cancel
+                      </Button>
+                      <Button onClick={handleCreateSite} className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer">
+                        Create Site
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
             )}
           </div>
@@ -279,6 +429,8 @@ export default function DeploymentsPage() {
             templates={templates}
             onCreateDeployment={createDeployment}
             onCreateTemplate={createTemplate}
+            onUpdateTemplate={updateTemplate}
+            onDeleteTemplate={deleteTemplate}
           />
         </div>
 
@@ -386,7 +538,7 @@ export default function DeploymentsPage() {
                             console.error('Failed to delete deployment:', error);
                           }
                         }}
-                        className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-950/30"
+                        className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-950/30 cursor-pointer"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -420,7 +572,7 @@ export default function DeploymentsPage() {
                           <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-slate-800">
                             <span className="text-white select-text">{target.machineId}</span>
                             <div className="flex items-center gap-2">
-                              {target.progress !== undefined && target.status === 'downloading' && (
+                              {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
                                 <span className="text-xs text-slate-400">{target.progress}%</span>
                               )}
                               {getStatusBadge(target.status)}
@@ -453,6 +605,46 @@ export default function DeploymentsPage() {
           )}
         </div>
       </main>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deletingDialogOpen} onOpenChange={setDeletingDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Site</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Are you sure you want to delete this site? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {siteToDelete && (
+            <div className="py-4">
+              <p className="text-white">
+                Site: <span className="font-semibold">{sites.find(s => s.id === siteToDelete)?.name}</span>
+              </p>
+              <p className="text-sm text-slate-400 mt-2">
+                Note: The site document will be deleted, but machine data may remain in Firestore.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeletingDialogOpen(false);
+                setSiteToDelete(null);
+              }}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteSite}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+            >
+              Delete Site
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

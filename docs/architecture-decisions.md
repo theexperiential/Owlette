@@ -28,7 +28,7 @@ Owlette/
 │   ├── owlette_service.spec
 │   └── README.md
 │
-├── portal/                     # Next.js Web Dashboard
+├── web/                     # Next.js Web Dashboard
 │   ├── app/
 │   │   ├── (auth)/
 │   │   ├── (dashboard)/
@@ -44,7 +44,7 @@ Owlette/
 │
 ├── docs/                       # Shared Documentation
 │   ├── architecture-decisions.md
-│   ├── phase1-firebase-setup.md
+│   ├── firebase-setup.md
 │   ├── phase2-web-portal.md
 │   └── deployment.md
 │
@@ -73,7 +73,7 @@ Owlette/
 - Clear boundaries prevent cross-contamination
 
 **Alternative considered:**
-- Separate repos (owlette-agent, owlette-portal) - rejected because it adds complexity for solo development and version management
+- Separate repos (owlette-agent, owlette-web) - rejected because it adds complexity for solo development and version management
 
 ---
 
@@ -103,7 +103,7 @@ A **site_id** is a unique identifier for a physical location or logical grouping
 #### Production (Phase 4 - Machine Onboarding)
 **Automated from Web Portal:**
 
-1. **Admin creates site in web portal:**
+1. **Admin creates site in web dashboard:**
    - Navigate to "Sites" → "Add New Site"
    - Enter site name: "NYC Office"
    - System generates unique `site_id`: `site_abc123xyz`
@@ -116,7 +116,7 @@ A **site_id** is a unique identifier for a physical location or logical grouping
 3. **Technician installs on machines:**
    - Run `owlette-installer-nyc-office.exe` on any machine
    - Agent automatically registers to `site_abc123xyz`
-   - Machine appears in web portal under "NYC Office" immediately
+   - Machine appears in web dashboard under "NYC Office" immediately
    - **No manual configuration needed**
 
 ### Site ID Generation Strategy
@@ -129,7 +129,7 @@ A **site_id** is a unique identifier for a physical location or logical grouping
 - Globally unique
 - Sortable by creation time (if using timestamp-based hash)
 
-**Implementation (in web portal):**
+**Implementation (in web dashboard):**
 ```typescript
 function generateSiteId(): string {
   const timestamp = Date.now().toString(36); // Base36 timestamp
@@ -305,7 +305,7 @@ npm run dev
 - Build: `agent/build.bat`
 - Output: `agent/dist/owlette_service.exe`
 - Installer: `agent/installer/owlette_setup.exe`
-- Distribution: Downloaded from web portal (Phase 4)
+- Distribution: Downloaded from web dashboard (Phase 4)
 
 ### Portal Deployment
 - Build: `cd portal && npm run build`
@@ -325,13 +325,13 @@ npm run dev
 - Production: Auto-embedded in installers (Phase 4)
 
 **Repo Structure:**
-- Monorepo with `agent/` and `portal/` directories
+- Monorepo with `agent/` and `web/` directories
 - Clear separation, easy management
 - Perfect for solo developer building a product
 
 **Next Steps:**
 1. Phase 1: Test Firebase integration ✅
-2. Phase 2: Build web portal (Next.js)
+2. Phase 2: Build web dashboard (Next.js)
 3. Phase 3: Config management from web
 4. Phase 4: Auto-installer generation with embedded site_id
 5. Phase 5: Software distribution

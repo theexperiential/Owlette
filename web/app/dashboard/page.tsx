@@ -80,8 +80,15 @@ export default function DashboardPage() {
     }
   };
 
-  const handleToggleAutolaunch = async (machineId: string, processId: string, newValue: boolean, processName: string) => {
-    console.log('handleToggleAutolaunch called:', { machineId, processId, processName, newValue });
+  const handleToggleAutolaunch = async (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => {
+    console.log('handleToggleAutolaunch called:', { machineId, processId, processName, newValue, exePath });
+
+    // Validate exe_path before enabling autolaunch
+    if (newValue && (!exePath || exePath.trim() === '')) {
+      toast.error(`Cannot enable autolaunch for "${processName}": Executable path is not set. Please edit the process and set a valid executable path.`);
+      return;
+    }
+
     try {
       await toggleAutolaunch(machineId, processId, processName, newValue);
       console.log('toggleAutolaunch completed successfully');
@@ -292,11 +299,15 @@ export default function DashboardPage() {
               <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
               <h1 className="text-xl font-bold text-white">Owlette</h1>
 
-              {/* Navigation Menu */}
+              {/* Breadcrumb separator */}
+              <ChevronRight className="h-4 w-4 text-slate-600" />
+
+              {/* Navigation Menu - Breadcrumb style */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
-                    <ChevronDown className="h-4 w-4" />
+                  <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer">
+                    <span className="text-lg">Dashboard</span>
+                    <ChevronDown className="h-4 w-4 ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800">
@@ -314,8 +325,6 @@ export default function DashboardPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-
-              <h2 className="text-lg text-slate-300">Dashboard</h2>
             </div>
 
             {/* Site Selector - GitHub style */}
@@ -323,7 +332,7 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2">
                 <ChevronRight className="h-4 w-4 text-slate-600" />
                 <Select value={currentSiteId} onValueChange={handleSiteChange}>
-                  <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white">
+                  <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white cursor-pointer">
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
                   <SelectContent className="border-slate-700 bg-slate-800">
@@ -396,7 +405,7 @@ export default function DashboardPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleRenameSite(site.id)}
-                                  className="text-green-500 hover:text-green-400 hover:bg-slate-700"
+                                  className="text-green-500 hover:text-green-400 hover:bg-slate-700 cursor-pointer"
                                 >
                                   <Check className="h-4 w-4" />
                                 </Button>
@@ -404,7 +413,7 @@ export default function DashboardPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={cancelEditingSite}
-                                  className="text-slate-400 hover:text-slate-300 hover:bg-slate-700"
+                                  className="text-slate-400 hover:text-slate-300 hover:bg-slate-700 cursor-pointer"
                                 >
                                   <X className="h-4 w-4" />
                                 </Button>
@@ -415,7 +424,7 @@ export default function DashboardPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => startEditingSite(site.id, site.name)}
-                                  className="text-blue-400 hover:text-blue-300 hover:bg-slate-700"
+                                  className="text-blue-400 hover:text-blue-300 hover:bg-slate-700 cursor-pointer"
                                   title="Rename site"
                                 >
                                   <Pencil className="h-4 w-4" />
@@ -424,7 +433,7 @@ export default function DashboardPage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => confirmDeleteSite(site.id)}
-                                  className="text-red-400 hover:text-red-300 hover:bg-slate-700"
+                                  className="text-red-400 hover:text-red-300 hover:bg-slate-700 cursor-pointer"
                                   disabled={sites.length === 1}
                                   title={sites.length === 1 ? "Cannot delete the last site" : "Delete site"}
                                 >
@@ -500,48 +509,48 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content */}
-      <main className="mx-auto max-w-7xl p-4">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold tracking-tight text-white">Welcome back!</h2>
-          <p className="text-slate-400">
+      <main className="mx-auto max-w-7xl p-3 md:p-4">
+        <div className="mb-4 md:mb-8">
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Welcome back!</h2>
+          <p className="text-sm md:text-base text-slate-400">
             Manage your Windows processes from the cloud
           </p>
         </div>
 
         {/* Quick stats */}
-        <div className="mb-8 grid gap-4 md:grid-cols-3">
+        <div className="mb-6 grid grid-cols-3 gap-2 md:gap-4">
           <Card className="border-slate-800 bg-slate-900">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Total Machines</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+              <CardTitle className="text-xs md:text-sm font-medium text-slate-200">Machines</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-white">{machines.length}</div>
-              <p className="text-xs text-slate-400">
-                {machines.length === 0 ? 'No machines connected yet' : `${machines.length} machine${machines.length > 1 ? 's' : ''} registered`}
+            <CardContent className="pb-2 md:pb-6">
+              <div className="text-xl md:text-2xl font-bold text-white">{machines.length}</div>
+              <p className="text-xs text-slate-400 hidden md:block">
+                {machines.length === 0 ? 'No machines' : `${machines.length} registered`}
               </p>
             </CardContent>
           </Card>
 
           <Card className="border-slate-800 bg-slate-900">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Online</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+              <CardTitle className="text-xs md:text-sm font-medium text-slate-200">Online</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-white">{onlineMachines}</div>
-              <p className="text-xs text-slate-400">
-                {onlineMachines === 0 ? 'No machines online' : `${onlineMachines} machine${onlineMachines > 1 ? 's' : ''} currently online`}
+            <CardContent className="pb-2 md:pb-6">
+              <div className="text-xl md:text-2xl font-bold text-white">{onlineMachines}</div>
+              <p className="text-xs text-slate-400 hidden md:block">
+                {onlineMachines === 0 ? 'None online' : `${onlineMachines} online`}
               </p>
             </CardContent>
           </Card>
 
           <Card className="border-slate-800 bg-slate-900">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Processes</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+              <CardTitle className="text-xs md:text-sm font-medium text-slate-200">Processes</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-white">{totalProcesses}</div>
-              <p className="text-xs text-slate-400">
-                Managed processes
+            <CardContent className="pb-2 md:pb-6">
+              <div className="text-xl md:text-2xl font-bold text-white">{totalProcesses}</div>
+              <p className="text-xs text-slate-400 hidden md:block">
+                Managed
               </p>
             </CardContent>
           </Card>
@@ -551,15 +560,15 @@ export default function DashboardPage() {
         {machines.length > 0 ? (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-xl font-bold text-white">Machines</h3>
+              <h3 className="text-lg md:text-xl font-bold text-white">Machines</h3>
 
-              {/* View Toggle */}
-              <div className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 p-1 select-none">
+              {/* View Toggle - Hidden on mobile, always show card view */}
+              <div className="hidden md:flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 p-1 select-none">
                 <Button
                   variant={viewType === 'card' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => handleViewChange('card')}
-                  className={`cursor-pointer ${viewType === 'card' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
+                  className={`cursor-pointer text-white ${viewType === 'card' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
                 >
                   <LayoutGrid className="h-4 w-4" />
                 </Button>
@@ -567,26 +576,25 @@ export default function DashboardPage() {
                   variant={viewType === 'list' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => handleViewChange('list')}
-                  className={`cursor-pointer ${viewType === 'list' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
+                  className={`cursor-pointer text-white ${viewType === 'list' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
                 >
                   <List className="h-4 w-4" />
                 </Button>
               </div>
             </div>
 
-            {/* Card View */}
-            {viewType === 'card' && (
-              <div className="grid gap-4 md:grid-cols-2">
+            {/* Card View - Always shown on mobile, toggle on desktop */}
+            <div className={`grid gap-4 md:grid-cols-2 ${viewType === 'list' ? 'md:hidden' : ''}`}>
               {machines.map((machine) => (
                 <Card key={machine.machineId} className="border-slate-800 bg-slate-900">
-                  <CardHeader>
+                  <CardHeader className="pb-3 md:pb-6">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-white select-text">{machine.machineId}</CardTitle>
-                      <Badge className={`select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                      <CardTitle className="text-base md:text-lg text-white select-text">{machine.machineId}</CardTitle>
+                      <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
                         {machine.online ? 'Online' : 'Offline'}
                       </Badge>
                     </div>
-                    <CardDescription className="text-slate-400 select-none">
+                    <CardDescription className="text-xs md:text-sm text-slate-400 select-none hidden md:block">
                       Last heartbeat: {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
                     </CardDescription>
                   </CardHeader>
@@ -601,7 +609,7 @@ export default function DashboardPage() {
                         <span className="text-white">
                           {machine.metrics.memory?.percent}%
                           {machine.metrics.memory?.used_gb && machine.metrics.memory?.total_gb && (
-                            <span className="text-slate-500 ml-1">
+                            <span className="text-slate-500 ml-1 hidden md:inline">
                               ({machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB)
                             </span>
                           )}
@@ -612,7 +620,7 @@ export default function DashboardPage() {
                         <span className="text-white">
                           {machine.metrics.disk?.percent}%
                           {machine.metrics.disk?.used_gb && machine.metrics.disk?.total_gb && (
-                            <span className="text-slate-500 ml-1">
+                            <span className="text-slate-500 ml-1 hidden md:inline">
                               ({machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB)
                             </span>
                           )}
@@ -654,30 +662,26 @@ export default function DashboardPage() {
                         </Button>
                       </CollapsibleTrigger>
                       <CollapsibleContent>
-                        <div className="space-y-2 p-4 border-t border-slate-800 bg-slate-900">
+                        <div className="space-y-2 p-2 md:p-4 border-t border-slate-800 bg-slate-900">
                           {machine.processes.map((process) => (
-                            <div key={process.id} className="flex items-center justify-between p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-white font-medium truncate select-text">{process.name}</span>
-                                  <Badge className={`text-xs flex-shrink-0 select-none ${process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                    {process.status}
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
-                                  {process.pid && <span>PID: {process.pid}</span>}
-                                  <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
-                                </div>
+                            <div key={process.id} className="flex items-center justify-between p-2 md:p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
+                              <div className="flex-1 min-w-0 flex items-center gap-2">
+                                <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
+                                <Badge className={`text-xs flex-shrink-0 select-none ${process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                                  {process.status}
+                                </Badge>
+                                {process.pid && <span className="text-xs text-slate-400 select-text hidden sm:inline">PID: {process.pid}</span>}
+                                <span className="truncate hidden md:inline text-xs text-slate-400 select-text" title={process.exe_path}>{process.exe_path}</span>
                               </div>
-                              <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                                <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
+                                <div className="flex items-center gap-2 hidden md:flex">
                                   <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
                                     Autolaunch
                                   </Label>
                                   <Switch
                                     id={`autolaunch-${machine.machineId}-${process.id}`}
                                     checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                    onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name)}
+                                    onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name, process.exe_path)}
                                     className="cursor-pointer"
                                   />
                                 </div>
@@ -685,20 +689,20 @@ export default function DashboardPage() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => openEditProcessDialog(machine.machineId, process)}
-                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:text-white cursor-pointer"
+                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
                                 >
-                                  <Pencil className="h-3 w-3 mr-1" />
-                                  Edit
+                                  <Pencil className="h-3 w-3 md:mr-1" />
+                                  <span className="hidden md:inline">Edit</span>
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                   disabled={process.status !== 'RUNNING'}
                                 >
-                                  <Square className="h-3 w-3 mr-1" />
-                                  Kill
+                                  <Square className="h-3 w-3 md:mr-1" />
+                                  <span className="hidden md:inline">Kill</span>
                                 </Button>
                               </div>
                             </div>
@@ -710,11 +714,9 @@ export default function DashboardPage() {
                 </Card>
               ))}
             </div>
-            )}
 
-            {/* List View */}
-            {viewType === 'list' && (
-              <div className="rounded-lg border border-slate-800 bg-slate-900">
+            {/* List View - Hidden on mobile, only shown on desktop when selected */}
+            <div className={`rounded-lg border border-slate-800 bg-slate-900 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
                 <Table>
                   <TableHeader>
                     <TableRow className="border-slate-800 hover:bg-slate-800">
@@ -828,7 +830,7 @@ export default function DashboardPage() {
                                         <Switch
                                           id={`autolaunch-list-${machine.machineId}-${process.id}`}
                                           checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                          onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name)}
+                                          onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name, process.exe_path)}
                                           className="cursor-pointer"
                                         />
                                       </div>
@@ -836,7 +838,7 @@ export default function DashboardPage() {
                                         variant="outline"
                                         size="sm"
                                         onClick={() => openEditProcessDialog(machine.machineId, process)}
-                                        className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:text-white cursor-pointer"
+                                        className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
                                       >
                                         <Pencil className="h-3 w-3 mr-1" />
                                         Edit
@@ -845,7 +847,7 @@ export default function DashboardPage() {
                                         variant="outline"
                                         size="sm"
                                         onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                        className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                        className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                         disabled={process.status !== 'RUNNING'}
                                       >
                                         <Square className="h-3 w-3 mr-1" />
@@ -863,7 +865,6 @@ export default function DashboardPage() {
                   </TableBody>
                 </Table>
               </div>
-            )}
           </div>
         ) : (
           <Card className="border-slate-800 bg-slate-900">
@@ -877,19 +878,19 @@ export default function DashboardPage() {
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
                 <h3 className="font-semibold text-white">Step 1: Install Owlette Agent</h3>
                 <p className="text-sm text-slate-400">
-                  The agent is already running on TEC-A4D!
+                  Download and install the Owlette agent on your Windows machine
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 2: Configure Firebase</h3>
+                <h3 className="font-semibold text-white">Step 2: Configure Site ID</h3>
                 <p className="text-sm text-slate-400">
-                  Firebase is connected and syncing data
+                  Set the agent's site_id to <span className="font-mono text-blue-400">{currentSiteId}</span> in the config file
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 3: View Real-time Data</h3>
+                <h3 className="font-semibold text-white">Step 3: Start the Service</h3>
                 <p className="text-sm text-slate-400">
-                  Refresh the page - your machine should appear above
+                  Run the agent and refresh this page - your machine will appear above
                 </p>
               </div>
             </CardContent>

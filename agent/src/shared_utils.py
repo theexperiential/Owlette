@@ -14,7 +14,7 @@ import psutil
 
 # GLOBAL VARS
 
-APP_VERSION = '0.5.0'
+APP_VERSION = '2.0.0'
 CONFIG_VERSION = '1.3.0'
 # Color scheme matching web app (Tailwind slate palette)
 WINDOW_COLOR = '#020617'      # slate-950 - main background
@@ -54,8 +54,8 @@ def get_path(filename=None):
 
 def is_script_running(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        print(process.info['name'])
-        print(script_name)
+        logging.debug(f"Checking process: {process.info['name']}")
+        logging.debug(f"Looking for script: {script_name}")
         if 'python' in process.info['name']:
             if script_name in ' '.join(process.info['cmdline']):
                 return True
@@ -69,30 +69,35 @@ RESULT_FILE_PATH = get_path('../tmp/app_states.json')
 # Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
     log_file_path = get_path(f'../logs/{log_file_name}.log')
-    
-    # Clear the log file
-    with open(log_file_path, 'w'):
-        pass
-    
+
+    # DON'T clear the log file - let RotatingFileHandler manage it
+    # This preserves historical logs for debugging crashes and issues
+    # Old code (removed):
+    # with open(log_file_path, 'w'):
+    #     pass
+
     # Create a formatter for the log messages
     log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    
+
     # Create a handler that writes log messages to a file, with a maximum
     # log file size of 5 MB, keeping 2 old log files.
+    # Mode 'a' appends to existing file instead of overwriting
     log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=5*1024*1024, backupCount=2, encoding=None, delay=0)
-    
+
     # Set the formatter for the handler
     log_handler.setFormatter(log_formatter)
-    
+
     # Create the logger and set its level
     logger = logging.getLogger()
     logger.setLevel(level)
-    
+
     # Add the handler to the logger
     logger.addHandler(log_handler)
-    
-    # Log an initial message
+
+    # Log an initial message with clear separator for new service start
+    logging.info("="*60)
     logging.info(f"Starting {log_file_name}...")
+    logging.info("="*60)
 
 # CONFIG JSON
 
@@ -190,13 +195,26 @@ def read_json_from_file(file_path):
             logging.error(f"An error occurred while reading the file: {e}")
             return None
 
-# Writes a Python dictionary to a JSON file
+# Writes a Python dictionary to a JSON file using atomic write pattern
 def write_json_to_file(data, file_path):
     with json_lock:
+        # Use atomic write pattern: write to temp file, then rename
+        temp_path = file_path + '.tmp'
         try:
-            with open(file_path, 'w') as f:
+            # Write to temporary file first
+            with open(temp_path, 'w') as f:
                 json.dump(data, f, indent=4)
+
+            # Atomic rename (replaces existing file)
+            # os.replace is atomic on Windows (unlike os.rename)
+            os.replace(temp_path, file_path)
         except Exception as e:
+            # Clean up temp file if it exists
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
             logging.error(f"An error occurred while writing to the file: {e}")
 
 # Generate a default configuration file, optionally merging with an existing one
@@ -273,9 +291,9 @@ def fetch_pid_by_id(target_id):
     
     # Filter out the processes that match the target_id
     matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
-    
+
     if not matching_processes:
-        print(f"No processes found with id: {target_id}")
+        logging.debug(f"No processes found with id: {target_id}")
         return None
     
     # Find the pid of the process with the newest timestamp
@@ -330,7 +348,7 @@ def get_cpu_name():
         cpu_name = subprocess.check_output('wmic cpu get name', shell=True, text=True, stderr=subprocess.STDOUT).strip().split('\n')[-1]
         return cpu_name
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logging.debug(f"Error getting CPU name: {e}")
         return None
 
 def get_system_info():
@@ -421,7 +439,7 @@ def get_system_metrics():
                             }
 
                 # Build processes data structure
-                for process in config['processes']:
+                for index, process in enumerate(config['processes']):
                     process_id = process.get('id')
                     if process_id:
                         # Start with configuration data
@@ -435,7 +453,8 @@ def get_system_metrics():
                             'visibility': process.get('visibility', 'Show'),
                             'time_delay': process.get('time_delay', 0),
                             'time_to_init': process.get('time_to_init', 10),
-                            'relaunch_attempts': process.get('relaunch_attempts', 3)
+                            'relaunch_attempts': process.get('relaunch_attempts', 3),
+                            'index': index  # Preserve config order for web app display
                         }
 
                         # Add runtime state if available
