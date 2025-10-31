@@ -12,6 +12,8 @@ dist-info/
 venv/
 env/
 ENV/
+.venv/
+agent/.venv/
 
 # IDE
 .vscode/
@@ -55,3 +57,7 @@ agent/config/firebase_cache.json
 # Temporary/generated files
 Manage
 *.spec.bak
+hook-*.py
+pywin32_postinstall.py
+agent/hook-*.py
+agent/pywin32_postinstall.py
