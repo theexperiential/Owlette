@@ -653,7 +653,7 @@ class OwletteConfigApp:
             self.config = fresh_config
 
         updated_config = self.map_status_to_config(status_data, self.config)
-        
+
         # Format with colored dot indicators
         new_list = [f"{self.get_status_indicator(process['status'])} {process['name']}" for process in updated_config['processes']]
 
@@ -670,6 +670,19 @@ class OwletteConfigApp:
                 self.process_list.activate(self.selected_index)
             except Exception as e:
                 logging.info(e)
+
+        # Refresh displayed fields if a process is selected and config changed
+        # (Only if not actively editing ANY field - check if focus is on an Entry widget)
+        is_editing = 'entry' in current_focus.lower() or 'text' in current_focus.lower()
+        if self.selected_process and not is_editing:
+            try:
+                # Get fresh process data
+                process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+                if process:
+                    # Update all fields from fresh config
+                    self.refresh_displayed_fields(process)
+            except Exception as e:
+                logging.debug(f"Could not refresh fields: {e}")
 
     def update_process_list_periodically(self):
         self.update_process_list()
@@ -721,6 +734,10 @@ class OwletteConfigApp:
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
         self.selected_process = process_id
         process = shared_utils.fetch_process_by_id(process_id, self.config)
+        self.refresh_displayed_fields(process)
+
+    def refresh_displayed_fields(self, process):
+        """Update all displayed fields from process data (for external changes)"""
         self.name_entry.delete(0, tk.END)
         self.name_entry.insert(0, process.get('name', ''))
         self.exe_path_entry.delete(0, tk.END)

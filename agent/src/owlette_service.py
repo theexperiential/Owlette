@@ -7,6 +7,7 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
 import shared_utils
+import installer_utils
 import win32serviceutil
 import win32service
 import win32event
@@ -96,6 +97,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.last_started = {} # Last time a process was started
         self.results = {} # App process response esults
         self.current_time = datetime.datetime.now()
+        self.active_installations = {} # Track active installer processes for cancellation
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -628,13 +630,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             logging.info(f"Autolaunch changed for {new_proc.get('name')}: {old_proc.get('autolaunch')} -> {new_proc.get('autolaunch')}")
 
             # Push metrics immediately so web dashboard updates instantly
+            logging.info(f"Attempting to push metrics immediately... firebase_client exists: {self.firebase_client is not None}")
             if self.firebase_client:
                 try:
+                    logging.info("Fetching system metrics after config update...")
                     metrics = shared_utils.get_system_metrics()
+                    logging.info(f"Got metrics with {len(metrics.get('processes', {}))} processes")
+                    logging.info("Uploading metrics to Firestore...")
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("Metrics pushed immediately after config update")
+                    logging.info("✅ Metrics pushed immediately after config update")
                 except Exception as e:
-                    logging.error(f"Failed to push metrics after config update: {e}")
+                    logging.error(f"❌ Failed to push metrics after config update: {e}")
+                    logging.exception("Full traceback:")
+            else:
+                logging.warning("⚠️ Cannot push metrics - firebase_client is None")
 
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
@@ -711,6 +720,81 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     return "Configuration updated successfully"
                 else:
                     return "No configuration data provided"
+
+            elif cmd_type == 'install_software':
+                # Install software from a URL with silent flags
+                installer_url = cmd_data.get('installer_url')
+                installer_name = cmd_data.get('installer_name', 'installer.exe')
+                silent_flags = cmd_data.get('silent_flags', '')
+                verify_path = cmd_data.get('verify_path')  # Optional verification path
+
+                if not installer_url:
+                    return "Error: No installer URL provided"
+
+                logging.info(f"Starting software installation: {installer_name}")
+                logging.info(f"URL: {installer_url}")
+                logging.info(f"Flags: {silent_flags}")
+
+                # Get temporary path for installer
+                temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
+
+                try:
+                    # Download the installer
+                    logging.info(f"Downloading installer to: {temp_installer_path}")
+                    download_success = installer_utils.download_file(installer_url, temp_installer_path)
+
+                    if not download_success:
+                        return f"Error: Failed to download installer from {installer_url}"
+
+                    # Execute the installer (pass active_installations for cancellation support)
+                    logging.info("Executing installer with silent flags")
+                    success, exit_code, error_msg = installer_utils.execute_installer(
+                        temp_installer_path,
+                        silent_flags,
+                        installer_name,
+                        self.active_installations
+                    )
+
+                    if not success:
+                        return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
+
+                    # Optional: Verify installation
+                    if verify_path:
+                        if installer_utils.verify_installation(verify_path):
+                            result_msg = f"Installation completed successfully. Verified at {verify_path}"
+                        else:
+                            result_msg = f"Installation completed (exit code 0) but verification failed - {verify_path} not found"
+                    else:
+                        result_msg = f"Installation completed successfully (exit code {exit_code})"
+
+                    logging.info(result_msg)
+                    return result_msg
+
+                finally:
+                    # Always cleanup the temporary installer file
+                    installer_utils.cleanup_installer(temp_installer_path)
+
+            elif cmd_type == 'cancel_installation':
+                # Cancel an active installation
+                installer_name = cmd_data.get('installer_name')
+
+                if not installer_name:
+                    return "Error: No installer name provided for cancellation"
+
+                logging.info(f"Cancellation requested for: {installer_name}")
+
+                # Attempt to cancel the installation
+                success, message = installer_utils.cancel_installation(
+                    installer_name,
+                    self.active_installations
+                )
+
+                if success:
+                    logging.info(f"Installation cancelled: {installer_name}")
+                    return f"Installation cancelled: {installer_name}"
+                else:
+                    logging.warning(f"Cancellation failed: {message}")
+                    return f"Cancellation failed: {message}"
 
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")

@@ -11,9 +11,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Play, Square, Settings, Pencil, Trash2, Check, X } from 'lucide-react';
+import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Play, Square, Settings, Pencil, Trash2, Check, X, Menu } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
@@ -34,7 +35,25 @@ export default function DashboardPage() {
   const [siteToDelete, setSiteToDelete] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>('card');
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch } = useMachines(currentSiteId);
+
+  // Edit Process state
+  const [editProcessDialogOpen, setEditProcessDialogOpen] = useState(false);
+  const [editingMachineId, setEditingMachineId] = useState<string>('');
+  const [editingProcessId, setEditingProcessId] = useState<string>('');
+  const [editProcessForm, setEditProcessForm] = useState({
+    name: '',
+    exe_path: '',
+    file_path: '',
+    cwd: '',
+    priority: 'Normal',
+    visibility: 'Show',
+    time_delay: '0',
+    time_to_init: '10',
+    relaunch_attempts: '3',
+    autolaunch: false,
+  });
+
+  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess } = useMachines(currentSiteId);
   const router = useRouter();
 
   const toggleMachineExpanded = (machineId: string) => {
@@ -70,6 +89,39 @@ export default function DashboardPage() {
     } catch (error: any) {
       console.error('handleToggleAutolaunch error:', error);
       toast.error(error.message || 'Failed to toggle autolaunch');
+    }
+  };
+
+  const openEditProcessDialog = (machineId: string, process: any) => {
+    setEditingMachineId(machineId);
+    setEditingProcessId(process.id);
+    setEditProcessForm({
+      name: process.name || '',
+      exe_path: process.exe_path || '',
+      file_path: process.file_path || '',
+      cwd: process.cwd || '',
+      priority: process.priority || 'Normal',
+      visibility: process.visibility || 'Show',
+      time_delay: process.time_delay || '0',
+      time_to_init: process.time_to_init || '10',
+      relaunch_attempts: process.relaunch_attempts || '3',
+      autolaunch: process.autolaunch || false,
+    });
+    setEditProcessDialogOpen(true);
+  };
+
+  const handleUpdateProcess = async () => {
+    if (!editProcessForm.name) {
+      toast.error('Process name is required');
+      return;
+    }
+
+    try {
+      await updateProcess(editingMachineId, editingProcessId, editProcessForm);
+      toast.success(`Process "${editProcessForm.name}" updated successfully!`);
+      setEditProcessDialogOpen(false);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update process');
     }
   };
 
@@ -239,6 +291,31 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3">
               <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
               <h1 className="text-xl font-bold text-white">Owlette</h1>
+
+              {/* Navigation Menu */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer">
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800">
+                  <DropdownMenuItem
+                    onClick={() => router.push('/dashboard')}
+                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                  >
+                    Dashboard
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => router.push('/deployments')}
+                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                  >
+                    Deploy Software
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <h2 className="text-lg text-slate-300">Dashboard</h2>
             </div>
 
             {/* Site Selector - GitHub style */}
@@ -560,13 +637,6 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       )}
-                      {machine.metrics.processes && Object.keys(machine.metrics.processes).length > 0 && (
-                        <div className="mt-2 border-t border-slate-800 pt-2">
-                          <span className="text-xs text-slate-400">
-                            {Object.keys(machine.metrics.processes).length} process{Object.keys(machine.metrics.processes).length > 1 ? 'es' : ''} running
-                          </span>
-                        </div>
-                      )}
                     </CardContent>
                   )}
 
@@ -614,8 +684,17 @@ export default function DashboardPage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
+                                  onClick={() => openEditProcessDialog(machine.machineId, process)}
+                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:text-white cursor-pointer"
+                                >
+                                  <Pencil className="h-3 w-3 mr-1" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
                                   onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                  className="border-red-600 text-red-600 hover:bg-red-600 hover:text-white cursor-pointer disabled:cursor-not-allowed"
+                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                   disabled={process.status !== 'RUNNING'}
                                 >
                                   <Square className="h-3 w-3 mr-1" />
@@ -756,8 +835,17 @@ export default function DashboardPage() {
                                       <Button
                                         variant="outline"
                                         size="sm"
+                                        onClick={() => openEditProcessDialog(machine.machineId, process)}
+                                        className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:text-white cursor-pointer"
+                                      >
+                                        <Pencil className="h-3 w-3 mr-1" />
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
                                         onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                        className="border-red-600 text-red-600 hover:bg-red-600 hover:text-white cursor-pointer disabled:cursor-not-allowed"
+                                        className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                                         disabled={process.status !== 'RUNNING'}
                                       >
                                         <Square className="h-3 w-3 mr-1" />
@@ -844,6 +932,172 @@ export default function DashboardPage() {
               className="bg-red-600 hover:bg-red-700 text-white"
             >
               Delete Site
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Process Dialog */}
+      <Dialog open={editProcessDialogOpen} onOpenChange={setEditProcessDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-white">Edit Process</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Update process configuration
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Name */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-name" className="text-white">Name</Label>
+              <Input
+                id="edit-name"
+                value={editProcessForm.name}
+                onChange={(e) => setEditProcessForm({ ...editProcessForm, name: e.target.value })}
+                className="border-slate-700 bg-slate-900 text-white"
+              />
+            </div>
+
+            {/* Executable Path */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-exe-path" className="text-white">Executable Path</Label>
+              <Input
+                id="edit-exe-path"
+                value={editProcessForm.exe_path}
+                onChange={(e) => setEditProcessForm({ ...editProcessForm, exe_path: e.target.value })}
+                className="border-slate-700 bg-slate-900 text-white"
+                placeholder="C:/Program Files/..."
+              />
+            </div>
+
+            {/* File Path / Cmd Args */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-file-path" className="text-white">File Path / Command Arguments</Label>
+              <Input
+                id="edit-file-path"
+                value={editProcessForm.file_path}
+                onChange={(e) => setEditProcessForm({ ...editProcessForm, file_path: e.target.value })}
+                className="border-slate-700 bg-slate-900 text-white"
+                placeholder="Optional"
+              />
+            </div>
+
+            {/* Working Directory */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-cwd" className="text-white">Working Directory</Label>
+              <Input
+                id="edit-cwd"
+                value={editProcessForm.cwd}
+                onChange={(e) => setEditProcessForm({ ...editProcessForm, cwd: e.target.value })}
+                className="border-slate-700 bg-slate-900 text-white"
+                placeholder="Optional"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              {/* Priority */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-priority" className="text-white">Task Priority</Label>
+                <Select
+                  value={editProcessForm.priority}
+                  onValueChange={(value) => setEditProcessForm({ ...editProcessForm, priority: value })}
+                >
+                  <SelectTrigger id="edit-priority" className="border-slate-700 bg-slate-900 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-slate-700 bg-slate-900 text-white">
+                    <SelectItem value="Low">Low</SelectItem>
+                    <SelectItem value="Normal">Normal</SelectItem>
+                    <SelectItem value="High">High</SelectItem>
+                    <SelectItem value="Realtime">Realtime</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Visibility */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-visibility" className="text-white">Window Visibility</Label>
+                <Select
+                  value={editProcessForm.visibility}
+                  onValueChange={(value) => setEditProcessForm({ ...editProcessForm, visibility: value })}
+                >
+                  <SelectTrigger id="edit-visibility" className="border-slate-700 bg-slate-900 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-slate-700 bg-slate-900 text-white">
+                    <SelectItem value="Show">Show</SelectItem>
+                    <SelectItem value="Hide">Hide</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Empty space for alignment */}
+              <div></div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              {/* Time Delay */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-time-delay" className="text-white">Launch Delay (sec)</Label>
+                <Input
+                  id="edit-time-delay"
+                  type="number"
+                  value={editProcessForm.time_delay}
+                  onChange={(e) => setEditProcessForm({ ...editProcessForm, time_delay: e.target.value })}
+                  className="border-slate-700 bg-slate-900 text-white"
+                />
+              </div>
+
+              {/* Time to Init */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-time-init" className="text-white">Init Timeout (sec)</Label>
+                <Input
+                  id="edit-time-init"
+                  type="number"
+                  value={editProcessForm.time_to_init}
+                  onChange={(e) => setEditProcessForm({ ...editProcessForm, time_to_init: e.target.value })}
+                  className="border-slate-700 bg-slate-900 text-white"
+                />
+              </div>
+
+              {/* Relaunch Attempts */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-relaunch" className="text-white">Relaunch Attempts</Label>
+                <Input
+                  id="edit-relaunch"
+                  type="number"
+                  value={editProcessForm.relaunch_attempts}
+                  onChange={(e) => setEditProcessForm({ ...editProcessForm, relaunch_attempts: e.target.value })}
+                  className="border-slate-700 bg-slate-900 text-white"
+                />
+              </div>
+            </div>
+
+            {/* Autolaunch */}
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="edit-autolaunch"
+                checked={editProcessForm.autolaunch}
+                onCheckedChange={(checked) => setEditProcessForm({ ...editProcessForm, autolaunch: checked })}
+              />
+              <Label htmlFor="edit-autolaunch" className="text-white cursor-pointer">
+                Enable Autolaunch
+              </Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditProcessDialogOpen(false)}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleUpdateProcess}
+              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            >
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

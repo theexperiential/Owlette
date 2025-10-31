@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, query, setDoc, getDocs, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, query, setDoc, getDocs, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface Process {
@@ -289,5 +289,66 @@ export function useMachines(siteId: string) {
     }
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch };
+  const updateProcess = async (machineId: string, processId: string, updatedData: Partial<Process>) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    // Write directly to config collection (source of truth)
+    // Agent's config listener will detect change and update metrics automatically
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+
+    console.log('🔧 [updateProcess] Updating process in config');
+    console.log('  Config path:', `config/${siteId}/machines/${machineId}`);
+    console.log('  Process ID:', processId);
+    console.log('  Updated data:', updatedData);
+
+    try {
+      // Get current config
+      const configSnap = await getDoc(configRef);
+      if (!configSnap.exists()) {
+        console.error('❌ Config document does not exist at:', `config/${siteId}/machines/${machineId}`);
+        throw new Error(`Config document not found at config/${siteId}/machines/${machineId}`);
+      }
+
+      const config = configSnap.data();
+      console.log('📄 Current config:', config);
+
+      if (!config.processes || !Array.isArray(config.processes)) {
+        console.error('❌ Config document has no processes array:', config);
+        throw new Error('Config document has invalid structure - no processes array');
+      }
+
+      // Find the process being updated
+      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+      if (!targetProcess) {
+        console.error('❌ Process not found in config. Process ID:', processId);
+        console.error('Available processes:', config.processes.map((p: any) => ({ id: p.id, name: p.name })));
+        throw new Error(`Process ${processId} not found in config`);
+      }
+
+      console.log('📝 Updating process:', targetProcess.name);
+
+      // Find and update the specific process
+      const updatedProcesses = config.processes.map((proc: any) =>
+        proc.id === processId
+          ? { ...proc, ...updatedData }  // Merge updates
+          : proc
+      );
+
+      console.log('✏️ Updated processes array:', updatedProcesses);
+
+      // Write back to Firestore CONFIG (not metrics!)
+      await updateDoc(configRef, {
+        processes: updatedProcesses
+      });
+
+      console.log('✅ Config updated in Firestore successfully!');
+      console.log('  Agent should detect change and update local config.json');
+      console.log('  Metrics will be pushed to sites collection automatically');
+    } catch (error) {
+      console.error('❌ Error updating process config:', error);
+      throw error;
+    }
+  };
+
+  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess };
 }
