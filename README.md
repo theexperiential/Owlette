@@ -286,6 +286,7 @@ See the [Deployment Guide](docs/deployment.md) for detailed setup and examples.
 
 - **Open Config**: Brings up the Owlette Configuration window where you can manage and monitor processes. 
 - **Start on Login**: Allows you to toggle whether the service starts upon system login.
+- **Restart Service**: Restarts the Owlette service.
 - **Exit**: Closes the Owlette service and any open Configuration windows.
 
 <a id="configuration"></a>
