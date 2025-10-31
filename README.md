@@ -236,44 +236,6 @@ See the [Deployment Guide](docs/deployment.md) for detailed setup and examples.
 
 ---
 
-### ☁️ Legacy Features (Optional)
-
-#### Gmail API Configuration (Google Cloud Platform)
-
-- 1️⃣ Go to the [Google Cloud Console](https://console.developers.google.com/).
-- 2️⃣ Create a new project.
-- 3️⃣ Navigate to "APIs & Services" > "Dashboard".
-- 4️⃣ Enable the Gmail API.
-- 5️⃣ Create OAuth client IDs and download the client secrets JSON file.
-- 6️⃣ Place the downloaded JSON file in the project `config` directory and rename it to `client_secrets.json`.
-
-### 🤖 Slack API Configuration
-
-#### 🛠️ Part 1: Create Your Slack App 
-
-1. Head over to the [Slack API website](https://api.slack.com/).
-2. Click on "Create an App" and fill in your App Name and Development Slack Workspace.
-
-#### 🛡️ Part 2: OAuth & Permissions 
-
-1. Once your app is up and running, navigate to the "OAuth & Permissions" page.
-2. Under "Bot Token Scopes," add the following scopes:
-    - `channels:write`
-    - `channels:manage`
-    - `chat:write`
-
-#### 🚀 Part 3: Install the App 
-
-1. Scroll back to the top of the "OAuth & Permissions" page.
-2. Hit that "Install App to Workspace" button.
-3. Review the permissions and click "Allow."
-
-#### Part 4: Enable Slack & Enter OAuth Token
-
-1. Enable the Slack toggle in Owlette Configuration.
-2. Enter your Bot User OAuth Token (from OAuth & Permissions page) and click on "Submit".
-3. Check your Slack workspace in the `#owlette` channel for a message from Owlette!
-
 <a id="usage"></a>
 ## 🚀 Usage
 
