@@ -14,7 +14,7 @@ import psutil
 
 # GLOBAL VARS
 
-APP_VERSION = '0.4.2b'
+APP_VERSION = '0.5.0'
 CONFIG_VERSION = '1.3.0'
 WINDOW_COLOR = '#151617'
 FRAME_COLOR = '#28292b'
@@ -361,37 +361,73 @@ def get_system_info():
 
 def get_system_metrics():
     """
-    Get system metrics in percentage format for Firebase.
-    Returns CPU, memory, disk, and GPU usage as percentages.
+    Get system metrics with clear units for Firebase.
+    Returns CPU %, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
     """
     try:
-        cpu = psutil.cpu_percent(interval=0.1)
-        memory = psutil.virtual_memory().percent
-        disk = psutil.disk_usage('/').percent
+        # CPU - percentage
+        cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
 
-        # Get GPU usage
-        gpu = 0
+        # Memory - bytes to GB
+        mem = psutil.virtual_memory()
+        mem_used_gb = round(mem.used / (1024**3), 2)
+        mem_total_gb = round(mem.total / (1024**3), 2)
+        mem_percent = round(mem.percent, 1)
+
+        # Disk - bytes to GB
+        disk = psutil.disk_usage('/')
+        disk_used_gb = round(disk.used / (1024**3), 2)
+        disk_total_gb = round(disk.total / (1024**3), 2)
+        disk_percent = round(disk.percent, 1)
+
+        # GPU - usage % and VRAM
+        gpu_usage_percent = 0
+        gpu_vram_used_gb = 0
+        gpu_vram_total_gb = 0
+        gpu_name = "N/A"
         try:
             gpus = GPUtil.getGPUs()
             if gpus:
-                # Use first GPU's load (0-100)
-                gpu = int(gpus[0].load * 100)
+                gpu = gpus[0]
+                gpu_usage_percent = round(gpu.load * 100, 1)
+                gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
+                gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
+                gpu_name = gpu.name
         except:
             pass
 
         return {
-            'cpu': cpu,
-            'memory': memory,
-            'disk': disk,
-            'gpu': gpu,
+            'cpu': {
+                'percent': cpu_percent,
+                'unit': '%'
+            },
+            'memory': {
+                'used_gb': mem_used_gb,
+                'total_gb': mem_total_gb,
+                'percent': mem_percent,
+                'unit': 'GB'
+            },
+            'disk': {
+                'used_gb': disk_used_gb,
+                'total_gb': disk_total_gb,
+                'percent': disk_percent,
+                'unit': 'GB'
+            },
+            'gpu': {
+                'name': gpu_name,
+                'usage_percent': gpu_usage_percent,
+                'vram_used_gb': gpu_vram_used_gb,
+                'vram_total_gb': gpu_vram_total_gb,
+                'unit': 'GB'
+            },
             'processes': {}  # Can be extended later to include process info
         }
     except Exception as e:
         logging.error(f"Error getting system metrics: {e}")
         return {
-            'cpu': 0,
-            'memory': 0,
-            'disk': 0,
-            'gpu': 0,
+            'cpu': {'percent': 0, 'unit': '%'},
+            'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
+            'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
+            'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},
             'processes': {}
         }

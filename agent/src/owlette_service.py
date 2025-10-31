@@ -1,5 +1,12 @@
-import shared_utils
 import os
+import sys
+
+# Add the src directory to Python path so imports work when running as service
+src_dir = os.path.dirname(os.path.abspath(__file__))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
+import shared_utils
 import win32serviceutil
 import win32service
 import win32event
@@ -15,12 +22,14 @@ import json
 import datetime
 
 # Firebase integration
+FIREBASE_IMPORT_ERROR = None
 try:
     from firebase_client import FirebaseClient
     FIREBASE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     FIREBASE_AVAILABLE = False
-    logging.warning("Firebase client not available - running in local-only mode")
+    FIREBASE_IMPORT_ERROR = str(e)
+    # Note: logging not initialized yet, so we can't log here
 
 """
 To install/run this as a service, 
@@ -71,6 +80,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         Util.initialize_results_file()
 
         # Upgrade JSON config to latest version
+        logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
         shared_utils.upgrade_config()
 
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
@@ -84,19 +94,35 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Initialize Firebase client
         self.firebase_client = None
-        if FIREBASE_AVAILABLE and shared_utils.read_config(['firebase', 'enabled']):
-            try:
-                site_id = shared_utils.read_config(['firebase', 'site_id'])
-                credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-                self.firebase_client = FirebaseClient(
-                    credentials_path=credentials_path,
-                    site_id=site_id,
-                    config_cache_path=shared_utils.get_path('../config/firebase_cache.json')
-                )
-                logging.info(f"Firebase client initialized for site: {site_id}")
-            except Exception as e:
-                logging.error(f"Failed to initialize Firebase client: {e}")
-                self.firebase_client = None
+        logging.info(f"Firebase check - Available: {FIREBASE_AVAILABLE}")
+
+        if not FIREBASE_AVAILABLE and FIREBASE_IMPORT_ERROR:
+            logging.warning(f"Firebase client not available - Import error: {FIREBASE_IMPORT_ERROR}")
+            logging.warning("Running in local-only mode")
+
+        if FIREBASE_AVAILABLE:
+            firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
+            logging.info(f"Firebase config - enabled: {firebase_enabled}")
+
+            if firebase_enabled:
+                try:
+                    site_id = shared_utils.read_config(['firebase', 'site_id'])
+                    credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                    cache_path = shared_utils.get_path('../config/firebase_cache.json')
+
+                    logging.info(f"Firebase paths - credentials: {credentials_path}, cache: {cache_path}")
+                    logging.info(f"Firebase site_id: {site_id}")
+
+                    self.firebase_client = FirebaseClient(
+                        credentials_path=credentials_path,
+                        site_id=site_id,
+                        config_cache_path=cache_path
+                    )
+                    logging.info(f"Firebase client initialized for site: {site_id}")
+                except Exception as e:
+                    logging.error(f"Failed to initialize Firebase client: {e}")
+                    logging.exception("Firebase initialization error details:")
+                    self.firebase_client = None
 
     # On service stop
     def SvcStop(self):
@@ -216,6 +242,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Fetch and verify executable path
         exe_path = process.get('exe_path', '')
+        # Convert forward slashes to backslashes for Windows
+        exe_path = exe_path.replace('/', '\\')
         try:
             if not os.path.isfile(exe_path):
                 raise FileNotFoundError('Executable path not found!')
@@ -225,19 +253,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Fetch file path
         file_path = process.get('file_path', '')
-        # If file path, add double quotes, else leave as-is (cmd args)
+        if file_path:
+            # Convert forward slashes to backslashes for Windows
+            file_path = file_path.replace('/', '\\')
+        # If file path exists, leave as-is (could be file or cmd args)
         file_path = f"{file_path}" if os.path.isfile(file_path) else file_path
         logging.info(f"Starting {exe_path}{' ' if file_path else ''}{file_path}...")
 
-        # Build the command line
-        command_line = f'"{exe_path}" {file_path}' if file_path else exe_path
+        # Build the command line - always quote exe_path for paths with spaces
+        command_line = f'"{exe_path}" {file_path}' if file_path else f'"{exe_path}"'
 
-        # Fetch working directory
+        # Fetch working directory (convert empty string to None)
         cwd = process.get('cwd', None)
+        if cwd == '':
+            cwd = None
         if cwd and not os.path.isdir(cwd):
             logging.error(f"Working directory {cwd} does not exist.")
             return None
-        
+
         # Start the process
         try:
             process_info = win32process.CreateProcessAsUser(
@@ -248,7 +281,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 None, # Thread Attributes
                 0, # Inherit handles
                 priority_class, # Creation flags
-                self.environment,  # To open in user's self.environment
+                self.environment,  # To open in user's environment
                 cwd, # Current directory
                 self.startup_info
             )

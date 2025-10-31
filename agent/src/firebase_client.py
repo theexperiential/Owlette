@@ -208,8 +208,7 @@ class FirebaseClient:
             return
 
         presence_ref = self.db.collection('sites').document(self.site_id)\
-            .collection('machines').document(self.machine_id)\
-            .collection('presence').document('status')
+            .collection('machines').document(self.machine_id)
 
         presence_ref.set({
             'online': online,
@@ -223,17 +222,18 @@ class FirebaseClient:
         if not self.connected or not self.db:
             return
 
-        status_ref = self.db.collection('sites').document(self.site_id)\
-            .collection('machines').document(self.machine_id)\
-            .collection('status').document('current')
+        metrics_ref = self.db.collection('sites').document(self.site_id)\
+            .collection('machines').document(self.machine_id)
 
-        status_ref.set({
-            'cpu': metrics.get('cpu', 0),
-            'memory': metrics.get('memory', 0),
-            'disk': metrics.get('disk', 0),
-            'gpu': metrics.get('gpu', 0),
-            'timestamp': firestore.SERVER_TIMESTAMP,
-            'processes': metrics.get('processes', {})
+        metrics_ref.set({
+            'metrics': {
+                'cpu': metrics.get('cpu', {}),
+                'memory': metrics.get('memory', {}),
+                'disk': metrics.get('disk', {}),
+                'gpu': metrics.get('gpu', {}),
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'processes': metrics.get('processes', {})
+            }
         }, merge=True)
 
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
