@@ -64,6 +64,25 @@ def open_config_gui(icon, item):
         except Exception as e:
             logging.error(f"Failed to bring Owlette Configuration to the front: {e}")
 
+# Function to restart the service
+def restart_service(icon, item):
+    try:
+        # Close all Owlette windows first (before restarting the service)
+        for key, window_title in shared_utils.WINDOW_TITLES.items():
+            try:
+                hwnd = win32gui.FindWindow(None, window_title)
+                if hwnd:
+                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    logging.info(f"Closed window: {window_title}")
+            except Exception as e:
+                logging.debug(f"Could not close window '{window_title}': {e}")
+
+        # Restart the service with admin privileges
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} restart", None, 0)
+        logging.info("Service restart initiated")
+    except Exception as e:
+        logging.error(f"Failed to restart service: {e}")
+
 # Function to exit
 def exit_action(icon, item):
     try:
@@ -73,7 +92,7 @@ def exit_action(icon, item):
             if hwnd:
                 # Close the window
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-            
+
         # Stop the service
         ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} stop", None, 0)
     except Exception as e:
@@ -127,6 +146,7 @@ def generate_menu():
         item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),  # Read-only item
         item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
+        item('Restart Service', restart_service),
         item('Exit', exit_action)
     )
 

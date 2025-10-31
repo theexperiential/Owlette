@@ -53,6 +53,7 @@ class FirebaseClient:
         self.heartbeat_thread: Optional[threading.Thread] = None
         self.metrics_thread: Optional[threading.Thread] = None
         self.command_listener_thread: Optional[threading.Thread] = None
+        self.config_listener_thread: Optional[threading.Thread] = None
         self.running = False
 
         # Callbacks
@@ -125,8 +126,14 @@ class FirebaseClient:
             self.command_listener_thread = threading.Thread(target=self._command_listener_loop, daemon=True)
             self.command_listener_thread.start()
             self.logger.info("Command listener thread started")
+
+            # Start config listener thread
+            self.config_listener_thread = threading.Thread(target=self._config_listener_loop, daemon=True)
+            self.config_listener_thread.start()
+            self.logger.info("Config listener thread started")
         else:
             self.logger.warning("Command listener NOT started (offline mode)")
+            self.logger.warning("Config listener NOT started (offline mode)")
 
     def stop(self):
         """Stop all background threads."""
@@ -200,6 +207,62 @@ class FirebaseClient:
 
         except Exception as e:
             self.logger.error(f"Command listener error: {e}")
+            self.connected = False
+
+    def _config_listener_loop(self):
+        """Listen for config changes from Firestore in real-time."""
+        if not self.connected:
+            return
+
+        try:
+            # Reference to config document
+            config_ref = self.db.collection('config').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            # Track if this is the first snapshot (to skip initial load)
+            first_snapshot = True
+
+            # Watch for changes
+            def on_snapshot(doc_snapshots, changes, read_time):
+                nonlocal first_snapshot
+
+                # Skip the first snapshot (initial load)
+                if first_snapshot:
+                    first_snapshot = False
+                    self.logger.info("Config listener initialized (skipping initial snapshot)")
+                    return
+
+                for doc in doc_snapshots:
+                    if doc.exists:
+                        new_config = doc.to_dict()
+                        self.logger.info("Config change detected in Firestore")
+
+                        # Cache the new config
+                        self._save_cached_config(new_config)
+                        self.cached_config = new_config
+
+                        # Call the registered callback
+                        if self.config_update_callback:
+                            try:
+                                self.config_update_callback(new_config)
+                                self.logger.info("Config update applied successfully")
+                            except Exception as e:
+                                self.logger.error(f"Error in config update callback: {e}")
+                        else:
+                            self.logger.warning("No config update callback registered")
+
+            # Listen to document changes
+            doc_watch = config_ref.on_snapshot(on_snapshot)
+
+            # Keep thread alive
+            while self.running:
+                time.sleep(1)
+
+            # Unsubscribe when stopping
+            doc_watch.unsubscribe()
+
+        except Exception as e:
+            self.logger.error(f"Config listener error: {e}")
             self.connected = False
 
     def _update_presence(self, online: bool):
@@ -405,6 +468,10 @@ class FirebaseClient:
                 if not self.command_listener_thread or not self.command_listener_thread.is_alive():
                     self.command_listener_thread = threading.Thread(target=self._command_listener_loop, daemon=True)
                     self.command_listener_thread.start()
+                # Restart config listener if needed
+                if not self.config_listener_thread or not self.config_listener_thread.is_alive():
+                    self.config_listener_thread = threading.Thread(target=self._config_listener_loop, daemon=True)
+                    self.config_listener_thread.start()
         except Exception as e:
             self.logger.error(f"Reconnection failed: {e}")
 

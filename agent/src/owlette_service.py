@@ -14,6 +14,7 @@ import win32process
 import win32profile
 import win32ts
 import win32con
+import win32gui
 import servicemanager
 import logging
 import psutil
@@ -77,7 +78,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Initialize logging and shared resources
         shared_utils.initialize_logging("service")
-        Util.initialize_results_file()
+
+        # Only initialize results file if it doesn't exist (don't clear existing PIDs!)
+        if not os.path.exists(shared_utils.RESULT_FILE_PATH):
+            Util.initialize_results_file()
+            logging.info("Initialized new app_states.json file")
 
         # Upgrade JSON config to latest version
         logging.info(f"Config path: {shared_utils.CONFIG_PATH}")
@@ -129,6 +134,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.is_alive = False
 
+        # Close any open Owlette windows (GUI, prompts, etc.)
+        self.close_owlette_windows()
+
         # Stop Firebase client
         if self.firebase_client:
             try:
@@ -149,6 +157,96 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.main()
         except Exception as e:
             logging.error(f"An unhandled exception occurred: {e}")
+
+    # Close all Owlette windows
+    def close_owlette_windows(self):
+        """Close all Owlette GUI windows (config, prompts, etc.) when service stops."""
+        try:
+            for key, window_title in shared_utils.WINDOW_TITLES.items():
+                try:
+                    # Try to find the window
+                    hwnd = win32gui.FindWindow(None, window_title)
+                    if hwnd:
+                        # Close the window
+                        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                        logging.info(f"Closed window: {window_title}")
+                except Exception as e:
+                    logging.debug(f"Could not close window '{window_title}': {e}")
+        except Exception as e:
+            logging.error(f"Error closing Owlette windows: {e}")
+
+    # Recover PIDs from previous session
+    def recover_running_processes(self):
+        """
+        On service restart, check if processes from previous session are still running.
+        If they are, adopt them instead of launching new instances.
+        """
+        try:
+            # Read the persisted state
+            app_states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+
+            if not app_states:
+                logging.info("No previous app states found (file empty or doesn't exist)")
+                return
+
+            logging.info(f"Found {len(app_states)} PID(s) in app_states.json")
+
+            # Get current config
+            config = shared_utils.read_config()
+            if not config:
+                logging.warning("Could not load config for process recovery")
+                return
+
+            processes = config.get('processes', [])
+            logging.info(f"Checking {len(processes)} configured process(es) for recovery")
+
+            # Check each PID in the state file
+            recovered_count = 0
+            for pid_str, state_info in app_states.items():
+                try:
+                    pid = int(pid_str)
+                    process_id = state_info.get('id')
+
+                    logging.debug(f"Checking PID {pid} (process ID: {process_id})")
+
+                    # Check if this PID is still running
+                    if Util.is_pid_running(pid):
+                        logging.info(f"PID {pid} is still running")
+
+                        if process_id:
+                            # Find the corresponding process in config
+                            process = next((p for p in processes if p.get('id') == process_id), None)
+
+                            if process:
+                                # Only recover if autolaunch is enabled
+                                if process.get('autolaunch', False):
+                                    # Adopt this process
+                                    self.last_started[process_id] = {
+                                        'time': datetime.datetime.now(),
+                                        'pid': pid
+                                    }
+                                    recovered_count += 1
+                                    logging.info(f"✓ Recovered process '{process.get('name')}' with PID {pid}")
+                                else:
+                                    logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
+                            else:
+                                logging.warning(f"PID {pid} is running but process ID {process_id} not found in config")
+                        else:
+                            logging.warning(f"PID {pid} has no process ID in state file")
+                    else:
+                        # PID is no longer running
+                        logging.debug(f"PID {pid_str} is no longer running (process ended)")
+                except Exception as e:
+                    logging.error(f"Error checking PID {pid_str}: {e}")
+
+            if recovered_count > 0:
+                logging.info(f"✓ Successfully recovered {recovered_count} running process(es) from previous session")
+            else:
+                logging.info("No running processes to recover from previous session")
+
+        except Exception as e:
+            logging.error(f"Error recovering processes from previous session: {e}")
+            logging.exception("Full traceback:")
 
     # Log errors
     def log_and_notify(self, process, reason):
@@ -460,10 +558,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
         process_list_id = process['id']
         last_info = self.last_started.get(process_list_id, {})
         last_pid = last_info.get('pid')
-        
+
         # Launch process if this is the first startup
         if self.first_start:
-            new_pid = self.handle_process_launch(process)
+            # Check if we've already recovered this process from a previous session
+            if not last_pid:
+                # No recovered PID, launch normally
+                new_pid = self.handle_process_launch(process)
+            else:
+                # Process was recovered from previous session, just use it
+                shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
+                logging.info(f"Using recovered process '{process.get('name')}' with PID {last_pid}")
+                new_pid = None  # Don't update last_started since it's already set
 
         else:
             # Check if process is running
@@ -486,6 +592,52 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Update last started info (for handling process startup timing)
         if new_pid:
             self.last_started[process_list_id] = {'time': self.current_time, 'pid': new_pid}
+
+    # Handle config updates from Firebase
+    def handle_config_update(self, new_config):
+        """
+        Handle configuration updates from Firebase.
+
+        Args:
+            new_config: New configuration dict from Firestore
+        """
+        try:
+            logging.info("Applying config update from Firestore")
+
+            # Read old config before overwriting (for logging changes)
+            old_config = shared_utils.read_config()
+
+            # Write the new config to local config.json
+            shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
+
+            logging.info("Local config.json updated from Firestore")
+
+            # Log what changed (for debugging)
+            if old_config:
+                # Check for process changes
+                old_process_count = len(old_config.get('processes', []))
+                new_process_count = len(new_config.get('processes', []))
+                if old_process_count != new_process_count:
+                    logging.info(f"Process count changed: {old_process_count} -> {new_process_count}")
+
+                # Check for autolaunch changes
+                for new_proc in new_config.get('processes', []):
+                    old_proc = next((p for p in old_config.get('processes', []) if p.get('id') == new_proc.get('id')), None)
+                    if old_proc:
+                        if old_proc.get('autolaunch') != new_proc.get('autolaunch'):
+                            logging.info(f"Autolaunch changed for {new_proc.get('name')}: {old_proc.get('autolaunch')} -> {new_proc.get('autolaunch')}")
+
+            # Push metrics immediately so web dashboard updates instantly
+            if self.firebase_client:
+                try:
+                    metrics = shared_utils.get_system_metrics()
+                    self.firebase_client._upload_metrics(metrics)
+                    logging.info("Metrics pushed immediately after config update")
+                except Exception as e:
+                    logging.error(f"Failed to push metrics after config update: {e}")
+
+        except Exception as e:
+            logging.error(f"Error handling config update: {e}")
 
     # Handle commands from Firebase
     def handle_firebase_command(self, cmd_id, cmd_data):
@@ -536,6 +688,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             return f"Process {process_name} is not running"
                 return f"Process {process_name} not found in configuration"
 
+            elif cmd_type == 'toggle_autolaunch':
+                # Toggle autolaunch for a specific process
+                process_name = cmd_data.get('process_name')
+                new_autolaunch_value = cmd_data.get('autolaunch', False)
+                config = shared_utils.read_config()
+                processes = config.get('processes', [])
+                for process in processes:
+                    if process.get('name') == process_name:
+                        process['autolaunch'] = new_autolaunch_value
+                        shared_utils.save_config(config)
+                        logging.info(f"Autolaunch for {process_name} set to {new_autolaunch_value}")
+                        return f"Autolaunch for {process_name} set to {new_autolaunch_value}"
+                return f"Process {process_name} not found in configuration"
+
             elif cmd_type == 'update_config':
                 # Update configuration from Firebase
                 new_config = cmd_data.get('config')
@@ -573,6 +739,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Register command callback
                 self.firebase_client.register_command_callback(self.handle_firebase_command)
 
+                # Register config update callback
+                self.firebase_client.register_config_update_callback(self.handle_config_update)
+
                 # Start Firebase background threads
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
@@ -585,6 +754,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             except Exception as e:
                 logging.error(f"Error starting Firebase client: {e}")
+
+        # Recover processes from previous session (if any are still running)
+        logging.info("Checking for processes from previous session...")
+        self.recover_running_processes()
 
         # The heart of Owlette
         while self.is_alive:

@@ -16,11 +16,12 @@ import psutil
 
 APP_VERSION = '0.5.0'
 CONFIG_VERSION = '1.3.0'
-WINDOW_COLOR = '#151617'
-FRAME_COLOR = '#28292b'
-BUTTON_COLOR = '#374448'
-BUTTON_HOVER_COLOR = '#27424a'
-BUTTON_IMPORTANT_COLOR = '#2d5e6c'
+# Color scheme matching web app (Tailwind slate palette)
+WINDOW_COLOR = '#020617'      # slate-950 - main background
+FRAME_COLOR = '#0f172a'       # slate-900 - panels/cards
+BUTTON_COLOR = '#1e293b'      # slate-800 - buttons
+BUTTON_HOVER_COLOR = '#334155' # slate-700 - button hover
+BUTTON_IMPORTANT_COLOR = '#2563eb' # blue-600 - accent buttons (New, autolaunch toggle)
 TEXT_COLOR = "white"
 WINDOW_TITLES = {
     "owlette_gui": "Owlette Configuration", 
@@ -363,6 +364,7 @@ def get_system_metrics():
     """
     Get system metrics with clear units for Firebase.
     Returns CPU %, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
+    Also includes process information from config and runtime state.
     """
     try:
         # CPU - percentage
@@ -396,6 +398,64 @@ def get_system_metrics():
         except:
             pass
 
+        # Processes - combine config and runtime state
+        processes_data = {}
+        try:
+            # Read process configuration
+            config = read_json_from_file(CONFIG_PATH)
+            # Read runtime state
+            runtime_state = read_json_from_file(RESULT_FILE_PATH)
+
+            if config and 'processes' in config:
+                # Create a map of process IDs to their runtime PIDs
+                pid_to_runtime = {}
+                if runtime_state:
+                    for pid, state_info in runtime_state.items():
+                        process_id = state_info.get('id')
+                        if process_id:
+                            pid_to_runtime[process_id] = {
+                                'pid': int(pid),
+                                'status': state_info.get('status', 'UNKNOWN'),
+                                'responsive': state_info.get('responsive', True),
+                                'timestamp': state_info.get('timestamp', 0)
+                            }
+
+                # Build processes data structure
+                for process in config['processes']:
+                    process_id = process.get('id')
+                    if process_id:
+                        # Start with configuration data
+                        process_data = {
+                            'name': process.get('name', ''),
+                            'exe_path': process.get('exe_path', ''),
+                            'file_path': process.get('file_path', ''),
+                            'cwd': process.get('cwd', ''),
+                            'autolaunch': process.get('autolaunch', False),
+                            'priority': process.get('priority', 'Normal'),
+                            'visibility': process.get('visibility', 'Show'),
+                            'time_delay': process.get('time_delay', 0),
+                            'time_to_init': process.get('time_to_init', 10),
+                            'relaunch_attempts': process.get('relaunch_attempts', 3)
+                        }
+
+                        # Add runtime state if available
+                        if process_id in pid_to_runtime:
+                            runtime = pid_to_runtime[process_id]
+                            process_data['pid'] = runtime['pid']
+                            process_data['status'] = runtime['status']
+                            process_data['responsive'] = runtime['responsive']
+                            process_data['last_updated'] = runtime['timestamp']
+                        else:
+                            # Process not running
+                            process_data['pid'] = None
+                            process_data['status'] = 'INACTIVE' if not process.get('autolaunch', False) else 'STOPPED'
+                            process_data['responsive'] = True
+                            process_data['last_updated'] = 0
+
+                        processes_data[process_id] = process_data
+        except Exception as e:
+            logging.error(f"Error collecting process data: {e}")
+
         return {
             'cpu': {
                 'percent': cpu_percent,
@@ -420,7 +480,7 @@ def get_system_metrics():
                 'vram_total_gb': gpu_vram_total_gb,
                 'unit': 'GB'
             },
-            'processes': {}  # Can be extended later to include process info
+            'processes': processes_data
         }
     except Exception as e:
         logging.error(f"Error getting system metrics: {e}")
