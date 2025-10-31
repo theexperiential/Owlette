@@ -3,7 +3,12 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['win32timezone', 'win32ts', 'win32serviceutil', 'win32service', 'win32event', 'psutil']
+hiddenimports = [
+    'win32timezone', 'win32ts', 'win32serviceutil', 'win32service', 'win32event', 'psutil',
+    # Firebase dependencies
+    'firebase_client', 'firebase_admin', 'firebase_admin.firestore', 'firebase_admin.credentials',
+    'google.cloud', 'google.cloud.firestore', 'google.auth', 'grpc', 'google.api_core'
+]
 tmp_ret = collect_all('win32com')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pythoncom')

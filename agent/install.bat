@@ -12,38 +12,40 @@ if '%errorlevel%' NEQ '0' (
 setlocal EnableDelayedExpansion
 cd /d %~dp0
 
-set "PYTHON_PATH=%ProgramFiles%\Python39\python.exe"
-set "PYTHON_INSTALLER=%TEMP%\python-3.9.13-amd64.exe"
+set "SYSTEM_PYTHON=%ProgramFiles%\Python311\python.exe"
+set "PYTHON_INSTALLER=%TEMP%\python-3.11.9-amd64.exe"
+set "VENV_PATH=%~dp0.venv"
+set "VENV_PYTHON=%VENV_PATH%\Scripts\python.exe"
 
 :: Check Python version from Registry
 set PYTHON_INSTALLED=0
-reg query "HKEY_LOCAL_MACHINE\SOFTWARE\Python\PythonCore\3.9\InstallPath" >nul 2>&1
+reg query "HKEY_LOCAL_MACHINE\SOFTWARE\Python\PythonCore\3.11\InstallPath" >nul 2>&1
 if not errorlevel 1 (
-    echo Python 3.9 is already installed.
+    echo Python 3.11 is already installed.
     set PYTHON_INSTALLED=1
 )
 
 if %PYTHON_INSTALLED% EQU 0 (
-    echo Python 3.9 is not installed. Downloading Python 3.9...
-    
-    :: Download Python 3.9 installer
-    powershell -Command "(New-Object Net.WebClient).DownloadFile('https://www.python.org/ftp/python/3.9.13/python-3.9.13-amd64.exe', '%PYTHON_INSTALLER%')"
-    
+    echo Python 3.11 is not installed. Downloading Python 3.11.9...
+
+    :: Download Python 3.11 installer
+    powershell -Command "(New-Object Net.WebClient).DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', '%PYTHON_INSTALLER%')"
+
     :: Install Python with required features and add to PATH
-    echo Installing Python 3.9...
+    echo Installing Python 3.11...
     start /wait "" "%PYTHON_INSTALLER%" /quiet InstallAllUsers=1 PrependPath=1 Include_test=0 Include_pip=1
-    
+
     :: Delete the installer
     del "%PYTHON_INSTALLER%"
-    
+
     :: Wait for installation to complete
     echo Waiting for installation to complete...
     timeout /t 10 /nobreak > nul
 )
 
 :: Verify Python installation
-if not exist "%PYTHON_PATH%" (
-    echo Python installation failed. Please install Python 3.9 manually.
+if not exist "%SYSTEM_PYTHON%" (
+    echo Python installation failed. Please install Python 3.11 manually.
     pause
     exit /b 1
 )
@@ -52,11 +54,10 @@ if not exist "%PYTHON_PATH%" (
 echo Stopping the Owlette Windows service if it's running...
 net stop OwletteService 2>nul
 
-:: Install dependencies
+:: Install dependencies directly in system Python (venv doesn't work well with Windows services)
 echo Installing Python dependencies...
-"%PYTHON_PATH%" -m pip install --upgrade pip
-cd %~dp0
-"%PYTHON_PATH%" -m pip install -r requirements.txt
+"%SYSTEM_PYTHON%" -m pip install --upgrade pip
+"%SYSTEM_PYTHON%" -m pip install -r requirements.txt
 
 :: Create necessary folder structure
 mkdir "%~dp0logs" 2>nul
@@ -102,16 +103,24 @@ echo 3. Go to Project Settings (gear icon) -^> Service Accounts
 echo 4. Click "Generate new private key"
 echo 5. Save the JSON file as: config\firebase-credentials.json
 echo.
-echo 6. Edit config\config.json and set:
-echo    - "firebase.enabled": true
-echo    - "firebase.site_id": "your-site-name"
-echo.
-echo For detailed setup guide, see: docs\phase1-firebase-setup.md
 echo ----------------------------------------------------------------
 echo.
-echo After completing these steps, restart the Owlette service:
-echo    net stop OwletteService
-echo    net start OwletteService
+
+:: Prompt for site ID
+set /p SITE_ID="Enter a unique Site ID (e.g., office-main, studio-01): "
+if "%SITE_ID%"=="" (
+    echo Site ID cannot be empty. Using default: %COMPUTERNAME%
+    set SITE_ID=%COMPUTERNAME%
+)
+
+:: Update config.json with Firebase settings using PowerShell
+echo Configuring Firebase in config.json...
+powershell -Command "$config = Get-Content '%~dp0config\config.json' | ConvertFrom-Json; $config.firebase.enabled = $true; $config.firebase.site_id = '%SITE_ID%'; $config | ConvertTo-Json -Depth 10 | Set-Content '%~dp0config\config.json'"
+
+echo.
+echo Firebase configured with site_id: %SITE_ID%
+echo.
+echo IMPORTANT: Don't forget to add config\firebase-credentials.json!
 echo.
 pause
 goto continue_install
@@ -130,13 +139,13 @@ echo.
 echo Installing and starting the Owlette Windows service...
 cd %~dp0
 cd src
-"%PYTHON_PATH%" owlette_service.py install
+"%SYSTEM_PYTHON%" owlette_service.py install
 
 :: Set the service to start automatically
 sc config OwletteService start= delayed-auto
 
 :: Start the service
-"%PYTHON_PATH%" owlette_service.py start
+"%SYSTEM_PYTHON%" owlette_service.py start
 
 :: Done
 echo.
@@ -145,6 +154,7 @@ echo Installation complete!
 echo ================================================================
 echo.
 echo Service: OwletteService (running)
+echo Python: System Python 3.11
 echo Config: config\config.json
 echo Logs: logs\service.log
 echo.
@@ -157,6 +167,8 @@ echo.
 echo To manage the service:
 echo   net stop OwletteService
 echo   net start OwletteService
+echo.
+echo To run GUI: "%SYSTEM_PYTHON%" src\owlette_gui.py
 echo.
 endlocal
 pause

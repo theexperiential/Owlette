@@ -26,6 +26,15 @@ pyinstaller --clean ^
     --hidden-import win32service ^
     --hidden-import win32event ^
     --hidden-import psutil ^
+    --hidden-import firebase_client ^
+    --hidden-import firebase_admin ^
+    --hidden-import firebase_admin.firestore ^
+    --hidden-import firebase_admin.credentials ^
+    --hidden-import google.cloud ^
+    --hidden-import google.cloud.firestore ^
+    --hidden-import google.auth ^
+    --hidden-import grpc ^
+    --hidden-import google.api_core ^
     --collect-all win32com ^
     --collect-all pythoncom ^
     src\owlette_service.py || (
