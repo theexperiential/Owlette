@@ -1,0 +1,168 @@
+rules_version = '2';
+
+// Owlette Firestore Security Rules
+// Version: 2.0.0
+// Last Updated: 2025-01-31
+//
+// Security Model (Phase 1):
+// - All authenticated users can access all sites (trust-based)
+// - Service accounts (agents) have admin access to write machine data
+// - Unauthenticated users have no access
+//
+// Future Enhancement (Phase 2):
+// - Add user-to-site ownership tracking via users collection
+// - Implement role-based access (admin/viewer)
+// - Add rate limiting for command operations
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // Helper Functions
+    // ============================================
+
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if request is from service account (Python agent)
+    // Service accounts have the 'admin' claim set to true
+    function isServiceAccount() {
+      return request.auth != null &&
+             request.auth.token.admin == true;
+    }
+
+    // Check if user has access to a site
+    // Phase 1: Trust all authenticated users
+    // Phase 2: Check user.sites array contains siteId
+    function canAccessSite(siteId) {
+      return isAuthenticated();
+      // Future: return isAuthenticated() &&
+      //   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites.hasAll([siteId]);
+    }
+
+    // Validate that required fields are present in write operations
+    function hasRequiredFields(required) {
+      return request.resource.data.keys().hasAll(required);
+    }
+
+    // ============================================
+    // Sites Collection
+    // ============================================
+
+    match /sites/{siteId} {
+      // Site document access
+      allow read: if canAccessSite(siteId);
+      allow create: if isAuthenticated(); // Any authenticated user can create a site
+      allow update, delete: if canAccessSite(siteId);
+
+      // ----------------------------------------
+      // Machines Subcollection
+      // ----------------------------------------
+
+      match /machines/{machineId} {
+        // Machine status document
+        // Agents write heartbeats, metrics, and process status
+        // Web dashboard reads machine status
+        allow read: if canAccessSite(siteId) || isServiceAccount();
+        allow write: if isServiceAccount(); // Only agents can write machine data
+
+        // Commands documents (pending/completed)
+        // Web dashboard writes pending commands
+        // Agents read pending and write completed
+        match /commands/{commandDoc} {
+          allow read: if canAccessSite(siteId) || isServiceAccount();
+          allow write: if canAccessSite(siteId) || isServiceAccount();
+        }
+      }
+
+      // ----------------------------------------
+      // Deployments Subcollection
+      // ----------------------------------------
+
+      match /deployments/{deploymentId} {
+        // Software installation deployments
+        // Web dashboard creates and manages deployments
+        allow read: if canAccessSite(siteId);
+        allow create: if canAccessSite(siteId) &&
+                         hasRequiredFields(['name', 'installer_name', 'targets', 'status', 'createdAt']);
+        allow update: if canAccessSite(siteId);
+        allow delete: if canAccessSite(siteId);
+      }
+
+      // ----------------------------------------
+      // Installer Templates Subcollection
+      // ----------------------------------------
+
+      match /installer_templates/{templateId} {
+        // Reusable installer templates
+        // Web dashboard manages templates
+        allow read: if canAccessSite(siteId);
+        allow create: if canAccessSite(siteId) &&
+                         hasRequiredFields(['name', 'installer_name', 'createdAt']);
+        allow update, delete: if canAccessSite(siteId);
+      }
+
+      // ----------------------------------------
+      // Project Templates Subcollection
+      // ----------------------------------------
+
+      match /project_templates/{templateId} {
+        // Reusable project distribution templates
+        // Web dashboard manages templates
+        allow read: if canAccessSite(siteId);
+        allow create: if canAccessSite(siteId) &&
+                         hasRequiredFields(['name', 'file_name', 'createdAt']);
+        allow update, delete: if canAccessSite(siteId);
+      }
+
+      // ----------------------------------------
+      // Project Distributions Subcollection
+      // ----------------------------------------
+
+      match /project_distributions/{distributionId} {
+        // Project file distributions
+        // Web dashboard creates and manages distributions
+        allow read: if canAccessSite(siteId);
+        allow create: if canAccessSite(siteId) &&
+                         hasRequiredFields(['name', 'file_name', 'targets', 'status', 'createdAt']);
+        allow update: if canAccessSite(siteId);
+        allow delete: if canAccessSite(siteId);
+      }
+    }
+
+    // ============================================
+    // Config Collection
+    // ============================================
+
+    match /config/{siteId}/machines/{machineId} {
+      // Machine configuration (process lists, settings)
+      // Web dashboard writes config updates
+      // Agents read config and write initial config on first startup
+      allow read: if canAccessSite(siteId) || isServiceAccount();
+      allow write: if canAccessSite(siteId) || isServiceAccount();
+    }
+
+    // ============================================
+    // Users Collection (Future Enhancement)
+    // ============================================
+
+    match /users/{userId} {
+      // User profiles with site access lists
+      // Phase 2: Implement user-to-site ownership
+      // For now, users can only access their own document
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ============================================
+    // Deny All Other Paths
+    // ============================================
+
+    // Explicitly deny access to any other documents
+    // This prevents accidental data leaks
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

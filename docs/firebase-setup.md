@@ -34,36 +34,46 @@ This phase adds Firebase Firestore integration to the Owlette Python service, en
 
 ### 1.4 Configure Firestore Security Rules
 
+The repository now includes comprehensive security rules in `firestore.rules` and Firebase configuration in `firebase.json`. You can deploy them using either method:
+
+#### Method A: Deploy with Firebase CLI (Recommended)
+
+**Prerequisites:**
+1. Install Firebase CLI globally: `npm install -g firebase-tools`
+2. Login to Firebase: `firebase login`
+3. Initialize project (first time only): `firebase use --add` and select your project
+
+**Deploy Security Rules:**
+```bash
+# From repository root
+firebase deploy --only firestore:rules
+```
+
+**Test Rules with Emulator (Optional but Recommended):**
+```bash
+# Start the Firestore emulator
+firebase emulators:start --only firestore
+
+# In another terminal, run your tests or web app
+# It will connect to localhost:8080 instead of production Firestore
+```
+
+The emulator UI will be available at http://localhost:4000 where you can:
+- View emulated Firestore data
+- Test security rules without affecting production
+- See real-time rule evaluation results
+
+#### Method B: Deploy via Firebase Console (Manual)
+
 **How to find Security Rules:**
 1. In Firebase Console, click "Firestore Database" in the left sidebar
 2. Click the "Rules" tab at the top (next to "Data", "Indexes", "Usage")
 3. You should see a text editor with your current rules
+4. Copy the contents of `firestore.rules` from the repository
+5. Paste into the editor
+6. Click "Publish" to save the rules
 
-**Replace the default rules with:**
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Allow service accounts (machines) to read/write their own data
-    match /sites/{siteId}/machines/{machineId}/{document=**} {
-      allow read, write: if request.auth != null;
-    }
-
-    // Allow service accounts to read config
-    match /config/{siteId}/machines/{machineId} {
-      allow read, write: if request.auth != null;
-    }
-
-    // For now, allow authenticated access (we'll tighten this in Phase 2)
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
-  }
-}
-```
-
-4. Click "Publish" to save the rules
+**Note:** The repository's `firestore.rules` file is the source of truth. Always deploy from the file to keep version control synchronized.
 
 ---
 
