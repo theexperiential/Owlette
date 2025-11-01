@@ -41,6 +41,7 @@ export default function DashboardPage() {
   const [processDialogMode, setProcessDialogMode] = useState<'create' | 'edit'>('edit');
   const [editingMachineId, setEditingMachineId] = useState<string>('');
   const [editingProcessId, setEditingProcessId] = useState<string>('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [editProcessForm, setEditProcessForm] = useState({
     name: '',
     exe_path: '',
@@ -180,14 +181,11 @@ export default function DashboardPage() {
   };
 
   const handleDeleteProcess = async () => {
-    if (!confirm(`Are you sure you want to permanently delete "${editProcessForm.name}"? This action cannot be undone.`)) {
-      return;
-    }
-
     try {
       await deleteProcess(editingMachineId, editingProcessId);
       toast.success(`Process "${editProcessForm.name}" deleted successfully!`);
       setProcessDialogOpen(false);
+      setDeleteConfirmOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete process');
     }
@@ -1209,17 +1207,17 @@ export default function DashboardPage() {
               </Label>
             </div>
           </div>
-          <DialogFooter className="flex justify-between">
+          <DialogFooter className="flex items-center">
             {processDialogMode === 'edit' && (
               <Button
-                variant="destructive"
-                onClick={handleDeleteProcess}
-                className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+                variant="ghost"
+                onClick={() => setDeleteConfirmOpen(true)}
+                className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
               >
-                Delete
+                <Trash2 className="h-4 w-4" />
               </Button>
             )}
-            <div className={`flex gap-2 ${processDialogMode === 'create' ? 'ml-auto' : ''}`}>
+            <div className="flex gap-2 ml-auto">
               <Button
                 variant="outline"
                 onClick={() => setProcessDialogOpen(false)}
@@ -1234,6 +1232,33 @@ export default function DashboardPage() {
                 {processDialogMode === 'create' ? 'Create Process' : 'Save Changes'}
               </Button>
             </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Process Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Process</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Are you sure you want to permanently delete "{editProcessForm.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmOpen(false)}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteProcess}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+            >
+              Delete Process
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

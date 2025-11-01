@@ -168,6 +168,8 @@ export default function DeploymentsPage() {
         return <CheckCircle2 className="h-5 w-5 text-green-500" />;
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
+      case 'cancelled':
+        return <XCircle className="h-5 w-5 text-orange-500" />;
       case 'in_progress':
         return <Loader2 className="h-5 w-5 text-blue-500 animate-spin" />;
       case 'partial':
@@ -181,6 +183,7 @@ export default function DeploymentsPage() {
     const colors: Record<string, string> = {
       completed: 'bg-green-600 hover:bg-green-700',
       failed: 'bg-red-600 hover:bg-red-700',
+      cancelled: 'bg-orange-600 hover:bg-orange-700',
       in_progress: 'bg-blue-600 hover:bg-blue-700',
       partial: 'bg-yellow-600 hover:bg-yellow-700',
       pending: 'bg-slate-600 hover:bg-slate-700',

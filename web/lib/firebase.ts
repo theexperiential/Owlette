@@ -3,6 +3,8 @@
  *
  * This is the client-side Firebase configuration for the web portal.
  * Uses Firebase JS SDK (not Admin SDK like the Python agent).
+ *
+ * Environment variables are validated at app startup in layout.tsx (warnings only).
  */
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';

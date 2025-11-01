@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -16,10 +16,11 @@ export interface DeploymentTemplate {
 
 export interface DeploymentTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
   progress?: number;
   error?: string;
   completedAt?: number;
+  cancelledAt?: number;
 }
 
 export interface Deployment {
@@ -246,6 +247,39 @@ export function useDeployments(siteId: string) {
                 status: newStatus,
                 ...(allDone ? { completedAt: Date.now() } : {}),
               }, { merge: true });
+            } else if (command.status === 'cancelled') {
+              // Handle cancelled installations
+              const updatedTargets = deployment.targets.map(target =>
+                target.machineId === machineId
+                  ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
+                  : target
+              );
+
+              // Calculate overall status
+              // Cancelled targets don't affect the overall completion status
+              const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
+              const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
+              const anyFailed = remainingTargets.some(t => t.status === 'failed');
+              const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
+
+              let newStatus = deployment.status;
+              if (remainingTargets.length === 0) {
+                // All targets cancelled
+                newStatus = 'failed';
+              } else if (allCompleted) {
+                newStatus = 'completed';
+              } else if (anyFailed && !anyInProgress) {
+                newStatus = 'partial';
+              } else {
+                newStatus = 'in_progress';
+              }
+
+              // Update deployment
+              await setDoc(deploymentRef, {
+                targets: updatedTargets,
+                status: newStatus,
+                ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
+              }, { merge: true });
             } else if (command.status === 'downloading' || command.status === 'installing') {
               // Handle intermediate states (downloading, installing)
               const updatedTargets = deployment.targets.map(target =>
@@ -331,27 +365,54 @@ export function useDeployments(siteId: string) {
   const cancelDeployment = async (deploymentId: string, machineId: string, installer_name: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    // Send cancel command to the machine
-    const sanitizedMachineId = machineId.replace(/-/g, '_');
-    const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
-    const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    try {
+      // Send cancel command to the machine
+      const sanitizedMachineId = machineId.replace(/-/g, '_');
+      const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
+      const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
-    await setDoc(commandRef, {
-      [commandId]: {
-        type: 'cancel_installation',
-        installer_name: installer_name,
-        deployment_id: deploymentId,
-        timestamp: Date.now(),
+      await setDoc(commandRef, {
+        [commandId]: {
+          type: 'cancel_installation',
+          installer_name: installer_name,
+          deployment_id: deploymentId,
+          timestamp: Date.now(),
+        }
+      }, { merge: true });
+
+      // Update deployment target status to 'cancelled'
+      // This updates the UI optimistically while the agent processes the cancellation
+      const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
+      const deploymentSnap = await getDoc(deploymentRef);
+
+      if (deploymentSnap.exists()) {
+        const deploymentData = deploymentSnap.data();
+        const targets = deploymentData.targets || [];
+
+        // Find and update the target's status to 'cancelled'
+        const updatedTargets = targets.map((target: any) => {
+          if (target.machineId === machineId) {
+            return {
+              ...target,
+              status: 'cancelled',
+              cancelledAt: Date.now(),
+            };
+          }
+          return target;
+        });
+
+        // Update the deployment with the new target status
+        await updateDoc(deploymentRef, {
+          targets: updatedTargets,
+          updatedAt: Date.now(),
+        });
       }
-    }, { merge: true });
 
-    // Update deployment target status to cancelled
-    const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
-    const deploymentSnap = await getDocs(query(collection(db, 'sites', siteId, 'deployments'), limit(1)));
-
-    // This is a workaround - need to fetch current deployment to update targets
-    // In a production app, you'd use a server function or transaction
-    return commandId;
+      return commandId;
+    } catch (error) {
+      console.error('Error cancelling deployment:', error);
+      throw error;
+    }
   };
 
   const deleteDeployment = async (deploymentId: string) => {

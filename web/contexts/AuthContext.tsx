@@ -12,6 +12,8 @@ import {
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
+import { handleError } from '@/lib/errorHandler';
+import { toast } from 'sonner';
 
 interface AuthContextType {
   user: User | null;
@@ -67,24 +69,95 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    if (!auth) throw new Error('Firebase not configured');
-    await signInWithEmailAndPassword(auth, email, password);
+    try {
+      if (!auth) {
+        const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
+        toast.error('Authentication Error', {
+          description: 'Firebase is not configured properly. Please contact support.',
+        });
+        throw error;
+      }
+
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      const friendlyMessage = handleError(error);
+      toast.error('Sign In Failed', {
+        description: friendlyMessage,
+      });
+      throw error; // Re-throw so calling component can handle it
+    }
   };
 
   const signUp = async (email: string, password: string) => {
-    if (!auth) throw new Error('Firebase not configured');
-    await createUserWithEmailAndPassword(auth, email, password);
+    try {
+      if (!auth) {
+        const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
+        toast.error('Authentication Error', {
+          description: 'Firebase is not configured properly. Please contact support.',
+        });
+        throw error;
+      }
+
+      await createUserWithEmailAndPassword(auth, email, password);
+      toast.success('Account Created', {
+        description: 'Your account has been created successfully. You can now sign in.',
+      });
+    } catch (error: any) {
+      const friendlyMessage = handleError(error);
+      toast.error('Sign Up Failed', {
+        description: friendlyMessage,
+      });
+      throw error; // Re-throw so calling component can handle it
+    }
   };
 
   const signInWithGoogle = async () => {
-    if (!auth) throw new Error('Firebase not configured');
-    const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    try {
+      if (!auth) {
+        const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
+        toast.error('Authentication Error', {
+          description: 'Firebase is not configured properly. Please contact support.',
+        });
+        throw error;
+      }
+
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error: any) {
+      // Don't show toast for popup closed by user
+      if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
+        throw error;
+      }
+
+      const friendlyMessage = handleError(error);
+      toast.error('Google Sign In Failed', {
+        description: friendlyMessage,
+      });
+      throw error; // Re-throw so calling component can handle it
+    }
   };
 
   const signOut = async () => {
-    if (!auth) throw new Error('Firebase not configured');
-    await firebaseSignOut(auth);
+    try {
+      if (!auth) {
+        const error = new Error('Firebase authentication is not configured.');
+        toast.error('Authentication Error', {
+          description: 'Firebase is not configured properly.',
+        });
+        throw error;
+      }
+
+      await firebaseSignOut(auth);
+      toast.success('Signed Out', {
+        description: 'You have been signed out successfully.',
+      });
+    } catch (error: any) {
+      const friendlyMessage = handleError(error);
+      toast.error('Sign Out Failed', {
+        description: friendlyMessage,
+      });
+      throw error; // Re-throw so calling component can handle it
+    }
   };
 
   const value = {
