@@ -315,7 +315,8 @@ class FirebaseClient:
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Process a command received from Firestore."""
         try:
-            self.logger.info(f"Processing command: {cmd_id} - Type: {cmd_data.get('type')}")
+            cmd_type = cmd_data.get('type')
+            self.logger.info(f"Processing command: {cmd_id} - Type: {cmd_type}")
 
             # Extract deployment_id if present (needed for web app to track deployment status)
             deployment_id = cmd_data.get('deployment_id')
@@ -323,7 +324,14 @@ class FirebaseClient:
             # Call the registered callback
             if self.command_callback:
                 result = self.command_callback(cmd_id, cmd_data)
-                self._mark_command_completed(cmd_id, result, deployment_id)
+
+                # Use appropriate completion method based on command type
+                if cmd_type == 'cancel_installation':
+                    # Mark as cancelled instead of completed
+                    self._mark_command_cancelled(cmd_id, result, deployment_id)
+                else:
+                    # Normal completion for other commands
+                    self._mark_command_completed(cmd_id, result, deployment_id)
             else:
                 self.logger.warning(f"No command callback registered, ignoring command {cmd_id}")
 
@@ -452,6 +460,46 @@ class FirebaseClient:
 
         except Exception as e:
             self.logger.error(f"Failed to mark command {cmd_id} as failed: {e}")
+
+    def _mark_command_cancelled(self, cmd_id: str, result: str, deployment_id: Optional[str] = None):
+        """Mark a command as cancelled in Firestore."""
+        if not self.connected or not self.db:
+            return
+
+        try:
+            # Remove from pending
+            pending_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('pending')
+
+            pending_ref.update({
+                cmd_id: firestore.DELETE_FIELD
+            })
+
+            # Add to completed with cancelled status
+            completed_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('completed')
+
+            # Build the cancelled command data
+            cancelled_data = {
+                'result': result,
+                'status': 'cancelled',
+                'completedAt': firestore.SERVER_TIMESTAMP
+            }
+
+            # Include deployment_id if present (needed for web app to track deployment status)
+            if deployment_id:
+                cancelled_data['deployment_id'] = deployment_id
+
+            completed_ref.set({
+                cmd_id: cancelled_data
+            }, merge=True)
+
+            self.logger.info(f"Command {cmd_id} marked as cancelled")
+
+        except Exception as e:
+            self.logger.error(f"Failed to mark command {cmd_id} as cancelled: {e}")
 
     def get_config(self) -> Optional[Dict]:
         """
