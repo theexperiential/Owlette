@@ -364,5 +364,61 @@ export function useMachines(siteId: string) {
     }
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess };
+  const deleteProcess = async (machineId: string, processId: string) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    // Write directly to config collection (source of truth)
+    // Agent's config listener will detect change and remove from local config.json
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+
+    console.log('🗑️ [deleteProcess] Deleting process from config');
+    console.log('  Config path:', `config/${siteId}/machines/${machineId}`);
+    console.log('  Process ID:', processId);
+
+    try {
+      // Get current config
+      const configSnap = await getDoc(configRef);
+      if (!configSnap.exists()) {
+        console.error('❌ Config document does not exist at:', `config/${siteId}/machines/${machineId}`);
+        throw new Error(`Config document not found at config/${siteId}/machines/${machineId}`);
+      }
+
+      const config = configSnap.data();
+      console.log('📄 Current config:', config);
+
+      if (!config.processes || !Array.isArray(config.processes)) {
+        console.error('❌ Config document has no processes array:', config);
+        throw new Error('Config document has invalid structure - no processes array');
+      }
+
+      // Find the process being deleted
+      const targetProcess = config.processes.find((proc: any) => proc.id === processId);
+      if (!targetProcess) {
+        console.error('❌ Process not found in config. Process ID:', processId);
+        console.error('Available processes:', config.processes.map((p: any) => ({ id: p.id, name: p.name })));
+        throw new Error(`Process ${processId} not found in config`);
+      }
+
+      console.log('📝 Deleting process:', targetProcess.name);
+
+      // Filter out the process to delete
+      const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
+
+      console.log('✏️ Updated processes array (after deletion):', updatedProcesses);
+
+      // Write back to Firestore CONFIG (not metrics!)
+      await updateDoc(configRef, {
+        processes: updatedProcesses
+      });
+
+      console.log('✅ Process deleted from config successfully!');
+      console.log('  Agent should detect change and update local config.json');
+      console.log('  Metrics will be updated automatically');
+    } catch (error) {
+      console.error('❌ Error deleting process from config:', error);
+      throw error;
+    }
+  };
+
+  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess };
 }

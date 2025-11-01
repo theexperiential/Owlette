@@ -288,16 +288,29 @@ class FirebaseClient:
         metrics_ref = self.db.collection('sites').document(self.site_id)\
             .collection('machines').document(self.machine_id)
 
-        metrics_ref.set({
-            'metrics': {
-                'cpu': metrics.get('cpu', {}),
-                'memory': metrics.get('memory', {}),
-                'disk': metrics.get('disk', {}),
-                'gpu': metrics.get('gpu', {}),
-                'timestamp': firestore.SERVER_TIMESTAMP,
-                'processes': metrics.get('processes', {})
-            }
-        }, merge=True)
+        # Use update instead of set with merge to properly replace the processes field
+        # This ensures deleted processes are actually removed from Firestore
+        try:
+            metrics_ref.update({
+                'metrics.cpu': metrics.get('cpu', {}),
+                'metrics.memory': metrics.get('memory', {}),
+                'metrics.disk': metrics.get('disk', {}),
+                'metrics.gpu': metrics.get('gpu', {}),
+                'metrics.timestamp': firestore.SERVER_TIMESTAMP,
+                'metrics.processes': metrics.get('processes', {})  # This replaces entire processes object
+            })
+        except Exception as e:
+            # If document doesn't exist, create it with set
+            metrics_ref.set({
+                'metrics': {
+                    'cpu': metrics.get('cpu', {}),
+                    'memory': metrics.get('memory', {}),
+                    'disk': metrics.get('disk', {}),
+                    'gpu': metrics.get('gpu', {}),
+                    'timestamp': firestore.SERVER_TIMESTAMP,
+                    'processes': metrics.get('processes', {})
+                }
+            })
 
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Process a command received from Firestore."""

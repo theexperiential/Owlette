@@ -46,7 +46,7 @@ Version 2.0.0 represents a complete architectural transformation of Owlette from
 - **Improved Responsiveness** - Background threading for Firestore operations
 - **Better Validation** - Enhanced field validation with user-friendly error handling
 - **Auto-Refresh Prevention** - Smart dirty checking prevents overwriting user input
-- **Restart Service Menu** - Quick service restart from system tray
+- **Restart Menu** - Quick service restart from system tray
 - **Enhanced Logging** - Production-ready logging with reduced verbosity
 
 ### Changed

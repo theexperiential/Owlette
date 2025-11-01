@@ -53,7 +53,7 @@ export default function DashboardPage() {
     autolaunch: false,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess } = useMachines(currentSiteId);
   const router = useRouter();
 
   const toggleMachineExpanded = (machineId: string) => {
@@ -66,6 +66,18 @@ export default function DashboardPage() {
       }
       return newSet;
     });
+  };
+
+  const handleRowClick = (machineId: string, hasProcesses: boolean) => {
+    // Don't toggle if user is selecting text
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+      return;
+    }
+
+    if (hasProcesses) {
+      toggleMachineExpanded(machineId);
+    }
   };
 
   const handleKillProcess = async (machineId: string, processId: string, processName: string) => {
@@ -129,6 +141,20 @@ export default function DashboardPage() {
       setEditProcessDialogOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to update process');
+    }
+  };
+
+  const handleDeleteProcess = async () => {
+    if (!confirm(`Are you sure you want to permanently delete "${editProcessForm.name}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteProcess(editingMachineId, editingProcessId);
+      toast.success(`Process "${editProcessForm.name}" deleted successfully!`);
+      setEditProcessDialogOpen(false);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete process');
     }
   };
 
@@ -734,21 +760,19 @@ export default function DashboardPage() {
                   <TableBody>
                     {machines.map((machine) => (
                       <React.Fragment key={machine.machineId}>
-                        <TableRow className="border-slate-800 hover:bg-slate-800">
+                        <TableRow
+                          className={`border-slate-800 hover:bg-slate-800 ${machine.processes && machine.processes.length > 0 ? 'cursor-pointer' : ''}`}
+                          onClick={() => handleRowClick(machine.machineId, !!(machine.processes && machine.processes.length > 0))}
+                        >
                           <TableCell>
                             {machine.processes && machine.processes.length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => toggleMachineExpanded(machine.machineId)}
-                                className="h-6 w-6 p-0 hover:bg-slate-700/30 cursor-pointer"
-                              >
+                              <div className="flex items-center justify-center">
                                 {expandedMachines.has(machine.machineId) ? (
                                   <ChevronUp className="h-4 w-4 text-slate-300" />
                                 ) : (
                                   <ChevronDown className="h-4 w-4 text-slate-300" />
                                 )}
-                              </Button>
+                              </div>
                             )}
                           </TableCell>
                           <TableCell className="font-medium text-white select-text">{machine.machineId}</TableCell>
@@ -1086,20 +1110,29 @@ export default function DashboardPage() {
               </Label>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex justify-between">
             <Button
-              variant="outline"
-              onClick={() => setEditProcessDialogOpen(false)}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              variant="destructive"
+              onClick={handleDeleteProcess}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
             >
-              Cancel
+              Delete
             </Button>
-            <Button
-              onClick={handleUpdateProcess}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-            >
-              Save Changes
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setEditProcessDialogOpen(false)}
+                className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpdateProcess}
+                className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              >
+                Save Changes
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

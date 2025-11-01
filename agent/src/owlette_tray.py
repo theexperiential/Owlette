@@ -77,9 +77,20 @@ def restart_service(icon, item):
             except Exception as e:
                 logging.debug(f"Could not close window '{window_title}': {e}")
 
-        # Restart the service with admin privileges
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} restart", None, 0)
-        logging.info("Service restart initiated")
+        # Stop and start the service (more reliable than restart command)
+        # Also restart the tray icon to ensure it picks up new code
+        tray_path = shared_utils.get_path('owlette_tray.py')
+        service_path = shared_utils.get_path('owlette_service.py')
+
+        # Build command to stop service, wait, start service, then restart tray
+        restart_cmd = f'python "{service_path}" stop && timeout /t 2 /nobreak >nul && python "{service_path}" start && timeout /t 2 /nobreak >nul && pythonw "{tray_path}"'
+
+        # Execute with admin privileges
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c {restart_cmd}", None, 0)
+        logging.info("Service and tray restart initiated")
+
+        # Stop this tray icon instance (the new one will start after service restarts)
+        icon.stop()
     except Exception as e:
         logging.error(f"Failed to restart service: {e}")
 
@@ -146,7 +157,7 @@ def generate_menu():
         item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),  # Read-only item
         item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
-        item('Restart Service', restart_service),
+        item('Restart', restart_service),
         item('Exit', exit_action)
     )
 

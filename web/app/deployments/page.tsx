@@ -548,19 +548,19 @@ export default function DeploymentsPage() {
 
                 {selectedDeploymentId === deployment.id && (
                   <CardContent className="space-y-4 border-t border-slate-800 pt-4">
-                    <div className="grid gap-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Installer URL:</span>
-                        <span className="text-white select-text truncate max-w-md">{deployment.installer_url}</span>
+                    <div className="grid gap-3 text-sm">
+                      <div>
+                        <div className="text-slate-400 mb-1">Installer URL:</div>
+                        <div className="text-white select-text break-all">{deployment.installer_url}</div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Silent Flags:</span>
-                        <span className="text-white select-text">{deployment.silent_flags || 'None'}</span>
+                      <div>
+                        <div className="text-slate-400 mb-1">Silent Flags:</div>
+                        <div className="text-white select-text break-all">{deployment.silent_flags || 'None'}</div>
                       </div>
                       {deployment.verify_path && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Verify Path:</span>
-                          <span className="text-white select-text truncate max-w-md">{deployment.verify_path}</span>
+                        <div>
+                          <div className="text-slate-400 mb-1">Verify Path:</div>
+                          <div className="text-white select-text break-all">{deployment.verify_path}</div>
                         </div>
                       )}
                     </div>

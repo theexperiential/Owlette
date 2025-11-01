@@ -307,12 +307,16 @@ class OwletteConfigApp:
             shared_utils.save_config(self.config)
 
             # Upload to Firestore immediately for fast sync (in background thread)
-            # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
             if self.firebase_client:
                 def upload_in_background():
                     try:
                         self.firebase_client.upload_config(self.config)
                         logging.info("Config uploaded to Firestore immediately after toggle")
+
+                        # Push metrics so web app sees the change immediately
+                        metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                        self.firebase_client._upload_metrics(metrics)
+                        logging.info("Metrics pushed to Firestore after toggle")
                     except Exception as e:
                         logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -352,12 +356,16 @@ class OwletteConfigApp:
         shared_utils.save_config(self.config)
 
         # Upload to Firestore immediately for fast sync (in background thread)
-        # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
         if self.firebase_client:
             def upload_in_background():
                 try:
                     self.firebase_client.upload_config(self.config)
                     logging.info("Config uploaded to Firestore immediately after new process")
+
+                    # Push metrics so web app sees the change immediately
+                    metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                    self.firebase_client._upload_metrics(metrics)
+                    logging.info("Metrics pushed to Firestore after new process")
                 except Exception as e:
                     logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -496,12 +504,16 @@ class OwletteConfigApp:
             self.prev_config_hash = hashlib.md5(config_str.encode()).hexdigest()
 
             # Upload to Firestore immediately for fast sync (in background thread)
-            # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
             if self.firebase_client:
                 def upload_in_background():
                     try:
                         self.firebase_client.upload_config(self.config)
                         logging.info("Config uploaded to Firestore immediately after process update")
+
+                        # Push metrics so web app sees the change immediately
+                        metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                        self.firebase_client._upload_metrics(metrics)
+                        logging.info("Metrics pushed to Firestore after process update")
                     except Exception as e:
                         logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -740,12 +752,17 @@ class OwletteConfigApp:
                         shared_utils.save_config(self.config)
 
                         # Upload to Firestore immediately for fast sync (in background thread)
-                        # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
                         if self.firebase_client:
                             def upload_in_background():
                                 try:
+                                    # Upload config first
                                     self.firebase_client.upload_config(self.config)
                                     logging.info("Config uploaded to Firestore immediately after process removal")
+
+                                    # Then push metrics so web app sees the change immediately
+                                    metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                                    self.firebase_client._upload_metrics(metrics)
+                                    logging.info("Metrics pushed to Firestore after process removal")
                                 except Exception as e:
                                     logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -767,12 +784,16 @@ class OwletteConfigApp:
                 shared_utils.save_config(self.config)
 
                 # Upload to Firestore immediately for fast sync (in background thread)
-                # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
                 if self.firebase_client:
                     def upload_in_background():
                         try:
                             self.firebase_client.upload_config(self.config)
                             logging.info("Config uploaded to Firestore immediately after move up")
+
+                            # Push metrics so web app sees the change immediately
+                            metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                            self.firebase_client._upload_metrics(metrics)
+                            logging.info("Metrics pushed to Firestore after move up")
                         except Exception as e:
                             logging.error(f"Failed to upload to Firestore: {e}")
 
@@ -793,12 +814,16 @@ class OwletteConfigApp:
                 shared_utils.save_config(self.config)
 
                 # Upload to Firestore immediately for fast sync (in background thread)
-                # Note: Only upload config, not metrics, to avoid command window flashing from GPU checks
                 if self.firebase_client:
                     def upload_in_background():
                         try:
                             self.firebase_client.upload_config(self.config)
                             logging.info("Config uploaded to Firestore immediately after move down")
+
+                            # Push metrics so web app sees the change immediately
+                            metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                            self.firebase_client._upload_metrics(metrics)
+                            logging.info("Metrics pushed to Firestore after move down")
                         except Exception as e:
                             logging.error(f"Failed to upload to Firestore: {e}")
 

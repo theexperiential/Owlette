@@ -378,11 +378,14 @@ def get_system_info():
         'gpu_total': gpu_info.memoryTotal if gpu_info else 'N/A'
     }
 
-def get_system_metrics():
+def get_system_metrics(skip_gpu=False):
     """
     Get system metrics with clear units for Firebase.
     Returns CPU %, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
     Also includes process information from config and runtime state.
+
+    Args:
+        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
     try:
         # CPU - percentage
@@ -400,21 +403,22 @@ def get_system_metrics():
         disk_total_gb = round(disk.total / (1024**3), 2)
         disk_percent = round(disk.percent, 1)
 
-        # GPU - usage % and VRAM
+        # GPU - usage % and VRAM (skip if requested to avoid command window flashing)
         gpu_usage_percent = 0
         gpu_vram_used_gb = 0
         gpu_vram_total_gb = 0
         gpu_name = "N/A"
-        try:
-            gpus = GPUtil.getGPUs()
-            if gpus:
-                gpu = gpus[0]
-                gpu_usage_percent = round(gpu.load * 100, 1)
-                gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
-                gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
-                gpu_name = gpu.name
-        except:
-            pass
+        if not skip_gpu:
+            try:
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu = gpus[0]
+                    gpu_usage_percent = round(gpu.load * 100, 1)
+                    gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
+                    gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
+                    gpu_name = gpu.name
+            except:
+                pass
 
         # Processes - combine config and runtime state
         processes_data = {}
