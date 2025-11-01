@@ -153,8 +153,10 @@ def check_service_status():
 
 # Dynamically generate the menu
 def generate_menu():
+    hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
     return pystray.Menu(
-        item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),  # Read-only item
+        item(f'Owlette: {hostname}', lambda icon, item: None, enabled=False),  # Read-only hostname
+        item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),  # Read-only version
         item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
         item('Restart', restart_service),

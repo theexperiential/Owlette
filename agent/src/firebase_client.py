@@ -111,6 +111,19 @@ class FirebaseClient:
 
         self.running = True
 
+        # Send immediate heartbeat and metrics to set machine online right away (don't wait 30-60 seconds)
+        if self.connected:
+            try:
+                self._update_presence(True)
+                self.logger.info("Initial heartbeat sent - machine is now online")
+
+                # Also send immediate metrics so dashboard updates right away
+                metrics = shared_utils.get_system_metrics()
+                self._upload_metrics(metrics)
+                self.logger.info("Initial metrics uploaded")
+            except Exception as e:
+                self.logger.error(f"Failed to send initial heartbeat/metrics: {e}")
+
         # Start heartbeat thread (30 second interval)
         self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self.heartbeat_thread.start()

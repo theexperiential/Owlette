@@ -12,6 +12,7 @@ import uuid
 import threading
 import subprocess
 import time
+import socket
 
 # Lazy import for win32serviceutil (heavy dependency - only import when needed)
 # import win32serviceutil  # Moved to methods that use it
@@ -28,7 +29,8 @@ class OwletteConfigApp:
         self.entry.grid(row=0, column=0)
 
         # Initialize basic window properties FIRST for fast appearance
-        self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
+        hostname = socket.gethostname()
+        self.master.title(f"Owlette Configuration: {hostname}")
         # Set window icon
         try:
             icon_path = shared_utils.get_path('../../icons/owlette.ico')
@@ -212,7 +214,7 @@ class OwletteConfigApp:
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
         self.process_list.grid(row=1, column=0, columnspan=3, rowspan=7, sticky='nsew', padx=(20,15), pady=10)
-        self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
+        self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
         # Adjust scrollbar padding to shift it left
         self.process_list._scrollbar.grid_configure(padx=(0, 8))
 
@@ -248,7 +250,12 @@ class OwletteConfigApp:
 
         # Create a label for the process details
         self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.process_details_label.grid(row=0, column=4, columnspan=4, sticky='w', padx=(20, 10), pady=(20, 0))
+        self.process_details_label.grid(row=0, column=4, columnspan=2, sticky='w', padx=(20, 10), pady=(20, 0))
+
+        # Create hostname label in same row, right-aligned (grows left for long names)
+        hostname = socket.gethostname()
+        self.hostname_label = ctk.CTkLabel(self.master, text=hostname, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"), anchor='e')
+        self.hostname_label.grid(row=0, column=6, columnspan=2, sticky='e', padx=(10, 20), pady=(20, 0))
 
         # Create a toggle switch for process
         self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -261,7 +268,7 @@ class OwletteConfigApp:
         # Create Name of process field
         self.name_label = ctk.CTkLabel(self.master, text="Name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.name_label.grid(row=2, column=4, sticky='e', padx=5, pady=5)
-        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.name_entry.grid(row=2, column=5, columnspan=3, sticky='ew', padx=(10, 20), pady=5)
 
         # Create Exe path field
@@ -269,7 +276,7 @@ class OwletteConfigApp:
         self.exe_path_label.grid(row=3, column=4, sticky='e', padx=5, pady=5)
         self.exe_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_exe, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.exe_path_entry.grid(row=3, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create File path / cmd line args
@@ -277,7 +284,7 @@ class OwletteConfigApp:
         self.file_path_label.grid(row=4, column=4, sticky='e', padx=5, pady=5)
         self.file_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_file, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.file_path_entry.grid(row=4, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create CWD path field
@@ -285,13 +292,13 @@ class OwletteConfigApp:
         self.cwd_label.grid(row=5, column=4, sticky='e', padx=5, pady=5)
         self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 5), pady=5)
-        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.cwd_entry.grid(row=5, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create Time delay label and field
         self.time_delay_label = ctk.CTkLabel(self.master, text="Launch Time Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_delay_label.grid(row=6, column=4, sticky='e', padx=5, pady=5)
-        self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_delay_entry.grid(row=6, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Priority dropdown
@@ -306,7 +313,7 @@ class OwletteConfigApp:
         # Create a label and entry for "Time to Initialize"
         self.time_to_init_label = ctk.CTkLabel(self.master, text="Time to Initialize (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=5, pady=5)
-        self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_to_init_entry.grid(row=7, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Visibility dropdown
@@ -321,7 +328,7 @@ class OwletteConfigApp:
         # Create a label and entry for "Restart Attempts"
         self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Relaunch attempts til Restart:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=5, pady=5)
-        self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
+        self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.relaunch_attempts_entry.grid(row=8, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # BINDINGS
