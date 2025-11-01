@@ -43,20 +43,13 @@ pyinstaller --clean ^
         exit /b 1
     )
 
-:: Build GUI
+:: Build GUI (using optimized spec file)
 echo Building GUI...
 pyinstaller --clean ^
     --distpath dist ^
     --workpath build ^
     --noconfirm ^
-    --hidden-import win32timezone ^
-    --hidden-import customtkinter ^
-    --hidden-import CTkListbox ^
-    --hidden-import CTkMessagebox ^
-    --hidden-import psutil ^
-    --collect-all win32com ^
-    --noconsole ^
-    src\owlette_gui.py || (
+    owlette_gui.spec || (
         echo Failed to build GUI executable
         pause
         exit /b 1

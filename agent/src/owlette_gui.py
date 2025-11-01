@@ -12,30 +12,22 @@ import uuid
 import threading
 import subprocess
 import time
-import win32serviceutil
 
-# Firebase integration
-try:
-    from firebase_client import FirebaseClient
-    FIREBASE_AVAILABLE = True
-except ImportError:
-    FIREBASE_AVAILABLE = False
+# Lazy import for win32serviceutil (heavy dependency - only import when needed)
+# import win32serviceutil  # Moved to methods that use it
+
+# Firebase integration - lazy loaded in background thread
+# from firebase_client import FirebaseClient  # Moved to background thread
+FIREBASE_AVAILABLE = True  # Assume available, handle import errors in background thread
 
 class OwletteConfigApp:
 
     def __init__(self, master):
-        # Check service is running
-        service_name = shared_utils.SERVICE_NAME
-        is_running = self.check_service_is_running(service_name)
-        # If not, start it
-        if not is_running:
-            self.start_service()
-
         self.master = master
         self.entry = ctk.CTkEntry(master)
         self.entry.grid(row=0, column=0)
-        
-        # Initialize UI
+
+        # Initialize basic window properties FIRST for fast appearance
         self.master.title(shared_utils.WINDOW_TITLES.get("owlette_gui"))
         # Set window icon
         try:
@@ -43,38 +35,77 @@ class OwletteConfigApp:
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
-        shared_utils.center_window(master, 1280, 450)
-        self.setup_ui()
+        shared_utils.center_window(master, 1280, 460)
 
-        # Load existing config
-        self.config = shared_utils.load_config()
-
-        # Initialize Firebase client for immediate sync
-        self.firebase_client = None
-        if FIREBASE_AVAILABLE and self.config.get('firebase', {}).get('enabled', False):
-            try:
-                site_id = self.config.get('firebase', {}).get('site_id', 'default_site')
-                credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-                cache_path = shared_utils.get_path('../config/firebase_cache.json')
-                self.firebase_client = FirebaseClient(
-                    credentials_path=credentials_path,
-                    site_id=site_id,
-                    config_cache_path=cache_path
-                )
-                logging.info("GUI Firebase client initialized")
-            except Exception as e:
-                logging.warning(f"Failed to initialize GUI Firebase client: {e}")
-
-        # Update Firebase status now that config is loaded
-        self.update_firebase_status()
-
-        # Process list
+        # Initialize state variables
         self.prev_process_list = None
-        self.prev_config_hash = None  # Track config changes to prevent overwriting user input
+        self.prev_config_hash = None
         self.selected_process = None
         self.selected_index = None
+        self.firebase_client = None
+        self.config = None
+        self.service_running = None
+
+        # Show loading screen immediately
+        self.show_loading_screen()
+
+        # Start async initialization
+        self.master.after(50, self._complete_initialization)
+
+    def show_loading_screen(self):
+        """Display minimal loading screen while heavy operations complete"""
+        # Set dark mode
+        ctk.set_appearance_mode("dark")
+
+        # Create loading frame
+        self.loading_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
+        self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Owlette title
+        self.loading_title = ctk.CTkLabel(
+            self.loading_frame,
+            text="OWLETTE",
+            text_color=shared_utils.TEXT_COLOR,
+            font=("", 32, "bold")
+        )
+        self.loading_title.place(relx=0.5, rely=0.35, anchor="center")
+
+        # Loading message
+        self.loading_message = ctk.CTkLabel(
+            self.loading_frame,
+            text="Loading configuration...",
+            text_color=shared_utils.TEXT_COLOR,
+            font=("", 14)
+        )
+        self.loading_message.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Version label
+        self.loading_version = ctk.CTkLabel(
+            self.loading_frame,
+            text=f"v{shared_utils.APP_VERSION}",
+            text_color=shared_utils.TEXT_COLOR,
+            font=("", 10)
+        )
+        self.loading_version.place(relx=0.5, rely=0.9, anchor="center")
+
+    def _complete_initialization(self):
+        """Complete initialization in phases to keep UI responsive"""
+        # Phase 1: Load config (fast, keep on main thread)
+        self.loading_message.configure(text="Loading configuration...")
+        self.master.update()
+        self.config = shared_utils.load_config()
+
+        # Phase 2: Build full UI (before async operations so widgets exist)
+        self.loading_message.configure(text="Building interface...")
+        self.master.update()
+        self.loading_frame.destroy()  # Remove loading screen
+        self.setup_ui()
+
+        # Phase 3: Start background threads for heavy operations
+        self._start_background_initialization()
+
+        # Phase 4: Initialize UI with config data
         self.update_process_list()
-        self.master.after(1000, self.update_process_list_periodically)
 
         # Set default values if empty
         if not self.time_delay_entry.get():
@@ -84,20 +115,66 @@ class OwletteConfigApp:
         if not self.relaunch_attempts_entry.get():
             self.relaunch_attempts_entry.insert(0, 3)
 
-        # Update the process list based on JSON config contents
-        self.update_process_list()
-
         # Auto-select first process if any exist
         if self.process_list.size() > 0:
             self.process_list.activate(0)
 
-        #CTkMessagebox(title="Info", message="This is a CTkMessagebox!", justify="center")
+        # Start periodic updates
+        self.master.after(1000, self.update_process_list_periodically)
 
-    def setup_ui(self):
-        # Set appearance mode and color theme
-        ctk.set_appearance_mode("dark")
+    def _start_background_initialization(self):
+        """Start heavy operations in background threads"""
+        # Thread 1: Check service status
+        def check_service_async():
+            try:
+                service_name = shared_utils.SERVICE_NAME
+                is_running = self.check_service_is_running(service_name)
+                self.service_running = is_running
 
-        # Customize titlebar color for Windows 11 (dark mode)
+                # If not running, start it
+                if not is_running:
+                    self.loading_message.configure(text="Starting service...")
+                    self.start_service()
+                    self.service_running = True
+
+                logging.info(f"Service status: {'Running' if is_running else 'Started'}")
+            except Exception as e:
+                logging.error(f"Error checking service: {e}")
+                self.service_running = False
+
+        # Thread 2: Initialize Firebase client
+        def init_firebase_async():
+            try:
+                # Lazy import Firebase in background thread
+                from firebase_client import FirebaseClient
+
+                if self.config.get('firebase', {}).get('enabled', False):
+                    site_id = self.config.get('firebase', {}).get('site_id', 'default_site')
+                    credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                    cache_path = shared_utils.get_path('../config/firebase_cache.json')
+
+                    self.firebase_client = FirebaseClient(
+                        credentials_path=credentials_path,
+                        site_id=site_id,
+                        config_cache_path=cache_path
+                    )
+                    logging.info("GUI Firebase client initialized")
+
+                    # Update UI on main thread
+                    self.master.after(0, self.update_firebase_status)
+            except ImportError as e:
+                logging.warning(f"Firebase not available: {e}")
+                self.master.after(0, self.update_firebase_status)
+            except Exception as e:
+                logging.warning(f"Failed to initialize GUI Firebase client: {e}")
+                self.master.after(0, self.update_firebase_status)
+
+        # Start both threads
+        threading.Thread(target=check_service_async, daemon=True, name="ServiceCheck").start()
+        threading.Thread(target=init_firebase_async, daemon=True, name="FirebaseInit").start()
+
+    def _apply_windows11_theme(self):
+        """Apply Windows 11 dark titlebar - deferred for faster startup"""
         try:
             # This works on Windows 11 to set dark titlebar
             self.master.wm_attributes("-alpha", 0.99)  # Slight transparency hack to force dark titlebar
@@ -107,19 +184,28 @@ class OwletteConfigApp:
             HWND = ctypes.windll.user32.GetParent(self.master.winfo_id())
             DWMWA_USE_IMMERSIVE_DARK_MODE = 20
             ctypes.windll.dwmapi.DwmSetWindowAttribute(HWND, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int(1)))
-        except:
+            logging.info("Applied Windows 11 dark theme")
+        except Exception as e:
+            logging.debug(f"Could not apply Windows 11 theme: {e}")
             pass  # Silently fail if not on Windows 11 or if it doesn't work
+
+    def setup_ui(self):
+        # Set appearance mode and color theme
+        ctk.set_appearance_mode("dark")
+
+        # Defer Windows 11 titlebar customization to after window is shown
+        self.master.after(100, self._apply_windows11_theme)
 
         self.background_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
         self.background_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         # PROCESS LIST (LEFT SIDE)
         # Create a frame for the process list
-        self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, border_width=0, corner_radius=12)
+        self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
         self.process_list_frame.grid(row=0, column=0, sticky='news', rowspan=10, columnspan=3, padx=(10, 5), pady=(10,0))
 
         # Create a label for the process list
-        self.process_list_label = ctk.CTkLabel(self.master, text="MANAGED PROCESSES", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_list_label = ctk.CTkLabel(self.master, text="MANAGED PROCESSES", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_list_label.grid(row=0, column=0, sticky='w', padx=(20, 10), pady=(20, 0))
         self.process_list_label.configure(width=40)
 
@@ -131,41 +217,41 @@ class OwletteConfigApp:
         self.process_list._scrollbar.grid_configure(padx=(0, 8))
 
         # Button row 1: New/Delete/Kill
-        self.new_button = ctk.CTkButton(self.master, text="New", command=self.new_process, width=60, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.new_button = ctk.CTkButton(self.master, text="New", command=self.new_process, width=60, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.new_button.grid(row=8, column=0, sticky='w', padx=(20, 0), pady=(5, 5))
 
-        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.remove_button.grid(row=8, column=1, sticky='w', padx=5, pady=(5, 5))
 
-        self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.kill_button.grid(row=8, column=2, sticky='w', padx=(5, 15), pady=(5, 5))
 
         # Button row 2: Up/Down arrows
-        self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
-        self.up_button.grid(row=9, column=1, sticky='w', padx=5, pady=(5, 5))
+        self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.up_button.grid(row=9, column=1, sticky='w', padx=5, pady=(5, 15))
 
-        self.down_button = ctk.CTkButton(self.master, text="↓", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
-        self.down_button.grid(row=9, column=2, sticky='w', padx=5, pady=(5, 5))
+        self.down_button = ctk.CTkButton(self.master, text="↓", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.down_button.grid(row=9, column=2, sticky='w', padx=5, pady=(5, 15))
 
         # Firebase status indicator (left side of row 10)
-        self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
-        self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='w', padx=(20, 0), pady=(5, 10))
+        self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 10))
 
         # Version label (right side of row 10)
-        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 10))
-        self.version_label.grid(row=10, column=2, sticky='e', padx=(0, 15), pady=(5, 10))
+        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 10))
+        self.version_label.grid(row=10, column=2, sticky='se', padx=(0, 15), pady=(5, 10))
 
         # PROCESS DETAILS (RIGHT SIDE)
         # Create frame for process details
-        self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, border_width=0, corner_radius=12)
+        self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
         self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=11, columnspan=5, padx=(5, 10), pady=(10,0))
 
         # Create a label for the process details
-        self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_details_label.grid(row=0, column=4, columnspan=4, sticky='w', padx=(20, 10), pady=(20, 0))
 
         # Create a toggle switch for process
-        self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.autolaunch_label.grid(row=1, column=4, sticky='e', padx=5, pady=5)
         self.autolaunch_toggle = ctk.CTkSwitch(master=self.master, text="", command=self.toggle_launch_process, onvalue="on", offvalue="off")
         self.autolaunch_toggle.grid(row=1, column=5, sticky='w', padx=10, pady=5)
@@ -173,67 +259,67 @@ class OwletteConfigApp:
         self.autolaunch_toggle.select()
 
         # Create Name of process field
-        self.name_label = ctk.CTkLabel(self.master, text="Name:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.name_label = ctk.CTkLabel(self.master, text="Name:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.name_label.grid(row=2, column=4, sticky='e', padx=5, pady=5)
         self.name_entry = ctk.CTkEntry(self.master, placeholder_text="Name of your process", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.name_entry.grid(row=2, column=5, columnspan=3, sticky='ew', padx=(10, 20), pady=5)
 
         # Create Exe path field
-        self.exe_path_label = ctk.CTkLabel(self.master, text="Executable Path:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.exe_path_label = ctk.CTkLabel(self.master, text="Executable Path:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.exe_path_label.grid(row=3, column=4, sticky='e', padx=5, pady=5)
-        self.exe_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_exe, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.exe_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_exe, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 5), pady=5)
         self.exe_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your executable (application)", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.exe_path_entry.grid(row=3, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create File path / cmd line args
-        self.file_path_label = ctk.CTkLabel(self.master, text="File Path / Cmd Args:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.file_path_label = ctk.CTkLabel(self.master, text="File Path / Cmd Args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.file_path_label.grid(row=4, column=4, sticky='e', padx=5, pady=5)
-        self.file_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_file, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.file_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_file, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 5), pady=5)
         self.file_path_entry = ctk.CTkEntry(self.master, placeholder_text="The full path to your document or command line arguments", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.file_path_entry.grid(row=4, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create CWD path field
-        self.cwd_label = ctk.CTkLabel(self.master, text="Working Directory:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.cwd_label = ctk.CTkLabel(self.master, text="Working Directory:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.cwd_label.grid(row=5, column=4, sticky='e', padx=5, pady=5)
-        self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, corner_radius=6)
+        self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 5), pady=5)
         self.cwd_entry = ctk.CTkEntry(self.master, placeholder_text="The working directory for your process", fg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.cwd_entry.grid(row=5, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create Time delay label and field
-        self.time_delay_label = ctk.CTkLabel(self.master, text="Launch Time Delay (sec):", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_delay_label = ctk.CTkLabel(self.master, text="Launch Time Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_delay_label.grid(row=6, column=4, sticky='e', padx=5, pady=5)
         self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_delay_entry.grid(row=6, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Priority dropdown
-        self.priority_label = ctk.CTkLabel(self.master, text="Task Priority:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.priority_label = ctk.CTkLabel(self.master, text="Task Priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.priority_label.grid(row=6, column=6, sticky='e', padx=5, pady=5)
         self.priority_options = ["Low", "Normal", "High", "Realtime"]
         self.priority_menu = ctk.CTkOptionMenu(self.master, values=self.priority_options, command=self.update_selected_process)
-        self.priority_menu.configure(fg_color=shared_utils.BUTTON_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, width=140, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
+        self.priority_menu.configure(fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, width=140, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
         self.priority_menu.grid(row=6, column=7, sticky='w', padx=(5, 20), pady=5)
         self.priority_menu.set('Normal')
 
         # Create a label and entry for "Time to Initialize"
-        self.time_to_init_label = ctk.CTkLabel(self.master, text="Time to Initialize (sec):", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_to_init_label = ctk.CTkLabel(self.master, text="Time to Initialize (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=5, pady=5)
         self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_to_init_entry.grid(row=7, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Visibility dropdown
-        self.visibility_label = ctk.CTkLabel(self.master, text="Window Visibility:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.visibility_label = ctk.CTkLabel(self.master, text="Window Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.visibility_label.grid(row=7, column=6, sticky='e', padx=5, pady=5)
         self.visibility_options = ["Show", "Hide"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
-        self.visibility_menu.configure(width=140, fg_color=shared_utils.BUTTON_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
+        self.visibility_menu.configure(width=140, fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
         self.visibility_menu.grid(row=7, column=7, sticky='w', padx=(5, 20), pady=5)
         self.visibility_menu.set('Show')
 
         # Create a label and entry for "Restart Attempts"
-        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Relaunch attempts til Restart:", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Relaunch attempts til Restart:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=5, pady=5)
         self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=80, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.relaunch_attempts_entry.grid(row=8, column=5, sticky='w', padx=(10, 5), pady=5)
@@ -901,6 +987,8 @@ class OwletteConfigApp:
 
     def check_service_is_running(self, service_name):
         try:
+            # Lazy import win32serviceutil only when checking service
+            import win32serviceutil
             status = win32serviceutil.QueryServiceStatus(service_name)[1]
             if status == 4:  # 4 means the service is running
                 return True
