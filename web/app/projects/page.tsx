@@ -4,26 +4,26 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
-import { useDeploymentManager } from '@/hooks/useDeployments';
+import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ChevronRight, Plus, Download, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Pencil, Trash2, Check, X } from 'lucide-react';
+import { ChevronRight, Plus, FolderArchive, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Pencil, Trash2, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Image from 'next/image';
-import DeploymentDialog from '@/components/DeploymentDialog';
+import ProjectDistributionDialog from '@/components/ProjectDistributionDialog';
 import { toast } from 'sonner';
 
-export default function DeploymentsPage() {
+export default function ProjectsPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
-  const [deployDialogOpen, setDeployDialogOpen] = useState(false);
-  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
+  const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
+  const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newSiteName, setNewSiteName] = useState('');
@@ -35,17 +35,17 @@ export default function DeploymentsPage() {
   const router = useRouter();
 
   const {
-    deployments,
-    deploymentsLoading,
+    distributions,
+    distributionsLoading,
     templates,
     templatesLoading,
-    createDeployment,
+    createDistribution,
     createTemplate,
     updateTemplate,
     deleteTemplate,
-    cancelDeployment,
-    deleteDeployment,
-  } = useDeploymentManager(currentSiteId);
+    cancelDistribution,
+    deleteDistribution,
+  } = useProjectDistributionManager(currentSiteId);
 
   // Load saved site from localStorage or use first available
   useEffect(() => {
@@ -185,7 +185,7 @@ export default function DeploymentsPage() {
       partial: 'bg-yellow-600 hover:bg-yellow-700',
       pending: 'bg-slate-600 hover:bg-slate-700',
       downloading: 'bg-cyan-600 hover:bg-cyan-700',
-      installing: 'bg-purple-600 hover:bg-purple-700',
+      extracting: 'bg-purple-600 hover:bg-purple-700',
     };
 
     return (
@@ -195,7 +195,7 @@ export default function DeploymentsPage() {
     );
   };
 
-  const selectedDeployment = deployments.find(d => d.id === selectedDeploymentId);
+  const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
     <div className="min-h-screen bg-slate-950">
@@ -214,7 +214,7 @@ export default function DeploymentsPage() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer">
-                    <span className="text-lg">Deploy Software</span>
+                    <span className="text-lg">Distribute Projects</span>
                     <ChevronDown className="h-4 w-4 ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -422,18 +422,18 @@ export default function DeploymentsPage() {
       <main className="mx-auto max-w-7xl p-4">
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight text-white">Software Deployments</h2>
+            <h2 className="text-3xl font-bold tracking-tight text-white">Project Distributions</h2>
             <p className="text-slate-400">
-              Deploy software installers across your machines
+              Distribute project files (ZIPs, .toe files, etc.) across your machines
             </p>
           </div>
 
-          <DeploymentDialog
-            open={deployDialogOpen}
-            onOpenChange={setDeployDialogOpen}
+          <ProjectDistributionDialog
+            open={distributionDialogOpen}
+            onOpenChange={setDistributionDialogOpen}
             siteId={currentSiteId}
             templates={templates}
-            onCreateDeployment={createDeployment}
+            onCreateDistribution={createDistribution}
             onCreateTemplate={createTemplate}
             onUpdateTemplate={updateTemplate}
             onDeleteTemplate={deleteTemplate}
@@ -444,10 +444,10 @@ export default function DeploymentsPage() {
         <div className="mb-8 grid gap-4 md:grid-cols-4">
           <Card className="border-slate-800 bg-slate-900">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Total Deployments</CardTitle>
+              <CardTitle className="text-sm font-medium text-slate-200">Total Distributions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{deployments.length}</div>
+              <div className="text-2xl font-bold text-white">{distributions.length}</div>
             </CardContent>
           </Card>
 
@@ -457,7 +457,7 @@ export default function DeploymentsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-white">
-                {deployments.filter(d => d.status === 'in_progress').length}
+                {distributions.filter(d => d.status === 'in_progress').length}
               </div>
             </CardContent>
           </Card>
@@ -468,7 +468,7 @@ export default function DeploymentsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-white">
-                {deployments.filter(d => d.status === 'completed').length}
+                {distributions.filter(d => d.status === 'completed').length}
               </div>
             </CardContent>
           </Card>
@@ -483,55 +483,63 @@ export default function DeploymentsPage() {
           </Card>
         </div>
 
-        {/* Deployments List */}
+        {/* Distributions List */}
         <div className="space-y-4">
-          {deploymentsLoading ? (
+          {distributionsLoading ? (
             <Card className="border-slate-800 bg-slate-900">
               <CardContent className="p-8 text-center">
                 <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" />
-                <p className="mt-2 text-slate-400">Loading deployments...</p>
+                <p className="mt-2 text-slate-400">Loading distributions...</p>
               </CardContent>
             </Card>
-          ) : deployments.length === 0 ? (
+          ) : distributions.length === 0 ? (
             <Card className="border-slate-800 bg-slate-900">
               <CardHeader>
-                <CardTitle className="text-white">No Deployments Yet</CardTitle>
+                <CardTitle className="text-white">No Distributions Yet</CardTitle>
                 <CardDescription className="text-slate-400">
-                  Create your first deployment to install software across your machines
+                  Create your first distribution to sync project files across your machines
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button
-                  onClick={() => setDeployDialogOpen(true)}
+                  onClick={() => setDistributionDialogOpen(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                 >
                   <Plus className="h-4 w-4 mr-2" />
-                  New Deployment
+                  New Distribution
                 </Button>
               </CardContent>
             </Card>
           ) : (
-            deployments.map((deployment) => (
+            distributions.map((distribution) => (
               <Card
-                key={deployment.id}
+                key={distribution.id}
                 className="border-slate-800 bg-slate-900 cursor-pointer hover:border-slate-700 transition-colors"
-                onClick={() => setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id)}
+                onClick={() => setSelectedDistributionId(distribution.id === selectedDistributionId ? null : distribution.id)}
               >
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      {getStatusIcon(deployment.status)}
-                      <div className="space-y-2">
-                        <CardTitle className="text-white select-text">{deployment.name}</CardTitle>
-                        <CardDescription className="text-slate-400 select-text">
-                          {deployment.installer_name}
+                      {getStatusIcon(distribution.status)}
+                      <div>
+                        <CardTitle className="text-white select-text">{distribution.name}</CardTitle>
+                        <CardDescription className="text-slate-400 select-text text-xs">
+                          {(() => {
+                            try {
+                              const url = new URL(distribution.project_url);
+                              const filename = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
+                              return filename || 'project.zip';
+                            } catch {
+                              return 'Invalid URL';
+                            }
+                          })()}
                         </CardDescription>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusBadge(deployment.status)}
+                      {getStatusBadge(distribution.status)}
                       <span className="text-xs text-slate-500">
-                        {new Date(deployment.createdAt).toLocaleString()}
+                        {new Date(distribution.createdAt).toLocaleString()}
                       </span>
                       <Button
                         size="sm"
@@ -539,9 +547,9 @@ export default function DeploymentsPage() {
                         onClick={async (e) => {
                           e.stopPropagation();
                           try {
-                            await deleteDeployment(deployment.id);
+                            await deleteDistribution(distribution.id);
                           } catch (error: any) {
-                            console.error('Failed to delete deployment:', error);
+                            console.error('Failed to delete distribution:', error);
                           }
                         }}
                         className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-950/30 cursor-pointer"
@@ -552,46 +560,48 @@ export default function DeploymentsPage() {
                   </div>
                 </CardHeader>
 
-                {selectedDeploymentId === deployment.id && (
+                {selectedDistributionId === distribution.id && (
                   <CardContent className="space-y-4 border-t border-slate-800 pt-4">
                     <div className="grid gap-3 text-sm">
                       <div>
-                        <div className="text-slate-400 mb-1">Installer URL:</div>
-                        <div className="text-white select-text break-all">{deployment.installer_url}</div>
+                        <div className="text-slate-400 mb-1">Project URL:</div>
+                        <div className="text-white select-text break-all">{distribution.project_url}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 mb-1">Silent Flags:</div>
-                        <div className="text-white select-text break-all">{deployment.silent_flags || 'None'}</div>
+                        <div className="text-slate-400 mb-1">Extract Path:</div>
+                        <div className="text-white select-text break-all">
+                          {distribution.extract_path || <span className="text-slate-500 italic">~/Documents/OwletteProjects (default)</span>}
+                        </div>
                       </div>
-                      {deployment.verify_path && (
+                      {distribution.verify_files && distribution.verify_files.length > 0 && (
                         <div>
-                          <div className="text-slate-400 mb-1">Verify Path:</div>
-                          <div className="text-white select-text break-all">{deployment.verify_path}</div>
+                          <div className="text-slate-400 mb-1">Verify Files:</div>
+                          <div className="text-white select-text break-all">{distribution.verify_files.join(', ')}</div>
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-medium text-white mb-2">Target Machines ({deployment.targets.length})</h4>
+                      <h4 className="text-sm font-medium text-white mb-2">Target Machines ({distribution.targets.length})</h4>
                       <div className="space-y-2">
-                        {deployment.targets.map((target) => (
+                        {distribution.targets.map((target) => (
                           <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-slate-800">
                             <span className="text-white select-text">{target.machineId}</span>
                             <div className="flex items-center gap-2">
-                              {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
+                              {target.progress !== undefined && (target.status === 'downloading' || target.status === 'extracting') && (
                                 <span className="text-xs text-slate-400">{target.progress}%</span>
                               )}
                               {getStatusBadge(target.status)}
-                              {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (
+                              {(target.status === 'pending' || target.status === 'downloading' || target.status === 'extracting') && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
                                   onClick={async () => {
                                     try {
-                                      await cancelDeployment(deployment.id, target.machineId, deployment.installer_name);
+                                      await cancelDistribution(distribution.id, target.machineId, distribution.project_name);
                                       // Status will update automatically via Firestore listener
                                     } catch (error: any) {
-                                      console.error('Failed to cancel deployment:', error);
+                                      console.error('Failed to cancel distribution:', error);
                                     }
                                   }}
                                   className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30"

@@ -36,8 +36,9 @@ export default function DashboardPage() {
   const [viewType, setViewType] = useState<ViewType>('card');
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
 
-  // Edit Process state
-  const [editProcessDialogOpen, setEditProcessDialogOpen] = useState(false);
+  // Process Dialog state (supports both create and edit modes)
+  const [processDialogOpen, setProcessDialogOpen] = useState(false);
+  const [processDialogMode, setProcessDialogMode] = useState<'create' | 'edit'>('edit');
   const [editingMachineId, setEditingMachineId] = useState<string>('');
   const [editingProcessId, setEditingProcessId] = useState<string>('');
   const [editProcessForm, setEditProcessForm] = useState({
@@ -53,7 +54,7 @@ export default function DashboardPage() {
     autolaunch: false,
   });
 
-  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess } = useMachines(currentSiteId);
   const router = useRouter();
 
   const toggleMachineExpanded = (machineId: string) => {
@@ -68,14 +69,14 @@ export default function DashboardPage() {
     });
   };
 
-  const handleRowClick = (machineId: string, hasProcesses: boolean) => {
+  const handleRowClick = (machineId: string, canExpand: boolean) => {
     // Don't toggle if user is selecting text
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
       return;
     }
 
-    if (hasProcesses) {
+    if (canExpand) {
       toggleMachineExpanded(machineId);
     }
   };
@@ -112,6 +113,7 @@ export default function DashboardPage() {
   };
 
   const openEditProcessDialog = (machineId: string, process: any) => {
+    setProcessDialogMode('edit');
     setEditingMachineId(machineId);
     setEditingProcessId(process.id);
     setEditProcessForm({
@@ -126,21 +128,54 @@ export default function DashboardPage() {
       relaunch_attempts: process.relaunch_attempts || '3',
       autolaunch: process.autolaunch || false,
     });
-    setEditProcessDialogOpen(true);
+    setProcessDialogOpen(true);
   };
 
-  const handleUpdateProcess = async () => {
-    if (!editProcessForm.name) {
+  const openCreateProcessDialog = (machineId: string) => {
+    setProcessDialogMode('create');
+    setEditingMachineId(machineId);
+    setEditingProcessId(''); // No process ID for new process
+    // Reset form to defaults
+    setEditProcessForm({
+      name: '',
+      exe_path: '',
+      file_path: '',
+      cwd: '',
+      priority: 'Normal',
+      visibility: 'Show',
+      time_delay: '0',
+      time_to_init: '10',
+      relaunch_attempts: '3',
+      autolaunch: false,
+    });
+    setProcessDialogOpen(true);
+  };
+
+  const handleSaveProcess = async () => {
+    // Validation
+    if (!editProcessForm.name || !editProcessForm.name.trim()) {
       toast.error('Process name is required');
       return;
     }
 
+    if (!editProcessForm.exe_path || !editProcessForm.exe_path.trim()) {
+      toast.error('Executable path is required');
+      return;
+    }
+
     try {
-      await updateProcess(editingMachineId, editingProcessId, editProcessForm);
-      toast.success(`Process "${editProcessForm.name}" updated successfully!`);
-      setEditProcessDialogOpen(false);
+      if (processDialogMode === 'create') {
+        // Create new process
+        await createProcess(editingMachineId, editProcessForm);
+        toast.success(`Process "${editProcessForm.name}" created successfully!`);
+      } else {
+        // Update existing process
+        await updateProcess(editingMachineId, editingProcessId, editProcessForm);
+        toast.success(`Process "${editProcessForm.name}" updated successfully!`);
+      }
+      setProcessDialogOpen(false);
     } catch (error: any) {
-      toast.error(error.message || 'Failed to update process');
+      toast.error(error.message || `Failed to ${processDialogMode} process`);
     }
   };
 
@@ -152,7 +187,7 @@ export default function DashboardPage() {
     try {
       await deleteProcess(editingMachineId, editingProcessId);
       toast.success(`Process "${editProcessForm.name}" deleted successfully!`);
-      setEditProcessDialogOpen(false);
+      setProcessDialogOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete process');
     }
@@ -348,6 +383,12 @@ export default function DashboardPage() {
                     className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
                   >
                     Deploy Software
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => router.push('/projects')}
+                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                  >
+                    Distribute Projects
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -733,9 +774,36 @@ export default function DashboardPage() {
                               </div>
                             </div>
                           ))}
+                          {/* New Process Button */}
+                          <div className="flex justify-center pt-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openCreateProcessDialog(machine.machineId)}
+                              className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                            >
+                              <Plus className="h-3 w-3 mr-1" />
+                              New Process
+                            </Button>
+                          </div>
                         </div>
                       </CollapsibleContent>
                     </Collapsible>
+                  )}
+
+                  {/* New Process button for machines with no processes */}
+                  {(!machine.processes || machine.processes.length === 0) && (
+                    <div className="border-t border-slate-800 p-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openCreateProcessDialog(machine.machineId)}
+                        className="w-full bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        New Process
+                      </Button>
+                    </div>
                   )}
                 </Card>
               ))}
@@ -761,19 +829,17 @@ export default function DashboardPage() {
                     {machines.map((machine) => (
                       <React.Fragment key={machine.machineId}>
                         <TableRow
-                          className={`border-slate-800 hover:bg-slate-800 ${machine.processes && machine.processes.length > 0 ? 'cursor-pointer' : ''}`}
-                          onClick={() => handleRowClick(machine.machineId, !!(machine.processes && machine.processes.length > 0))}
+                          className="border-slate-800 hover:bg-slate-800 cursor-pointer"
+                          onClick={() => handleRowClick(machine.machineId, true)}
                         >
                           <TableCell>
-                            {machine.processes && machine.processes.length > 0 && (
-                              <div className="flex items-center justify-center">
-                                {expandedMachines.has(machine.machineId) ? (
-                                  <ChevronUp className="h-4 w-4 text-slate-300" />
-                                ) : (
-                                  <ChevronDown className="h-4 w-4 text-slate-300" />
-                                )}
-                              </div>
-                            )}
+                            <div className="flex items-center justify-center">
+                              {expandedMachines.has(machine.machineId) ? (
+                                <ChevronUp className="h-4 w-4 text-slate-300" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-slate-300" />
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="font-medium text-white select-text">{machine.machineId}</TableCell>
                           <TableCell>
@@ -828,11 +894,13 @@ export default function DashboardPage() {
                         </TableRow>
 
                         {/* Expanded Process Details Row */}
-                        {expandedMachines.has(machine.machineId) && machine.processes && machine.processes.length > 0 && (
+                        {expandedMachines.has(machine.machineId) && (
                           <TableRow key={`${machine.machineId}-processes`} className="border-slate-800 bg-slate-900">
                             <TableCell colSpan={9} className="p-0 bg-slate-900">
                               <div className="p-4 space-y-2 bg-slate-900">
-                                {machine.processes.map((process) => (
+                                {machine.processes && machine.processes.length > 0 ? (
+                                  <>
+                                    {machine.processes.map((process) => (
                                   <div key={process.id} className="flex items-center justify-between p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-2 mb-1">
@@ -879,7 +947,34 @@ export default function DashboardPage() {
                                       </Button>
                                     </div>
                                   </div>
-                                ))}
+                                    ))}
+                                    {/* New Process Button */}
+                                    <div className="flex justify-center pt-2">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openCreateProcessDialog(machine.machineId)}
+                                        className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                                      >
+                                        <Plus className="h-3 w-3 mr-1" />
+                                        New Process
+                                      </Button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                                    <p className="mb-4 text-sm">No processes configured for this machine</p>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => openCreateProcessDialog(machine.machineId)}
+                                      className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                                    >
+                                      <Plus className="h-3 w-3 mr-1" />
+                                      New Process
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -962,13 +1057,17 @@ export default function DashboardPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Process Dialog */}
-      <Dialog open={editProcessDialogOpen} onOpenChange={setEditProcessDialogOpen}>
+      {/* Process Dialog (Create/Edit) */}
+      <Dialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
         <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Process</DialogTitle>
+            <DialogTitle className="text-white">
+              {processDialogMode === 'create' ? 'New Process' : 'Edit Process'}
+            </DialogTitle>
             <DialogDescription className="text-slate-400">
-              Update process configuration
+              {processDialogMode === 'create'
+                ? 'Create a new process configuration'
+                : 'Update process configuration'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1111,26 +1210,28 @@ export default function DashboardPage() {
             </div>
           </div>
           <DialogFooter className="flex justify-between">
-            <Button
-              variant="destructive"
-              onClick={handleDeleteProcess}
-              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
-            >
-              Delete
-            </Button>
-            <div className="flex gap-2">
+            {processDialogMode === 'edit' && (
+              <Button
+                variant="destructive"
+                onClick={handleDeleteProcess}
+                className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+              >
+                Delete
+              </Button>
+            )}
+            <div className={`flex gap-2 ${processDialogMode === 'create' ? 'ml-auto' : ''}`}>
               <Button
                 variant="outline"
-                onClick={() => setEditProcessDialogOpen(false)}
+                onClick={() => setProcessDialogOpen(false)}
                 className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
               >
                 Cancel
               </Button>
               <Button
-                onClick={handleUpdateProcess}
+                onClick={handleSaveProcess}
                 className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
               >
-                Save Changes
+                {processDialogMode === 'create' ? 'Create Process' : 'Save Changes'}
               </Button>
             </div>
           </DialogFooter>

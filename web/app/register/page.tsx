@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { validatePassword, validateEmail } from '@/lib/validators';
+import { sanitizeError } from '@/lib/errorHandler';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
@@ -20,13 +22,23 @@ export default function RegisterPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (password !== confirmPassword) {
-      toast.error('Passwords do not match');
+    // Validate email
+    const emailValidation = validateEmail(email);
+    if (!emailValidation.isValid) {
+      toast.error(emailValidation.error);
       return;
     }
 
-    if (password.length < 6) {
-      toast.error('Password must be at least 6 characters');
+    // Validate password strength
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.isValid) {
+      toast.error(passwordValidation.error);
+      return;
+    }
+
+    // Check password confirmation
+    if (password !== confirmPassword) {
+      toast.error('Passwords do not match');
       return;
     }
 
@@ -36,8 +48,8 @@ export default function RegisterPage() {
       await signUp(email, password);
       toast.success('Account created successfully!');
       router.push('/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to create account');
+    } catch (error) {
+      toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
     }
@@ -50,8 +62,8 @@ export default function RegisterPage() {
       await signInWithGoogle();
       toast.success('Account created with Google!');
       router.push('/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to sign up with Google');
+    } catch (error) {
+      toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
     }
@@ -91,6 +103,9 @@ export default function RegisterPage() {
                 required
                 disabled={loading}
               />
+              <p className="text-xs text-muted-foreground">
+                Must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>

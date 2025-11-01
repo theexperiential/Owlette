@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, query, setDoc, getDocs, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { logger } from '@/lib/logger';
 
 export interface Process {
   id: string;
@@ -220,31 +221,31 @@ export function useMachines(siteId: string) {
   const killProcess = async (machineId: string, processId: string, processName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    // Send kill command to the machine's commands/pending document
-    // Agent listens to sites/{site}/machines/{machine}/commands/pending
     const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    console.log('Writing kill command to:', commandPath);
-
     const commandId = `kill_${Date.now()}`;
+
+    logger.debug(`Sending kill command for process "${processName}"`, {
+      context: 'killProcess',
+      data: { machineId, processId, commandId },
+    });
+
     const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
     const commandData = {
       type: 'kill_process',
-      process_name: processName,  // Agent expects 'process_name'
+      process_name: processName,
       timestamp: Date.now(),
       status: 'pending',
     };
 
-    console.log('Command ID:', commandId);
-    console.log('Command data:', commandData);
-
     try {
-      // Write to the pending document as a field
       await setDoc(commandRef, {
         [commandId]: commandData
       }, { merge: true });
-      console.log('Kill command written successfully');
+
+      logger.firestore.write(commandPath, commandId, 'create');
+      logger.debug('Kill command sent successfully', { context: 'killProcess' });
     } catch (error) {
-      console.error('Error writing kill command:', error);
+      logger.firestore.error('Failed to send kill command', error);
       throw error;
     }
   };
@@ -273,12 +274,14 @@ export function useMachines(siteId: string) {
       })
     );
 
-    // Send command to agent to update config file
-    // Agent listens to sites/{site}/machines/{machine}/commands/pending
     const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    console.log('Writing toggle command to:', commandPath);
-
     const commandId = `toggle_autolaunch_${Date.now()}`;
+
+    logger.debug(`Toggling autolaunch for "${processName}" to ${newValue}`, {
+      context: 'toggleAutolaunch',
+      data: { machineId, processId, commandId },
+    });
+
     const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
     const commandData = {
       type: 'toggle_autolaunch',
@@ -288,17 +291,15 @@ export function useMachines(siteId: string) {
       status: 'pending',
     };
 
-    console.log('Command ID:', commandId);
-    console.log('Command data:', commandData);
-
     try {
-      // Write to the pending document as a field
       await setDoc(commandRef, {
         [commandId]: commandData
       }, { merge: true });
-      console.log('Toggle command written successfully');
+
+      logger.firestore.write(commandPath, commandId, 'create');
+      logger.debug('Toggle command sent successfully', { context: 'toggleAutolaunch' });
     } catch (error) {
-      console.error('Error writing toggle command:', error);
+      logger.firestore.error('Failed to send toggle command', error);
       throw error;
     }
   };
@@ -306,60 +307,48 @@ export function useMachines(siteId: string) {
   const updateProcess = async (machineId: string, processId: string, updatedData: Partial<Process>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    // Write directly to config collection (source of truth)
-    // Agent's config listener will detect change and update metrics automatically
     const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    const configPath = `config/${siteId}/machines/${machineId}`;
 
-    console.log('🔧 [updateProcess] Updating process in config');
-    console.log('  Config path:', `config/${siteId}/machines/${machineId}`);
-    console.log('  Process ID:', processId);
-    console.log('  Updated data:', updatedData);
+    logger.debug(`Updating process "${processId}"`, {
+      context: 'updateProcess',
+      data: { machineId, processId, updatedData },
+    });
 
     try {
-      // Get current config
+      logger.firestore.read(configPath);
+
       const configSnap = await getDoc(configRef);
       if (!configSnap.exists()) {
-        console.error('❌ Config document does not exist at:', `config/${siteId}/machines/${machineId}`);
-        throw new Error(`Config document not found at config/${siteId}/machines/${machineId}`);
+        logger.error('Config document not found', { context: 'updateProcess', data: { configPath } });
+        throw new Error('Configuration not found');
       }
 
       const config = configSnap.data();
-      console.log('📄 Current config:', config);
 
       if (!config.processes || !Array.isArray(config.processes)) {
-        console.error('❌ Config document has no processes array:', config);
-        throw new Error('Config document has invalid structure - no processes array');
+        logger.error('Invalid config structure - no processes array', { context: 'updateProcess' });
+        throw new Error('Invalid configuration structure');
       }
 
-      // Find the process being updated
       const targetProcess = config.processes.find((proc: any) => proc.id === processId);
       if (!targetProcess) {
-        console.error('❌ Process not found in config. Process ID:', processId);
-        console.error('Available processes:', config.processes.map((p: any) => ({ id: p.id, name: p.name })));
-        throw new Error(`Process ${processId} not found in config`);
+        logger.error('Process not found in config', { context: 'updateProcess', data: { processId } });
+        throw new Error('Process not found');
       }
 
-      console.log('📝 Updating process:', targetProcess.name);
-
-      // Find and update the specific process
       const updatedProcesses = config.processes.map((proc: any) =>
-        proc.id === processId
-          ? { ...proc, ...updatedData }  // Merge updates
-          : proc
+        proc.id === processId ? { ...proc, ...updatedData } : proc
       );
 
-      console.log('✏️ Updated processes array:', updatedProcesses);
-
-      // Write back to Firestore CONFIG (not metrics!)
       await updateDoc(configRef, {
         processes: updatedProcesses
       });
 
-      console.log('✅ Config updated in Firestore successfully!');
-      console.log('  Agent should detect change and update local config.json');
-      console.log('  Metrics will be pushed to sites collection automatically');
+      logger.firestore.write(configPath, undefined, 'update');
+      logger.debug('Process updated successfully', { context: 'updateProcess' });
     } catch (error) {
-      console.error('❌ Error updating process config:', error);
+      logger.firestore.error('Failed to update process', error);
       throw error;
     }
   };
@@ -367,58 +356,108 @@ export function useMachines(siteId: string) {
   const deleteProcess = async (machineId: string, processId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    // Write directly to config collection (source of truth)
-    // Agent's config listener will detect change and remove from local config.json
     const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    const configPath = `config/${siteId}/machines/${machineId}`;
 
-    console.log('🗑️ [deleteProcess] Deleting process from config');
-    console.log('  Config path:', `config/${siteId}/machines/${machineId}`);
-    console.log('  Process ID:', processId);
+    logger.debug(`Deleting process "${processId}"`, {
+      context: 'deleteProcess',
+      data: { machineId, processId },
+    });
 
     try {
-      // Get current config
+      logger.firestore.read(configPath);
+
       const configSnap = await getDoc(configRef);
       if (!configSnap.exists()) {
-        console.error('❌ Config document does not exist at:', `config/${siteId}/machines/${machineId}`);
-        throw new Error(`Config document not found at config/${siteId}/machines/${machineId}`);
+        logger.error('Config document not found', { context: 'deleteProcess', data: { configPath } });
+        throw new Error('Configuration not found');
       }
 
       const config = configSnap.data();
-      console.log('📄 Current config:', config);
 
       if (!config.processes || !Array.isArray(config.processes)) {
-        console.error('❌ Config document has no processes array:', config);
-        throw new Error('Config document has invalid structure - no processes array');
+        logger.error('Invalid config structure - no processes array', { context: 'deleteProcess' });
+        throw new Error('Invalid configuration structure');
       }
 
-      // Find the process being deleted
       const targetProcess = config.processes.find((proc: any) => proc.id === processId);
       if (!targetProcess) {
-        console.error('❌ Process not found in config. Process ID:', processId);
-        console.error('Available processes:', config.processes.map((p: any) => ({ id: p.id, name: p.name })));
-        throw new Error(`Process ${processId} not found in config`);
+        logger.error('Process not found in config', { context: 'deleteProcess', data: { processId } });
+        throw new Error('Process not found');
       }
 
-      console.log('📝 Deleting process:', targetProcess.name);
-
-      // Filter out the process to delete
       const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
 
-      console.log('✏️ Updated processes array (after deletion):', updatedProcesses);
-
-      // Write back to Firestore CONFIG (not metrics!)
       await updateDoc(configRef, {
         processes: updatedProcesses
       });
 
-      console.log('✅ Process deleted from config successfully!');
-      console.log('  Agent should detect change and update local config.json');
-      console.log('  Metrics will be updated automatically');
+      logger.firestore.write(configPath, undefined, 'delete');
+      logger.debug('Process deleted successfully', { context: 'deleteProcess' });
     } catch (error) {
-      console.error('❌ Error deleting process from config:', error);
+      logger.firestore.error('Failed to delete process', error);
       throw error;
     }
   };
 
-  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess };
+  const createProcess = async (machineId: string, processData: Partial<Process>) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    const configRef = doc(db, 'config', siteId, 'machines', machineId);
+    const configPath = `config/${siteId}/machines/${machineId}`;
+
+    logger.debug('Creating new process', {
+      context: 'createProcess',
+      data: { machineId, processData },
+    });
+
+    try {
+      logger.firestore.read(configPath);
+
+      const configSnap = await getDoc(configRef);
+      if (!configSnap.exists()) {
+        logger.error('Config document not found', { context: 'createProcess', data: { configPath } });
+        throw new Error('Configuration not found');
+      }
+
+      const config = configSnap.data();
+
+      if (!config.processes || !Array.isArray(config.processes)) {
+        logger.error('Invalid config structure - no processes array', { context: 'createProcess' });
+        throw new Error('Invalid configuration structure');
+      }
+
+      const newProcessId = crypto.randomUUID();
+
+      const newProcess = {
+        id: newProcessId,
+        name: processData.name || 'New Process',
+        exe_path: processData.exe_path || '',
+        file_path: processData.file_path || '',
+        cwd: processData.cwd || '',
+        priority: processData.priority || 'Normal',
+        visibility: processData.visibility || 'Show',
+        time_delay: processData.time_delay || '0',
+        time_to_init: processData.time_to_init || '10',
+        relaunch_attempts: processData.relaunch_attempts || '3',
+        autolaunch: processData.autolaunch ?? false
+      };
+
+      const updatedProcesses = [...config.processes, newProcess];
+
+      await updateDoc(configRef, {
+        processes: updatedProcesses
+      });
+
+      logger.firestore.write(configPath, undefined, 'create');
+      logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
+
+      return newProcessId;
+    } catch (error) {
+      logger.firestore.error('Failed to create process', error);
+      throw error;
+    }
+  };
+
+  return { machines, loading, error, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess };
 }

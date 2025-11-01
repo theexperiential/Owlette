@@ -27,13 +27,14 @@ Perfect for managing TouchDesigner installations, digital signage, kiosks, media
    - [Web Dashboard](#web-dashboard-setup)
 3. [🌐 Web Dashboard](#web-dashboard)
 4. [🚀 Remote Deployment](#remote-deployment)
-5. [🚀 Usage](#usage)
-6. [🎛️ UI Features](#ui-features)
-7. [🛠️ Configuration](#configuration)
-8. [🗑️ Uninstallation](#uninstallation)
-9. [🐞 Troubleshooting](#troubleshooting)
-10. [🤝 Contributing](#contributing)
-11. [📜 License](#license)
+5. [📦 Project Distribution](#project-distribution)
+6. [🚀 Usage](#usage)
+7. [🎛️ UI Features](#ui-features)
+8. [🛠️ Configuration](#configuration)
+9. [🗑️ Uninstallation](#uninstallation)
+10. [🐞 Troubleshooting](#troubleshooting)
+11. [🤝 Contributing](#contributing)
+12. [📜 License](#license)
 
 <a id="features"></a>
 ## 🌟 Features
@@ -44,6 +45,7 @@ Perfect for managing TouchDesigner installations, digital signage, kiosks, media
 - **Multi-Machine Management** - Control multiple Windows machines from one interface
 - **Multi-Site Support** - Organize machines across different locations/installations
 - **Remote Software Deployment** - Install applications silently across multiple machines
+- **Project File Distribution** - Sync project files (ZIPs, .toe files) across your fleet
 - **Live Metrics Dashboard** - Real-time CPU, memory, disk, and GPU monitoring
 
 ### 🖥️ Windows Service (Agent)
@@ -67,6 +69,8 @@ Perfect for managing TouchDesigner installations, digital signage, kiosks, media
 - **Deployment Templates** - Save and reuse installer configurations
 - **Deployment Cancellation** - Stop installations remotely
 - **Installation Verification** - Confirm successful deployments
+- **Project Distribution** - Distribute project files with ZIP extraction and verification
+- **URL-Based Distribution** - Zero infrastructure cost using your own file hosting
 - **Offline Mode** - Agent continues working even if cloud disconnects
 - **Comprehensive Logging** - Detailed logs for troubleshooting
 
@@ -233,6 +237,49 @@ Works with any installer that supports silent/unattended mode:
 - Chrome: `/silent /install`
 
 See the [Deployment Guide](docs/deployment.md) for detailed setup and examples.
+
+---
+
+<a id="project-distribution"></a>
+## 📦 Project Distribution
+
+Distribute project files (ZIPs, TouchDesigner .toe files, media assets) across multiple machines.
+
+### Features
+
+- **URL-Based Distribution** - Zero infrastructure cost - paste any URL (Dropbox, Google Drive, your hosting)
+- **Automatic Extraction** - Downloads and extracts ZIP files to specified location
+- **Real-Time Progress** - Watch download and extraction progress per machine
+- **File Verification** - Confirm critical files exist after extraction
+- **Distribution Templates** - Save common project configurations
+- **Default Location** - Files extract to `~/Documents/OwletteProjects` by default
+
+### Usage
+
+1. Navigate to **Distribute Projects** in the web dashboard
+2. Create a new distribution:
+   - **Name**: "Summer Show 2024"
+   - **Project URL**: Direct download link to your ZIP (Dropbox, Drive, etc.)
+   - **Extract To**: Optional custom path (default: `~/Documents/OwletteProjects`)
+   - **Verify Files**: Optional comma-separated list of critical files to check (e.g., `project.toe, Assets/`)
+3. Select target machines
+4. Distribute!
+
+### Perfect For
+
+- TouchDesigner project distribution (.toe files + media)
+- Digital signage content updates
+- Multi-GB project files with assets
+- Syncing configurations across machines
+
+### Cost-Effective Architecture
+
+**Zero Owlette Infrastructure Costs:**
+- Users host files on their own service (Dropbox, Google Drive, Backblaze, etc.)
+- Machines download directly from provided URL
+- Only Firestore operations are used (~$0.0001 per distribution)
+
+See the [Project Distribution Guide](docs/project-distribution.md) for detailed setup and examples.
 
 ---
 

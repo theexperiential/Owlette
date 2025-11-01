@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
+import { sanitizeError } from '@/lib/errorHandler';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -24,8 +25,8 @@ export default function LoginPage() {
       await signIn(email, password);
       toast.success('Logged in successfully!');
       router.push('/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to login');
+    } catch (error) {
+      toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
     }
@@ -38,8 +39,8 @@ export default function LoginPage() {
       await signInWithGoogle();
       toast.success('Logged in with Google!');
       router.push('/dashboard');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to login with Google');
+    } catch (error) {
+      toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
     }

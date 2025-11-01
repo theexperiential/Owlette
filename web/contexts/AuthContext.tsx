@@ -11,6 +11,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
 
 interface AuthContextType {
   user: User | null;
@@ -51,6 +52,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       setLoading(false);
+
+      // Manage session cookies based on auth state
+      if (user) {
+        // User is logged in - set session cookie
+        setSessionCookie(user.uid);
+      } else {
+        // User is logged out - clear session cookie
+        clearSessionCookie();
+      }
     });
 
     return unsubscribe;
