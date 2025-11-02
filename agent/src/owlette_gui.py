@@ -164,6 +164,10 @@ class OwletteConfigApp:
 
                     # Update UI on main thread
                     self.master.after(0, self.update_firebase_status)
+                else:
+                    # Firebase is disabled - still update status to show "Disabled"
+                    logging.info("Firebase is disabled in config")
+                    self.master.after(0, self.update_firebase_status)
             except ImportError as e:
                 logging.warning(f"Firebase not available: {e}")
                 self.master.after(0, self.update_firebase_status)
