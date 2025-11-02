@@ -635,8 +635,8 @@ export default function DashboardPage() {
                             <div key={process.id} className="flex items-center justify-between p-2 md:p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
                               <div className="flex-1 min-w-0 flex items-center gap-2">
                                 <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
-                                <Badge className={`text-xs flex-shrink-0 select-none ${process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                  {process.status}
+                                <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                                  {!machine.online ? 'UNKNOWN' : process.status}
                                 </Badge>
                               </div>
                               <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
@@ -799,8 +799,8 @@ export default function DashboardPage() {
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-2 mb-1">
                                         <span className="text-white font-medium truncate select-text">{process.name}</span>
-                                        <Badge className={`text-xs flex-shrink-0 select-none ${process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                          {process.status}
+                                        <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                                          {!machine.online ? 'UNKNOWN' : process.status}
                                         </Badge>
                                       </div>
                                       <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
