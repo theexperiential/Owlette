@@ -11,11 +11,12 @@ import platform
 import subprocess
 import threading
 import psutil
+import winreg
 
 # GLOBAL VARS
 
 APP_VERSION = '2.0.0'
-CONFIG_VERSION = '1.3.0'
+CONFIG_VERSION = '1.4.0'  # Added logging configuration
 # Color scheme matching web app (Tailwind slate palette)
 WINDOW_COLOR = '#020617'      # slate-950 - main background
 FRAME_COLOR = '#0f172a'       # slate-900 - panels/cards
@@ -38,6 +39,25 @@ json_lock = threading.Lock()
 # Return the hostname of the machine where the script is running
 def get_hostname():
     return socket.gethostname()
+
+def get_cpu_name():
+    """
+    Get the CPU model name from Windows Registry.
+    This is fast, reliable, and works on all Windows versions without admin rights.
+
+    Returns:
+        str: CPU model name (e.g., "Intel(R) Core(TM) i9-9900X CPU @ 3.50GHz")
+             or "Unknown CPU" if unable to read registry
+    """
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r'HARDWARE\DESCRIPTION\System\CentralProcessor\0')
+        cpu_name = winreg.QueryValueEx(key, 'ProcessorNameString')[0].strip()
+        winreg.CloseKey(key)
+        return cpu_name
+    except Exception as e:
+        logging.warning(f"Unable to get CPU name from registry: {e}")
+        return "Unknown CPU"
 
 def get_path(filename=None):
     # Get the directory of the currently executing script
@@ -66,6 +86,90 @@ CONFIG_PATH = get_path('../config/config.json')
 RESULT_FILE_PATH = get_path('../tmp/app_states.json')
 
 # LOGGING
+# Get log level from config
+def get_log_level_from_config():
+    """
+    Read log level from config.json and convert to logging constant.
+    Defaults to INFO if not found or invalid.
+
+    Returns:
+        logging level constant (e.g., logging.INFO, logging.WARNING)
+    """
+    try:
+        level_str = read_config(['logging', 'level'])
+        if not level_str:
+            return logging.INFO
+
+        # Map string to logging constant
+        level_map = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL
+        }
+
+        return level_map.get(level_str.upper(), logging.INFO)
+    except Exception as e:
+        # If config read fails, default to INFO
+        return logging.INFO
+
+# Clean up old log files
+def cleanup_old_logs(max_age_days=90):
+    """
+    Delete log files older than max_age_days.
+    Helps prevent unbounded log growth on long-running agents.
+
+    Args:
+        max_age_days: Maximum age in days for log files (default: 90 days)
+
+    Returns:
+        Number of files deleted
+    """
+    try:
+        import time
+        log_dir = get_path('../logs')
+
+        if not os.path.exists(log_dir):
+            return 0
+
+        cutoff_time = time.time() - (max_age_days * 24 * 60 * 60)
+        deleted_count = 0
+        total_size_freed = 0
+
+        for filename in os.listdir(log_dir):
+            file_path = os.path.join(log_dir, filename)
+
+            # Only process files (not directories)
+            if not os.path.isfile(file_path):
+                continue
+
+            # Only process log files
+            if not (filename.endswith('.log') or '.log.' in filename):
+                continue
+
+            # Check file age
+            file_mtime = os.path.getmtime(file_path)
+            if file_mtime < cutoff_time:
+                try:
+                    file_size = os.path.getsize(file_path)
+                    os.remove(file_path)
+                    deleted_count += 1
+                    total_size_freed += file_size
+                    logging.info(f"Deleted old log file: {filename} ({round(file_size / 1024 / 1024, 2)} MB)")
+                except Exception as e:
+                    logging.warning(f"Could not delete old log file {filename}: {e}")
+
+        if deleted_count > 0:
+            mb_freed = round(total_size_freed / 1024 / 1024, 2)
+            logging.info(f"✓ Log cleanup complete: {deleted_count} file(s) deleted, {mb_freed} MB freed")
+
+        return deleted_count
+
+    except Exception as e:
+        logging.error(f"Error during log cleanup: {e}")
+        return 0
+
 # Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
     log_file_path = get_path(f'../logs/{log_file_name}.log')
@@ -80,9 +184,10 @@ def initialize_logging(log_file_name, level=logging.INFO):
     log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
     # Create a handler that writes log messages to a file, with a maximum
-    # log file size of 5 MB, keeping 2 old log files.
+    # log file size of 10 MB, keeping 5 old log files.
     # Mode 'a' appends to existing file instead of overwriting
-    log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=5*1024*1024, backupCount=2, encoding=None, delay=0)
+    # Total retention: 60 MB (current + 5 backups of 10 MB each)
+    log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=10*1024*1024, backupCount=5, encoding=None, delay=0)
 
     # Set the formatter for the handler
     log_handler.setFormatter(log_formatter)
@@ -97,7 +202,98 @@ def initialize_logging(log_file_name, level=logging.INFO):
     # Log an initial message with clear separator for new service start
     logging.info("="*60)
     logging.info(f"Starting {log_file_name}...")
+    logging.info(f"Log level: {logging.getLevelName(level)}")
     logging.info("="*60)
+
+# Firebase log handler for centralized logging
+class FirebaseLogHandler(logging.Handler):
+    """
+    Custom logging handler that ships logs to Firebase Firestore.
+    Useful for centralized monitoring of multiple agents.
+    """
+    def __init__(self, firebase_client, errors_only=True):
+        """
+        Args:
+            firebase_client: FirebaseClient instance
+            errors_only: If True, only ship ERROR and CRITICAL logs (default: True)
+        """
+        super().__init__()
+        self.firebase_client = firebase_client
+        self.errors_only = errors_only
+        self.buffer = []
+        self.max_buffer_size = 50  # Ship in batches of 50 logs
+
+    def emit(self, record):
+        """
+        Emit a log record to Firebase.
+        """
+        try:
+            # If errors_only mode, skip non-error logs
+            if self.errors_only and record.levelno < logging.ERROR:
+                return
+
+            # Format the log entry
+            log_entry = {
+                'timestamp': record.created,
+                'level': record.levelname,
+                'message': self.format(record),
+                'logger': record.name,
+                'filename': record.filename,
+                'line': record.lineno
+            }
+
+            # Add to buffer
+            self.buffer.append(log_entry)
+
+            # Ship immediately for critical errors, otherwise batch
+            if record.levelno >= logging.CRITICAL or len(self.buffer) >= self.max_buffer_size:
+                self.flush()
+
+        except Exception:
+            # Don't let logging errors crash the app
+            self.handleError(record)
+
+    def flush(self):
+        """
+        Ship buffered logs to Firebase.
+        """
+        if not self.buffer or not self.firebase_client:
+            return
+
+        try:
+            # Ship logs to Firebase (non-blocking)
+            self.firebase_client.ship_logs(self.buffer.copy())
+            self.buffer.clear()
+        except Exception:
+            # Silently fail - don't crash the app due to logging issues
+            pass
+
+def add_firebase_log_handler(firebase_client):
+    """
+    Add Firebase log shipping to the root logger if enabled in config.
+
+    Args:
+        firebase_client: FirebaseClient instance
+    """
+    try:
+        # Check if Firebase log shipping is enabled
+        shipping_config = read_config(['logging', 'firebase_shipping'])
+        if not shipping_config or not shipping_config.get('enabled', False):
+            return
+
+        errors_only = shipping_config.get('ship_errors_only', True)
+
+        # Create and add the Firebase handler
+        firebase_handler = FirebaseLogHandler(firebase_client, errors_only=errors_only)
+        firebase_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+        logger = logging.getLogger()
+        logger.addHandler(firebase_handler)
+
+        logging.info(f"✓ Firebase log shipping enabled (errors_only: {errors_only})")
+
+    except Exception as e:
+        logging.warning(f"Could not enable Firebase log shipping: {e}")
 
 # CONFIG JSON
 
@@ -162,6 +358,18 @@ def upgrade_config():
                     else:
                         process.setdefault(key, '')
 
+            # Add logging configuration if missing (v1.4.0+)
+            if 'logging' not in config:
+                config['logging'] = {
+                    "level": "INFO",
+                    "max_age_days": 90,
+                    "firebase_shipping": {
+                        "enabled": False,
+                        "ship_errors_only": True
+                    }
+                }
+                logging.info("Added logging configuration to config.json (v1.4.0)")
+
             # Reorder the keys so that 'version' is at the top
             ordered_config = {'version': config['version']}
             for key in config:
@@ -220,10 +428,18 @@ def write_json_to_file(data, file_path):
 # Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):
     default_config = {
-        "version": CONFIG_VERSION, 
-        "processes": [], 
+        "version": CONFIG_VERSION,
+        "processes": [],
+        "logging": {
+            "level": "INFO",
+            "max_age_days": 90,
+            "firebase_shipping": {
+                "enabled": False,
+                "ship_errors_only": True
+            }
+        },
         "gmail": {
-            "enabled": False, 
+            "enabled": False,
             "to": []
         },
         "slack": {
@@ -381,14 +597,15 @@ def get_system_info():
 def get_system_metrics(skip_gpu=False):
     """
     Get system metrics with clear units for Firebase.
-    Returns CPU %, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
+    Returns CPU model/%, memory (used/total GB), disk (used/total GB), GPU (usage % and VRAM used/total GB).
     Also includes process information from config and runtime state.
 
     Args:
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
     try:
-        # CPU - percentage
+        # CPU - model name and percentage
+        cpu_name = get_cpu_name()
         cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
 
         # Memory - bytes to GB
@@ -481,6 +698,7 @@ def get_system_metrics(skip_gpu=False):
 
         return {
             'cpu': {
+                'name': cpu_name,
                 'percent': cpu_percent,
                 'unit': '%'
             },
@@ -508,7 +726,7 @@ def get_system_metrics(skip_gpu=False):
     except Exception as e:
         logging.error(f"Error getting system metrics: {e}")
         return {
-            'cpu': {'percent': 0, 'unit': '%'},
+            'cpu': {'name': 'Unknown CPU', 'percent': 0, 'unit': '%'},
             'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
             'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},

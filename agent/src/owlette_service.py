@@ -78,8 +78,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
 
-        # Initialize logging and shared resources
-        shared_utils.initialize_logging("service")
+        # Initialize logging and shared resources with configurable log level
+        log_level = shared_utils.get_log_level_from_config()
+        shared_utils.initialize_logging("service", level=log_level)
 
         # Only initialize results file if it doesn't exist (don't clear existing PIDs!)
         if not os.path.exists(shared_utils.RESULT_FILE_PATH):
@@ -1076,6 +1077,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.firebase_client.upload_config(local_config)
                     logging.info("Local config uploaded to Firebase")
 
+                # Add Firebase log shipping if enabled
+                shared_utils.add_firebase_log_handler(self.firebase_client)
+
             except Exception as e:
                 logging.error(f"Error starting Firebase client: {e}")
 
@@ -1085,6 +1089,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
+        log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
         while self.is_alive:
             # Start the tray icon script as a process (if it isn't running)
             tray_script = 'owlette_tray.py'
@@ -1115,6 +1120,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if cleanup_counter >= 30:
                 self.cleanup_stale_tracking_data()
                 cleanup_counter = 0
+
+            # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
+            log_cleanup_counter += 1
+            if log_cleanup_counter >= 8640:
+                try:
+                    max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
+                    deleted_count = shared_utils.cleanup_old_logs(max_age_days)
+                    if deleted_count > 0:
+                        logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                except Exception as e:
+                    logging.error(f"Log cleanup failed: {e}")
+                log_cleanup_counter = 0
 
             # Sleep for 10 seconds
             time.sleep(SLEEP_INTERVAL)

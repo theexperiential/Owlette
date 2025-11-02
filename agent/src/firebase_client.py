@@ -570,6 +570,44 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to upload config to Firestore: {e}")
 
+    def ship_logs(self, log_entries: list):
+        """
+        Ship log entries to Firestore for centralized monitoring.
+        Non-blocking - failures are silently ignored to prevent logging from crashing the app.
+
+        Args:
+            log_entries: List of log entry dicts with keys: timestamp, level, message, logger, filename, line
+        """
+        if not self.connected or not self.db:
+            return
+
+        try:
+            # Create a batch write for efficiency
+            batch = self.db.batch()
+
+            logs_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('logs')
+
+            for log_entry in log_entries:
+                # Add server timestamp
+                log_entry['server_timestamp'] = firestore.SERVER_TIMESTAMP
+                log_entry['machine_id'] = self.machine_id
+                log_entry['site_id'] = self.site_id
+
+                # Create document with auto-generated ID
+                doc_ref = logs_ref.document()
+                batch.set(doc_ref, log_entry)
+
+            # Commit batch (non-blocking)
+            batch.commit()
+            self.logger.debug(f"Shipped {len(log_entries)} log entries to Firebase")
+
+        except Exception as e:
+            # Silently fail - don't crash the app due to logging issues
+            # Only log to local file if really necessary
+            pass
+
     def _load_cached_config(self):
         """Load cached config from disk."""
         try:
