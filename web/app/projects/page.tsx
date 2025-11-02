@@ -198,7 +198,7 @@ export default function ProjectsPage() {
   const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-screen bg-slate-950 pb-8">
       {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">

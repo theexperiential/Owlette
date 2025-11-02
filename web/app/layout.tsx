@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Footer } from "@/components/Footer";
 import { validateEnvironmentOrThrow } from "@/lib/validateEnv";
 
 const geistSans = Geist({
@@ -17,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Owlette - Process Management Dashboard",
-  description: "Monitor and manage your Windows processes from the cloud",
+  title: "Owlette - Always Watching",
+  description: "Remote fleet management and deployment monitoring - Always Watching your systems",
   icons: {
     icon: '/owlette-icon.png',
     shortcut: '/owlette-icon.png',
@@ -44,6 +45,7 @@ export default function RootLayout({
         <ErrorBoundary>
           <AuthProvider>
             {children}
+            <Footer />
             <Toaster />
           </AuthProvider>
         </ErrorBoundary>

@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { sanitizeError } from '@/lib/errorHandler';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -48,17 +49,27 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold">Welcome to Owlette</CardTitle>
-          <CardDescription>
-            Sign in to manage your Windows processes
-          </CardDescription>
+      <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
+        <CardHeader className="space-y-4 flex flex-col items-center">
+          <Image
+            src="/owlette-icon.png"
+            alt="Owlette"
+            width={96}
+            height={96}
+            className="rounded-full"
+            priority
+          />
+          <div className="space-y-1 text-center">
+            <CardTitle className="text-2xl font-bold text-white">Welcome to Owlette</CardTitle>
+            <CardDescription className="text-slate-400">
+              Always Watching - Sign in to manage your remote fleet
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <form onSubmit={handleEmailLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email" className="text-slate-200">Email</Label>
               <Input
                 id="email"
                 type="email"
@@ -67,10 +78,11 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={loading}
+                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-slate-200">Password</Label>
               <Input
                 id="password"
                 type="password"
@@ -79,19 +91,20 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
+                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in with Email'}
             </Button>
           </form>
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
+              <span className="w-full border-t border-slate-700" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
+              <span className="bg-slate-900/50 px-2 text-slate-400">
                 Or continue with
               </span>
             </div>
@@ -100,7 +113,7 @@ export default function LoginPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full"
+            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
             onClick={handleGoogleLogin}
             disabled={loading}
           >
@@ -125,9 +138,9 @@ export default function LoginPage() {
             Google
           </Button>
 
-          <div className="text-center text-sm">
+          <div className="text-center text-sm text-slate-400">
             Don't have an account?{' '}
-            <a href="/register" className="text-primary hover:underline">
+            <a href="/register" className="text-blue-400 hover:text-blue-300 hover:underline">
               Sign up
             </a>
           </div>

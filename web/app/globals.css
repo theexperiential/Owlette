@@ -115,8 +115,36 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    /* Modern scrollbar styling (Firefox + Chromium) */
+    scrollbar-color: oklch(0.25 0.03 250) oklch(0.15 0.02 250);
+    scrollbar-width: thin;
+  }
+
+  /* Webkit scrollbar styling (Chrome, Safari, Edge) */
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: oklch(0.15 0.02 250);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: oklch(0.25 0.03 250);
+    border-radius: 6px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.35 0.04 250);
+  }
+
+  html, body {
+    @apply bg-background text-foreground;
+    overflow-x: hidden;
+    max-height: 100vh;
   }
   body {
-    @apply bg-background text-foreground;
+    overflow-y: auto;
   }
 }

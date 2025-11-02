@@ -10,8 +10,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from 'sonner';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
+import Image from 'next/image';
 
 export default function RegisterPage() {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -45,7 +48,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await signUp(email, password);
+      await signUp(email, password, firstName, lastName);
       toast.success('Account created successfully!');
       router.push('/dashboard');
     } catch (error) {
@@ -71,17 +74,53 @@ export default function RegisterPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
-          <CardDescription>
-            Enter your email below to create your Owlette account
-          </CardDescription>
+      <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
+        <CardHeader className="space-y-4 flex flex-col items-center">
+          <Image
+            src="/owlette-icon.png"
+            alt="Owlette"
+            width={96}
+            height={96}
+            className="rounded-full"
+            priority
+          />
+          <div className="space-y-1 text-center">
+            <CardTitle className="text-2xl font-bold text-white">Create an account</CardTitle>
+            <CardDescription className="text-slate-400">
+              Always Watching - Join Owlette for remote fleet management
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <form onSubmit={handleRegister} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="firstName" className="text-slate-200">First Name</Label>
+                <Input
+                  id="firstName"
+                  type="text"
+                  placeholder="John"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  disabled={loading}
+                  className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="lastName" className="text-slate-200">Last Name</Label>
+                <Input
+                  id="lastName"
+                  type="text"
+                  placeholder="Doe"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  disabled={loading}
+                  className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
+                />
+              </div>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email" className="text-slate-200">Email</Label>
               <Input
                 id="email"
                 type="email"
@@ -90,10 +129,11 @@ export default function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={loading}
+                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password" className="text-slate-200">Password</Label>
               <Input
                 id="password"
                 type="password"
@@ -102,13 +142,14 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
+                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-slate-500">
                 Must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Label htmlFor="confirmPassword" className="text-slate-200">Confirm Password</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -117,19 +158,20 @@ export default function RegisterPage() {
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
                 disabled={loading}
+                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
               {loading ? 'Creating account...' : 'Create account'}
             </Button>
           </form>
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
+              <span className="w-full border-t border-slate-700" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
+              <span className="bg-slate-900/50 px-2 text-slate-400">
                 Or continue with
               </span>
             </div>
@@ -138,7 +180,7 @@ export default function RegisterPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full"
+            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
             onClick={handleGoogleSignup}
             disabled={loading}
           >
@@ -163,9 +205,9 @@ export default function RegisterPage() {
             Google
           </Button>
 
-          <div className="text-center text-sm">
+          <div className="text-center text-sm text-slate-400">
             Already have an account?{' '}
-            <a href="/login" className="text-primary hover:underline">
+            <a href="/login" className="text-blue-400 hover:text-blue-300 hover:underline">
               Sign in
             </a>
           </div>
