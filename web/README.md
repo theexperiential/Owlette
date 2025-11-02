@@ -1,6 +1,6 @@
 # Owlette Web Portal
 
-Next.js 14 web portal for managing Windows processes via Owlette agents.
+Next.js 16 web portal for managing Windows processes via Owlette agents.
 
 ## Features
 
@@ -49,7 +49,8 @@ npm run dev
 
 ## Tech Stack
 
-- **Framework:** Next.js 14 (App Router)
+- **Framework:** Next.js 16 (App Router)
+- **React:** React 19
 - **Language:** TypeScript
 - **Styling:** Tailwind CSS
 - **UI Components:** shadcn/ui

@@ -107,17 +107,23 @@ cd Owlette
 
 #### 🤖 Automatic Installation/Updater
 
-Run the `install.bat` file as an administrator to automatically install the required packages and set up the service. It also works as an updater, anytime this repo is updated.
+Run the `agent\install.bat` file to automatically install the required packages and set up the service.
+
+```bash
+cd agent
+install.bat
+```
 
 #### 🖐️ Manual Installation
 
 1. Install the required Python packages:
 
-    
+    ```bash
+    cd agent
     pip install -r requirements.txt
-    
+    ```
 
-2. Create folders named `config`, `logs`, and `tmp` in the `Owlette` folder.
+2. Create folders named `config`, `logs`, and `tmp` in the `agent` folder.
 
 3. **Configure Firebase:**
    - Follow the comprehensive [Firebase Setup Guide](docs/firebase-setup.md)
@@ -288,40 +294,47 @@ See the [Project Distribution Guide](docs/project-distribution.md) for detailed 
 
 1️⃣ Run the `owlette_gui.py` script to configure the service:
 
-    
+    ```bash
+    cd agent\src
     python owlette_gui.py
-    
+    ```
 
 2️⃣ Follow the on-screen instructions to authenticate with Gmail and configure the processes you want to manage.
 
 3️⃣ To install the Windows service, run the following command as an administrator:
 
-    
+    ```bash
+    cd agent\src
     python owlette_service.py install
-    
+    ```
 
 4️⃣ To start the Windows service, run:
 
-    
+    ```bash
+    cd agent\src
     python owlette_service.py start
-    
+    ```
 
 5️⃣ To stop the Windows service, run:
 
-    
+    ```bash
+    cd agent\src
     python owlette_service.py stop
-    
+    ```
 
-6️⃣ The tray icon will automatically run with the service. But if you wish to run the GUI configuration, just double-click on `owlette_gui.py` or run:
+6️⃣ The tray icon will automatically run with the service. But if you wish to run the GUI configuration, just double-click on `agent\src\owlette_gui.py` or run:
 
-    
+    ```bash
+    cd agent\src
     python owlette_gui.py
-    
+    ```
 
 7️⃣ To restart the system tray icon, restart the process or run:
 
-    
+    ```bash
+    cd agent\src
     python owlette_tray.py
+    ```
     
 
 <a id="ui-features"></a>
@@ -367,25 +380,22 @@ The Configuration UI is built using the customtkinter library and is designed to
 - **Down**: Moves the selected process down in the list (start it after other processes).
 - **Save Changes**: Saves any modifications to the selected process and Notifications section. Note that changes are also saved when you press your return key on your keyboard in a text field, or click anywhere outside of one in the UI.
 
-#### 📧 Notifications
-
-- **Emails To (Comma Separated)**: Text field to specify the recipient email addresses, separated by commas.
-- **Gmail**: Toggle to initiate (or disable) Gmail email notifications.
-- **Slack**: Toggle to initiate (or disable) Slack notifications.
-
-### 🌟 Features
-
-- **Dark Theme**: The UI uses a dark color scheme for better visibility.
-- **Validation**: Includes validation for invalid file paths and invalid email addresses.
-
 <a id="uninstallation"></a>
-## 🗑️ Uninstallation 
+## 🗑️ Uninstallation
 
-To uninstall the Owlette service and python dependencies, you may run the `uninstall.bat` file as an administrator. Alternatively, to just remove the service, you may run the following command as an administrator:
+To uninstall the Owlette service and python dependencies, you may run `agent\uninstall.bat`:
 
-    
+```bash
+cd agent
+uninstall.bat
+```
+
+Alternatively, to just remove the service, you may run the following command as an administrator:
+
+    ```bash
+    cd agent\src
     python owlette_service.py remove
-    
+    ```
 
 This will remove the Owlette service from your system.
 
@@ -394,14 +404,6 @@ This will remove the Owlette service from your system.
 
 ### 📝 Logs 
 Logs are stored in the `logs` folder, per script. `service.log` for the service, `email.log` for the email sender, `tray.log` for the tray icon, etc. Check these logs for debugging information.
-
-### 🔄 Restarting the service
-If you exit Owlette from the tray icon or stop the service and wish to restart it, you can: 
-1. Go to Services (`services.msc` from the run menu), and find the "Owlette Service" and click on "Start the service"
-2. Run the `start_service.py` file in the `src` folder
-3. Run the following command as an administrator (from the `src` folder):
-   
-    python owlette_service.py start
     
 <a id="contributing"></a>
 ## 🤝 Contributing
