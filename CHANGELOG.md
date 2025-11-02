@@ -5,6 +5,61 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2025-02-01
+
+### Added
+
+#### Agent Enhancements
+- **Advanced Logging System** - Configurable log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL) via config
+- **Firebase Log Shipping** - Centralized log monitoring by shipping errors to Firestore (optional)
+- **Automatic Log Cleanup** - Delete log files older than configurable days (default: 90 days)
+- **Enhanced Log Rotation** - Increased to 10 MB per file with 5 backups (60 MB total retention)
+- **CPU Model Detection** - Display CPU model name (e.g., "Intel Core i9-9900X") alongside usage percentage
+- **HAL 9000-Style Tray Icon** - Color-coded status indicator (white=normal, yellow=Firebase issues, red=service stopped)
+- **Status Monitoring** - Background thread monitors service and Firebase health every 60 seconds
+- **Status Notifications** - Windows toast notifications when service state changes
+- **Improved Tray Menu** - Shows live service and Firebase connection status
+- **Attribution Footer** - "Made with ♥ in California by TEC" footer in GUI with clickable link
+
+#### Web Dashboard Enhancements
+- **User Profile Management** - Collect and display first/last name during registration
+- **User Avatars** - Circular avatar with initials in dashboard header
+- **Account Settings Dialog** - Update profile information (name) from dashboard
+- **Personalized Welcome** - "Welcome back, [FirstName]!" greeting in dashboard
+- **CPU Model Display** - Show CPU model name in machine metrics (card and table views)
+- **Redesigned Auth Pages** - Login and register pages feature Owlette logo and "Always Watching" tagline
+- **Custom Scrollbars** - Styled scrollbars matching dark theme (Firefox + Webkit browsers)
+- **Attribution Footer** - Global footer on all pages linking to https://tec.design
+- **Improved Dark Theme** - Enhanced consistency across all components
+- **Updated Metadata** - "Always Watching" branding in page titles and descriptions
+
+### Changed
+
+#### Agent
+- **Config Version** - Bumped to v1.4.0 for logging configuration
+- **Service Restart Timing** - Increased wait times (5s after stop, 3s after start) to prevent race conditions
+- **Default Log Level** - Now configurable via `logging.level` in config.json (defaults to INFO)
+
+#### Web
+- **Page Layouts** - Added bottom padding to accommodate fixed footer
+- **Auth Flow** - Google OAuth and email registration now collect display names
+- **User Menu** - Replaced simple sign-out button with dropdown menu showing avatar and profile options
+
+### Fixed
+
+#### Agent
+- **Tray Icon Visibility** - Fixed icon not updating when service status changes
+- **Service Status Detection** - Improved reliability of service running checks
+
+#### Web
+- **Footer Overlap** - Fixed content being hidden behind footer on long pages
+- **Avatar Display** - Proper fallback initials for users without display names
+
+### Legal
+- **GPL Section 7 Terms** - Added attribution requirements to LICENSE per GPL v3 Section 7(b)
+
+---
+
 ## [2.0.0] - 2025-01-31
 
 ### 🎉 Major Release - Cloud-Connected Architecture
