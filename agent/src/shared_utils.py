@@ -12,6 +12,7 @@ import subprocess
 import threading
 import psutil
 import winreg
+import time
 
 # GLOBAL VARS
 
@@ -387,43 +388,101 @@ def upgrade_config():
         # Write the updated config back to the file
         write_json_to_file(new_config, CONFIG_PATH)
 
-# Read a JSON file and returns its content as a Python dictionary
-def read_json_from_file(file_path):
-    with json_lock:
-        try:
-            with open(file_path, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logging.info(f"{file_path} not found.")
-            return None
-        except json.JSONDecodeError:
-            logging.error("Failed to decode JSON.")
-            return None
-        except Exception as e:
-            logging.error(f"An error occurred while reading the file: {e}")
-            return None
+# Read a JSON file and returns its content as a Python dictionary with retry logic
+def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
+    """
+    Read JSON data from file with retry logic to handle cross-process file locking.
 
-# Writes a Python dictionary to a JSON file using atomic write pattern
-def write_json_to_file(data, file_path):
+    Args:
+        file_path: Source file path
+        max_retries: Maximum number of retry attempts (default: 3)
+        initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
+
+    Returns:
+        Dictionary from JSON file, or None if error/not found
+    """
+    with json_lock:
+        for attempt in range(max_retries):
+            try:
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+
+            except FileNotFoundError:
+                logging.info(f"{file_path} not found.")
+                return None
+
+            except json.JSONDecodeError:
+                logging.error("Failed to decode JSON.")
+                return None
+
+            except PermissionError as e:
+                # File is locked by another process - retry with exponential backoff
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2 ** attempt)  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                    logging.warning(f"File locked during read, retrying in {delay}s... (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed
+                    logging.error(f"Failed to read after {max_retries} attempts (file locked): {e}")
+                    return None
+
+            except Exception as e:
+                logging.error(f"An error occurred while reading the file: {e}")
+                return None
+
+        return None  # All retries exhausted
+
+# Writes a Python dictionary to a JSON file using atomic write pattern with retry logic
+def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
+    """
+    Write JSON data to file with retry logic to handle cross-process file locking.
+
+    Args:
+        data: Dictionary to write as JSON
+        file_path: Target file path
+        max_retries: Maximum number of retry attempts (default: 3)
+        initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
+    """
     with json_lock:
         # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
-        try:
-            # Write to temporary file first
-            with open(temp_path, 'w') as f:
-                json.dump(data, f, indent=4)
 
-            # Atomic rename (replaces existing file)
-            # os.replace is atomic on Windows (unlike os.rename)
-            os.replace(temp_path, file_path)
-        except Exception as e:
-            # Clean up temp file if it exists
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-            logging.error(f"An error occurred while writing to the file: {e}")
+        for attempt in range(max_retries):
+            try:
+                # Write to temporary file first
+                with open(temp_path, 'w') as f:
+                    json.dump(data, f, indent=4)
+
+                # Atomic rename (replaces existing file)
+                # os.replace is atomic on Windows (unlike os.rename)
+                os.replace(temp_path, file_path)
+                return  # Success - exit function
+
+            except PermissionError as e:
+                # File is locked by another process - retry with exponential backoff
+                if attempt < max_retries - 1:
+                    delay = initial_delay * (2 ** attempt)  # Exponential backoff: 0.1s, 0.2s, 0.4s
+                    logging.warning(f"File locked, retrying in {delay}s... (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed
+                    logging.error(f"Failed to write after {max_retries} attempts (file locked): {e}")
+                    # Clean up temp file
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except:
+                            pass
+
+            except Exception as e:
+                # Other errors - don't retry
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                logging.error(f"An error occurred while writing to the file: {e}")
+                break  # Exit retry loop on non-permission errors
 
 # Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):
