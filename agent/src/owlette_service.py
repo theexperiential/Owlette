@@ -136,18 +136,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # On service stop
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        logging.info("Service stop requested - setting machine offline in Firebase...")
         self.is_alive = False
 
-        # Close any open Owlette windows (GUI, prompts, etc.)
-        self.close_owlette_windows()
-
-        # Stop Firebase client
+        # Stop Firebase client (this sets machine offline)
         if self.firebase_client:
             try:
                 self.firebase_client.stop()
-                logging.info("Firebase client stopped")
+                logging.info("✓ Firebase client stopped and machine set to offline")
             except Exception as e:
-                logging.error(f"Error stopping Firebase client: {e}")
+                logging.error(f"✗ Error stopping Firebase client: {e}")
+
+        # Close any open Owlette windows (GUI, prompts, etc.)
+        self.close_owlette_windows()
 
         self.terminate_tray_icon()
         win32event.SetEvent(self.hWaitStop)
@@ -464,6 +465,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except:
             logging.error('JSON write error')
 
+        # Immediately sync to Firestore
+        if self.firebase_client and self.firebase_client.is_connected():
+            try:
+                metrics = shared_utils.get_system_metrics()
+                self.firebase_client._upload_metrics(metrics)
+                logging.info(f"✓ Process status synced to Firebase: PID {pid} -> LAUNCHING")
+            except Exception as e:
+                # Don't crash if Firebase sync fails - it will sync on next interval
+                logging.error(f"✗ Failed to sync process status to Firebase: {e}")
+                logging.exception("Full traceback:")
 
         return pid
 
@@ -528,9 +539,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     process,
                     f'Terminated PID {pid} and restarted with new PID {new_pid}'
                 )
-                # Status message
-                shared_utils.update_process_status_in_json(new_pid, 'LAUNCHING')
-                
+                # Status message - sync to Firebase immediately
+                shared_utils.update_process_status_in_json(new_pid, 'LAUNCHING', self.firebase_client)
+
                 return new_pid
 
             except Exception as e:
@@ -603,8 +614,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 process,
                 f"Process {process_name} (PID {pid}) is not responding"
             )
-            # Status message
-            shared_utils.update_process_status_in_json(pid, 'STALLED')
+            # Status message - sync to Firebase immediately
+            shared_utils.update_process_status_in_json(pid, 'STALLED', self.firebase_client)
             time.sleep(1)
             new_pid = self.kill_and_relaunch_process(pid, process)
             return new_pid
@@ -623,8 +634,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # No recovered PID, launch normally
                 new_pid = self.handle_process_launch(process)
             else:
-                # Process was recovered from previous session, just use it
-                shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
+                # Process was recovered from previous session, just use it - sync to Firebase immediately
+                shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client)
                 logging.info(f"Using recovered process '{process.get('name')}' with PID {last_pid}")
                 new_pid = None  # Don't update last_started since it's already set
 
@@ -637,10 +648,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     str(last_pid)
                 )
                 new_pid = self.handle_unresponsive_process(last_pid, process)
-                
-                #  Everything is fine, keep calm and carry on
+
+                #  Everything is fine, keep calm and carry on - sync to Firebase immediately
                 if not new_pid:
-                    shared_utils.update_process_status_in_json(last_pid, 'RUNNING')
+                    shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client)
 
             else:
                 # Launch the process again if it isn't running
@@ -727,6 +738,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         if pid and Util.is_pid_running(pid):
                             try:
                                 psutil.Process(pid).terminate()
+                                # Update status and sync to Firebase immediately
+                                shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
                                 logging.info(f"✓ Terminated removed process: {removed_proc.get('name')} (PID {pid})")
                             except Exception as e:
                                 logging.error(f"Failed to terminate removed process PID {pid}: {e}")
@@ -752,6 +765,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 if pid and Util.is_pid_running(pid):
                                     try:
                                         psutil.Process(pid).terminate()
+                                        # Update status and sync to Firebase immediately
+                                        shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
                                         logging.info(f"✓ Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
                                     except Exception as e:
                                         logging.error(f"Failed to terminate PID {pid}: {e}")
@@ -817,6 +832,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
                             psutil.Process(last_pid).terminate()
+                            # Update status and sync to Firebase immediately
+                            shared_utils.update_process_status_in_json(last_pid, 'STOPPED', self.firebase_client)
                             return f"Process {process_name} (PID {last_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"

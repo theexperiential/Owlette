@@ -517,10 +517,29 @@ def fetch_pid_by_id(target_id):
     
     return newest_pid
 
-def update_process_status_in_json(pid, new_status):
+def update_process_status_in_json(pid, new_status, firebase_client=None):
+    """
+    Update process status in JSON file and optionally sync to Firebase immediately.
+
+    Args:
+        pid: Process ID to update
+        new_status: New status string (LAUNCHING, RUNNING, STALLED, etc.)
+        firebase_client: Optional FirebaseClient instance for immediate sync
+    """
     data = read_json_from_file(RESULT_FILE_PATH)
     data[str(pid)]['status'] = new_status
     write_json_to_file(data, RESULT_FILE_PATH)
+
+    # Immediately sync to Firestore if client is available and connected
+    if firebase_client and firebase_client.is_connected():
+        try:
+            metrics = get_system_metrics()
+            firebase_client._upload_metrics(metrics)
+            logging.info(f"✓ Process status synced to Firebase: PID {pid} -> {new_status}")
+        except Exception as e:
+            # Don't crash if Firebase sync fails - it will sync on next interval
+            logging.error(f"✗ Failed to sync process status to Firebase: {e}")
+            logging.exception("Full traceback:")
 
 def fetch_process_by_id(id, data):
     return next((process for process in data['processes'] if process['id'] == id), None)

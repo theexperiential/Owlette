@@ -149,16 +149,41 @@ class FirebaseClient:
             self.logger.warning("Config listener NOT started (offline mode)")
 
     def stop(self):
-        """Stop all background threads."""
-        self.running = False
-        self.logger.info("Stopping Firebase client...")
+        """Stop all background threads and set machine offline."""
+        self.logger.info("Stopping Firebase client and setting machine offline...")
 
-        # Set machine as offline before stopping
-        if self.connected:
+        # Set machine as offline BEFORE stopping threads (critical for clean shutdown)
+        if self.connected and self.db:
             try:
-                self._update_presence(False)
-            except:
-                pass
+                # Force synchronous offline update with retries
+                presence_ref = self.db.collection('sites').document(self.site_id)\
+                    .collection('machines').document(self.machine_id)
+
+                # Write offline status directly (bypass _update_presence for more control)
+                import time
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    try:
+                        presence_ref.update({
+                            'online': False,
+                            'lastHeartbeat': firestore.SERVER_TIMESTAMP
+                        })
+                        self.logger.info(f"✓ Machine marked OFFLINE in Firestore (attempt {attempt + 1}/{max_attempts})")
+                        # Give network time to complete the write
+                        time.sleep(1)
+                        break
+                    except Exception as e:
+                        if attempt == max_attempts - 1:
+                            raise
+                        self.logger.warning(f"Offline update attempt {attempt + 1} failed, retrying...")
+                        time.sleep(0.2)
+
+            except Exception as e:
+                self.logger.error(f"✗ Failed to set machine offline after {max_attempts} attempts: {e}")
+
+        # Now stop the background threads
+        self.running = False
+        self.logger.info("Background threads stopped")
 
     def _heartbeat_loop(self):
         """Heartbeat loop - updates presence every 30 seconds."""
@@ -292,6 +317,12 @@ class FirebaseClient:
             'machineId': self.machine_id,
             'siteId': self.site_id
         }, merge=True)
+
+        # Log for debugging
+        if online:
+            self.logger.debug("Heartbeat: Machine online")
+        else:
+            self.logger.info(f"✓ Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
 
     def _upload_metrics(self, metrics: Dict[str, Any]):
         """Upload system metrics to Firestore."""
