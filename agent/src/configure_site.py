@@ -4,7 +4,7 @@ Runs during installer to configure Firebase site_id via browser-based authentica
 
 This script:
 1. Starts an HTTP server on localhost:8765
-2. Opens the user's browser to owlette.app/setup
+2. Opens the user's browser to dev.owlette.app/setup
 3. Waits for callback with site_id and token
 4. Writes configuration to config.json
 5. Returns success/failure status
@@ -22,7 +22,7 @@ from pathlib import Path
 
 # Configuration
 CALLBACK_PORT = 8765
-WEB_APP_URL = os.environ.get("OWLETTE_SETUP_URL", "https://owlette.app/setup")
+WEB_APP_URL = os.environ.get("OWLETTE_SETUP_URL", "https://dev.owlette.app/setup")
 TIMEOUT_SECONDS = 300  # 5 minutes
 
 # Determine config path relative to script location

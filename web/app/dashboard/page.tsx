@@ -475,7 +475,7 @@ export default function DashboardPage() {
                     or set it in <span className="font-mono">config/config.json</span>
                   </p>
                   <p className="text-xs text-slate-400 mt-2">
-                    Download from: <span className="font-mono text-blue-400">owlette.app</span>
+                    Download from: <span className="font-mono text-blue-400">dev.owlette.app</span>
                   </p>
                 </TooltipContent>
               </Tooltip>
