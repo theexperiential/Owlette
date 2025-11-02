@@ -48,7 +48,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
       <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
@@ -60,9 +60,9 @@ export default function LoginPage() {
             priority
           />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-white">Welcome to Owlette</CardTitle>
+            <CardTitle className="text-2xl font-bold text-white">Owlette</CardTitle>
             <CardDescription className="text-slate-400">
-              Always Watching - Sign in to manage your remote fleet
+              Always Watching
             </CardDescription>
           </div>
         </CardHeader>
