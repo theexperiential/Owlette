@@ -9,6 +9,7 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
+  updateProfile,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
@@ -19,9 +20,10 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -31,6 +33,7 @@ const AuthContext = createContext<AuthContextType>({
   signUp: async () => {},
   signInWithGoogle: async () => {},
   signOut: async () => {},
+  updateUserProfile: async () => {},
 });
 
 export const useAuth = () => {
@@ -88,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (email: string, password: string, firstName?: string, lastName?: string) => {
     try {
       if (!auth) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
@@ -98,7 +101,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
 
-      await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Set display name if first/last name provided
+      if (firstName || lastName) {
+        const displayName = [firstName, lastName].filter(Boolean).join(' ');
+        await updateProfile(userCredential.user, { displayName });
+      }
+
       toast.success('Account Created', {
         description: 'Your account has been created successfully. You can now sign in.',
       });
@@ -160,6 +170,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateUserProfile = async (firstName: string, lastName: string) => {
+    try {
+      if (!auth?.currentUser) {
+        const error = new Error('No user is currently signed in.');
+        toast.error('Update Failed', {
+          description: 'You must be signed in to update your profile.',
+        });
+        throw error;
+      }
+
+      const displayName = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+      if (!displayName) {
+        const error = new Error('Please provide at least a first or last name.');
+        toast.error('Update Failed', {
+          description: 'Please provide at least a first or last name.',
+        });
+        throw error;
+      }
+
+      await updateProfile(auth.currentUser, { displayName });
+
+      // Force a refresh of the user object
+      setUser({ ...auth.currentUser });
+
+      toast.success('Profile Updated', {
+        description: 'Your profile has been updated successfully.',
+      });
+    } catch (error: any) {
+      const friendlyMessage = handleError(error);
+      toast.error('Update Failed', {
+        description: friendlyMessage,
+      });
+      throw error;
+    }
+  };
+
   const value = {
     user,
     loading,
@@ -167,6 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signUp,
     signInWithGoogle,
     signOut,
+    updateUserProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
