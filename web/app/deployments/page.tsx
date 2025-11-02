@@ -10,12 +10,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ChevronRight, Plus, Download, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Pencil, Trash2, Check, X } from 'lucide-react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { ChevronRight, Plus, Download, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Trash2, X } from 'lucide-react';
 import Image from 'next/image';
 import DeploymentDialog from '@/components/DeploymentDialog';
+import { ManageSitesDialog } from '@/components/ManageSitesDialog';
+import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
@@ -26,12 +25,6 @@ export default function DeploymentsPage() {
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [newSiteName, setNewSiteName] = useState('');
-  const [newSiteId, setNewSiteId] = useState('');
-  const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState('');
-  const [deletingDialogOpen, setDeletingDialogOpen] = useState(false);
-  const [siteToDelete, setSiteToDelete] = useState<string | null>(null);
   const router = useRouter();
 
   const {
@@ -63,85 +56,6 @@ export default function DeploymentsPage() {
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
     localStorage.setItem('owlette_current_site', siteId);
-  };
-
-  const handleCreateSite = async () => {
-    if (!newSiteName || !newSiteId) {
-      toast.error('Please provide both site ID and name');
-      return;
-    }
-
-    try {
-      await createSite(newSiteId, newSiteName);
-      toast.success(`Site "${newSiteName}" created successfully!`);
-      setCreateDialogOpen(false);
-      setNewSiteName('');
-      setNewSiteId('');
-      handleSiteChange(newSiteId);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to create site');
-    }
-  };
-
-  const startEditingSite = (siteId: string, currentName: string) => {
-    setEditingSiteId(siteId);
-    setEditingName(currentName);
-  };
-
-  const cancelEditingSite = () => {
-    setEditingSiteId(null);
-    setEditingName('');
-  };
-
-  const handleRenameSite = async (siteId: string) => {
-    if (!editingName.trim()) {
-      toast.error('Site name cannot be empty');
-      return;
-    }
-
-    try {
-      await renameSite(siteId, editingName);
-      toast.success('Site renamed successfully!');
-      setEditingSiteId(null);
-      setEditingName('');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to rename site');
-    }
-  };
-
-  const confirmDeleteSite = (siteId: string) => {
-    setSiteToDelete(siteId);
-    setDeletingDialogOpen(true);
-  };
-
-  const handleDeleteSite = async () => {
-    if (!siteToDelete) return;
-
-    // Prevent deleting the last site
-    if (sites.length === 1) {
-      toast.error('Cannot delete the last site');
-      setDeletingDialogOpen(false);
-      setSiteToDelete(null);
-      return;
-    }
-
-    try {
-      await deleteSite(siteToDelete);
-
-      // If we deleted the current site, switch to another one
-      if (siteToDelete === currentSiteId) {
-        const remainingSites = sites.filter(s => s.id !== siteToDelete);
-        if (remainingSites.length > 0) {
-          handleSiteChange(remainingSites[0].id);
-        }
-      }
-
-      toast.success('Site deleted successfully!');
-      setDeletingDialogOpen(false);
-      setSiteToDelete(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete site');
-    }
   };
 
   useEffect(() => {
@@ -265,149 +179,38 @@ export default function DeploymentsPage() {
                   </SelectContent>
                 </Select>
 
-                {/* Manage Sites Dialog */}
-                <Dialog open={manageDialogOpen} onOpenChange={setManageDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
-                      <Settings className="h-4 w-4" />
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl">
-                    <DialogHeader>
-                      <DialogTitle className="text-white">Manage Sites</DialogTitle>
-                      <DialogDescription className="text-slate-400">
-                        Rename or delete your sites
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-2 py-4 max-h-96 overflow-y-auto">
-                      {sites.map((site) => (
-                        <div
-                          key={site.id}
-                          className={`flex items-center justify-between p-3 rounded-lg border ${
-                            site.id === currentSiteId
-                              ? 'border-blue-600 bg-slate-750'
-                              : 'border-slate-700 bg-slate-900'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            {site.id === currentSiteId && (
-                              <div className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0" />
-                            )}
-                            {editingSiteId === site.id ? (
-                              <Input
-                                value={editingName}
-                                onChange={(e) => setEditingName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleRenameSite(site.id);
-                                  if (e.key === 'Escape') cancelEditingSite();
-                                }}
-                                className="border-slate-700 bg-slate-800 text-white flex-1"
-                                autoFocus
-                              />
-                            ) : (
-                              <div className="flex-1 min-w-0">
-                                <p className="text-white font-medium truncate">{site.name}</p>
-                                <p className="text-xs text-slate-400">{site.id}</p>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                            {editingSiteId === site.id ? (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleRenameSite(site.id)}
-                                  className="text-green-500 hover:text-green-400 hover:bg-slate-700 cursor-pointer"
-                                >
-                                  <Check className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={cancelEditingSite}
-                                  className="text-slate-400 hover:text-slate-300 hover:bg-slate-700 cursor-pointer"
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </>
-                            ) : (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => startEditingSite(site.id, site.name)}
-                                  className="text-blue-400 hover:text-blue-300 hover:bg-slate-700 cursor-pointer"
-                                  title="Rename site"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => confirmDeleteSite(site.id)}
-                                  className="text-red-400 hover:text-red-300 hover:bg-slate-700 cursor-pointer"
-                                  disabled={sites.length === 1}
-                                  title={sites.length === 1 ? "Cannot delete the last site" : "Delete site"}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setManageDialogOpen(true)}
+                  className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
 
-                {/* Create Site Dialog */}
-                <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="border-slate-700 bg-slate-800 text-white">
-                    <DialogHeader>
-                      <DialogTitle className="text-white">Create New Site</DialogTitle>
-                      <DialogDescription className="text-slate-400">
-                        Add a new site to organize your machines
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="site-id" className="text-white">Site ID</Label>
-                        <Input
-                          id="site-id"
-                          placeholder="e.g., nyc_office"
-                          value={newSiteId}
-                          onChange={(e) => setNewSiteId(e.target.value.toLowerCase().replace(/\s+/g, '_'))}
-                          className="border-slate-700 bg-slate-900 text-white"
-                        />
-                        <p className="text-xs text-slate-500">Lowercase, use underscores instead of spaces</p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="site-name" className="text-white">Site Name</Label>
-                        <Input
-                          id="site-name"
-                          placeholder="e.g., NYC Office"
-                          value={newSiteName}
-                          onChange={(e) => setNewSiteName(e.target.value)}
-                          className="border-slate-700 bg-slate-900 text-white"
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setCreateDialogOpen(false)} className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer">
-                        Cancel
-                      </Button>
-                      <Button onClick={handleCreateSite} className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer">
-                        Create Site
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
+                <ManageSitesDialog
+                  open={manageDialogOpen}
+                  onOpenChange={setManageDialogOpen}
+                  sites={sites}
+                  currentSiteId={currentSiteId}
+                  onRenameSite={renameSite}
+                  onDeleteSite={async (siteId) => {
+                    await deleteSite(siteId);
+                    if (siteId === currentSiteId) {
+                      const remainingSites = sites.filter(s => s.id !== siteId);
+                      if (remainingSites.length > 0) {
+                        handleSiteChange(remainingSites[0].id);
+                      }
+                    }
+                  }}
+                  onCreateSite={() => setCreateDialogOpen(true)}
+                />
+
+                <CreateSiteDialog
+                  open={createDialogOpen}
+                  onOpenChange={setCreateDialogOpen}
+                  onCreateSite={createSite}
+                />
               </div>
             )}
           </div>
@@ -422,29 +225,31 @@ export default function DeploymentsPage() {
       </header>
 
       {/* Main content */}
-      <main className="mx-auto max-w-7xl p-4">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight text-white">Software Deployments</h2>
-            <p className="text-slate-400">
+      <main className="mx-auto max-w-7xl p-3 md:p-4">
+        <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex-1">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">Software Deployments</h2>
+            <p className="text-sm md:text-base text-slate-400">
               Deploy software installers across your machines
             </p>
           </div>
 
-          <DeploymentDialog
-            open={deployDialogOpen}
-            onOpenChange={setDeployDialogOpen}
-            siteId={currentSiteId}
-            templates={templates}
-            onCreateDeployment={createDeployment}
-            onCreateTemplate={createTemplate}
-            onUpdateTemplate={updateTemplate}
-            onDeleteTemplate={deleteTemplate}
-          />
+          <div className="flex-shrink-0">
+            <DeploymentDialog
+              open={deployDialogOpen}
+              onOpenChange={setDeployDialogOpen}
+              siteId={currentSiteId}
+              templates={templates}
+              onCreateDeployment={createDeployment}
+              onCreateTemplate={createTemplate}
+              onUpdateTemplate={updateTemplate}
+              onDeleteTemplate={deleteTemplate}
+            />
+          </div>
         </div>
 
         {/* Quick Stats */}
-        <div className="mb-8 grid gap-4 md:grid-cols-4">
+        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
           <Card className="border-slate-800 bg-slate-900">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-slate-200">Total Deployments</CardTitle>
@@ -614,46 +419,6 @@ export default function DeploymentsPage() {
           )}
         </div>
       </main>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deletingDialogOpen} onOpenChange={setDeletingDialogOpen}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white">
-          <DialogHeader>
-            <DialogTitle className="text-white">Delete Site</DialogTitle>
-            <DialogDescription className="text-slate-400">
-              Are you sure you want to delete this site? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          {siteToDelete && (
-            <div className="py-4">
-              <p className="text-white">
-                Site: <span className="font-semibold">{sites.find(s => s.id === siteToDelete)?.name}</span>
-              </p>
-              <p className="text-sm text-slate-400 mt-2">
-                Note: The site document will be deleted, but machine data may remain in Firestore.
-              </p>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDeletingDialogOpen(false);
-                setSiteToDelete(null);
-              }}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleDeleteSite}
-              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
-            >
-              Delete Site
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
