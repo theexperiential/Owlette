@@ -672,3 +672,41 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+-------------------------------------------------------------------------------
+
+                        ADDITIONAL TERMS (Section 7)
+
+Pursuant to Section 7(b) of the GNU General Public License v3, the following
+additional terms apply to this Program:
+
+REQUIRED ATTRIBUTION NOTICE:
+
+All derivative works, modified versions, and distributions of this Program
+(including both the web application and agent components) MUST preserve and
+display the following attribution notice in all interactive user interfaces:
+
+    "Made with ♥ in California by TEC"
+
+Where "TEC" must link to https://tec.design
+
+This attribution notice must be:
+  - Displayed in a footer or similar prominent location in all graphical
+    user interfaces (web pages, desktop applications, etc.)
+  - Preserved without modification in both text and hyperlink
+  - Visible to end users during normal operation of the Program
+  - Not removed, obscured, or relocated to a less visible location
+
+This requirement applies to:
+  - The web dashboard application (web/)
+  - The Python agent GUI (agent/src/owlette_gui.py)
+  - Any derivative works or modified versions
+  - All distributed copies, whether modified or unmodified
+
+Failure to preserve this attribution notice constitutes a violation of the
+license terms and may result in termination of your rights under Section 8
+of the GNU General Public License.
+
+These additional terms supplement, but do not replace, the requirements of
+the GNU General Public License v3. All other terms and conditions of the
+GPL v3 remain in full effect.
