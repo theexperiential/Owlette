@@ -157,20 +157,20 @@ def open_config_gui(icon, item):
         except Exception as e:
             logging.error(f"Failed to bring Owlette Configuration to the front: {e}")
 
-# Function to restart the service (robust implementation using Windows Service API)
+# Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
     """
-    Restart the Owlette service using Windows Service Control Manager API.
-    Icon disappears immediately for good UX, then service restarts in background.
+    Restart the Owlette service using elevated command prompt.
+    Prompts for UAC to get admin privileges, then restarts service and tray icon.
     """
     try:
-        logging.info("Starting service restart procedure...")
+        logging.info("Starting service restart procedure with UAC elevation...")
 
         # Show notification immediately for user feedback
         try:
             icon.notify(
                 title="🔄 Restarting Owlette",
-                message="Service restarting... back soon!"
+                message="UAC prompt will appear - approve to restart service"
             )
         except:
             pass
@@ -185,93 +185,57 @@ def restart_service(icon, item):
             except Exception as e:
                 logging.debug(f"Could not close window '{window_title}': {e}")
 
-        # Use a background thread to restart the service
-        # IMPORTANT: Non-daemon thread so it continues after icon stops
-        def restart_service_thread():
-            try:
-                service_name = 'OwletteService'
+        # Build the restart command (runs with admin privileges via UAC)
+        # This batch script will:
+        # 1. Stop the service
+        # 2. Wait 3 seconds
+        # 3. Start the service
+        # 4. Wait 2 seconds
+        # 5. Restart the tray icon
+        tray_path = shared_utils.get_path('owlette_tray.py')
+        restart_cmd = (
+            f'net stop OwletteService && '
+            f'timeout /t 3 /nobreak >nul && '
+            f'net start OwletteService && '
+            f'timeout /t 2 /nobreak >nul && '
+            f'start "" pythonw "{tray_path}" --restarted'
+        )
 
-                # Small delay to let icon stop cleanly
-                time.sleep(0.5)
+        logging.info(f"Launching elevated restart command: {restart_cmd}")
 
-                # 1. Stop the service
-                logging.info("Stopping service...")
-                try:
-                    win32serviceutil.StopService(service_name)
-                    logging.info("Stop command sent")
+        # Use ShellExecuteW with "runas" to trigger UAC prompt
+        # SW_HIDE (0) hides the command window
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,           # parent window
+            "runas",        # operation (triggers UAC)
+            "cmd.exe",      # executable
+            f'/c {restart_cmd}',  # parameters
+            None,           # working directory
+            0               # show command (0 = hidden)
+        )
 
-                    # Wait for service to fully stop (max 30 seconds)
-                    timeout = 30
-                    for i in range(timeout):
-                        status = win32serviceutil.QueryServiceStatus(service_name)[1]
-                        if status == win32service.SERVICE_STOPPED:
-                            logging.info(f"Service stopped successfully after {i+1} seconds")
-                            break
-                        time.sleep(1)
-                    else:
-                        logging.warning(f"Service did not stop within {timeout} seconds")
+        # Result > 32 means success, <= 32 means error
+        if result > 32:
+            logging.info("Elevated restart command launched successfully")
+        else:
+            logging.error(f"Failed to launch elevated command, result code: {result}")
+            icon.notify(
+                title="⚠️ Restart Cancelled",
+                message="UAC was cancelled or failed. Service not restarted."
+            )
+            return
 
-                except Exception as e:
-                    logging.error(f"Error stopping service: {e}")
-                    # Continue anyway - might already be stopped
-
-                # 2. Wait a bit to ensure clean shutdown
-                time.sleep(2)
-
-                # 3. Start the service
-                logging.info("Starting service...")
-                try:
-                    win32serviceutil.StartService(service_name)
-                    logging.info("Start command sent")
-
-                    # Wait for service to start (max 30 seconds)
-                    timeout = 30
-                    for i in range(timeout):
-                        status = win32serviceutil.QueryServiceStatus(service_name)[1]
-                        if status == win32service.SERVICE_RUNNING:
-                            logging.info(f"Service started successfully after {i+1} seconds")
-                            break
-                        time.sleep(1)
-                    else:
-                        logging.error(f"Service did not start within {timeout} seconds")
-                        # Can't notify user anymore since icon is gone
-                        return
-
-                except Exception as e:
-                    logging.error(f"Error starting service: {e}")
-                    return
-
-                # 4. Wait a moment for service to stabilize
-                time.sleep(2)
-
-                # 5. Restart tray icon to pick up any code changes
-                logging.info("Restarting tray icon...")
-                tray_path = shared_utils.get_path('owlette_tray.py')
-                # Pass --restarted flag so new tray instance shows "back online" notification
-                subprocess.Popen(['pythonw', tray_path, '--restarted'])
-
-                logging.info("Service restart complete!")
-
-            except Exception as e:
-                logging.error(f"Fatal error in restart thread: {e}")
-
-        # Start the restart in a NON-DAEMON background thread
-        # This allows it to continue running after icon.stop()
-        restart_thread = threading.Thread(target=restart_service_thread, daemon=False)
-        restart_thread.start()
-
-        # Stop the icon immediately for good UX (user sees icon disappear)
-        # The background thread will handle restarting everything
-        time.sleep(0.2)  # Brief delay to ensure notification shows
+        # Stop the icon immediately (the elevated command will restart it)
+        time.sleep(0.5)
         icon.stop()
-        logging.info("Tray icon stopped, restart thread continues in background")
+        logging.info("Tray icon stopped, elevated restart command running")
 
     except Exception as e:
         logging.error(f"Failed to initiate service restart: {e}")
         try:
             icon.notify(
                 title="⚠️ Restart Failed",
-                message="Failed to restart service. Check if running as administrator."
+                message=f"Error: {str(e)}"
             )
         except:
             pass
