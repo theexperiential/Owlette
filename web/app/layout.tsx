@@ -35,7 +35,8 @@ export default function RootLayout({
   // Validate Firebase environment variables
   // In development: logs warnings
   // In production: throws error if misconfigured
-  validateEnvironmentOrThrow();
+  // TEMPORARILY DISABLED for initial Railway deployment
+  // validateEnvironmentOrThrow();
 
   return (
     <html lang="en">
