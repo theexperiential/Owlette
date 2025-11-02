@@ -260,10 +260,21 @@ class OwletteConfigApp:
         self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_details_label.grid(row=0, column=4, columnspan=2, sticky='w', padx=(20, 10), pady=(20, 0))
 
-        # Create hostname label in same row, right-aligned (grows left for long names)
+        # Create hostname and site ID labels in same row, right-aligned
         hostname = socket.gethostname()
-        self.hostname_label = ctk.CTkLabel(self.master, text=hostname, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"), anchor='e')
-        self.hostname_label.grid(row=0, column=6, columnspan=2, sticky='e', padx=(10, 20), pady=(20, 0))
+        site_id = self.config.get('firebase', {}).get('site_id', 'Not Set')
+
+        # Container frame for hostname and site ID (right-aligned)
+        self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR)
+        self.machine_info_frame.grid(row=0, column=6, columnspan=2, sticky='e', padx=(10, 20), pady=(20, 0))
+
+        # Hostname label (bold) - pack on the right side
+        self.hostname_label = ctk.CTkLabel(self.machine_info_frame, text=hostname, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"))
+        self.hostname_label.pack(side='right')
+
+        # Site ID label (same size, lighter color) - pack on the right side (appears to left of hostname)
+        self.site_id_label = ctk.CTkLabel(self.machine_info_frame, text=f"Site: {site_id}", fg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
+        self.site_id_label.pack(side='right', padx=(0, 8))
 
         # Create a toggle switch for process
         self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
