@@ -37,7 +37,7 @@ class OwletteConfigApp:
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
-        shared_utils.center_window(master, 1280, 460)
+        shared_utils.center_window(master, 1280, 450)
 
         # Initialize state variables
         self.prev_process_list = None
@@ -204,7 +204,7 @@ class OwletteConfigApp:
         # PROCESS LIST (LEFT SIDE)
         # Create a frame for the process list
         self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_list_frame.grid(row=0, column=0, sticky='news', rowspan=10, columnspan=3, padx=(10, 5), pady=(10,0))
+        self.process_list_frame.grid(row=0, column=0, sticky='news', rowspan=10, columnspan=3, padx=(10, 5), pady=(10, 10))
 
         # Create a label for the process list
         self.process_list_label = ctk.CTkLabel(self.master, text="MANAGED PROCESSES", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -239,14 +239,22 @@ class OwletteConfigApp:
         self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 10))
 
-        # Version label (right side of row 10)
-        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 10))
-        self.version_label.grid(row=10, column=2, sticky='se', padx=(0, 15), pady=(5, 10))
+        # Footer label (perfectly centered in row 10)
+        footer_text = "Made with ♥ in California by TEC"
+        self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#6b7280", font=("", 11))
+        self.footer_label.grid(row=10, column=0, columnspan=8, sticky='', padx=0, pady=(5, 10))
+        # Make TEC text clickable
+        self.footer_label.configure(cursor="hand2")
+        self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
+
+        # Version label (far right of row 10)
+        self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.version_label.grid(row=10, column=7, sticky='se', padx=(0, 20), pady=(5, 10))
 
         # PROCESS DETAILS (RIGHT SIDE)
         # Create frame for process details
         self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=11, columnspan=5, padx=(5, 10), pady=(10,0))
+        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=5, padx=(5, 10), pady=(10, 10))
 
         # Create a label for the process details
         self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -990,6 +998,11 @@ class OwletteConfigApp:
         if 'ctkframe' in str(widget):
             self.master.focus_set()  # Transfers focus to the root window (triggers FocusOut auto-save)
 
+    def _open_tec_website(self):
+        """Open TEC website in default browser"""
+        import webbrowser
+        webbrowser.open("https://tec.design")
+
     # SYSTEM/MISC
 
     def check_service_is_running(self, service_name):
@@ -1016,8 +1029,9 @@ class OwletteConfigApp:
             print(f"Failed to start service: {e}")
 
 if __name__ == "__main__":
-    # Initialize logging
-    shared_utils.initialize_logging("gui")
+    # Initialize logging with configurable log level
+    log_level = shared_utils.get_log_level_from_config()
+    shared_utils.initialize_logging("gui", level=log_level)
     root = ctk.CTk()
     app = OwletteConfigApp(root)
     root.mainloop()
