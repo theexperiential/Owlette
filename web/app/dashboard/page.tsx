@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
@@ -14,12 +14,33 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Play, Square, Settings, Pencil, Trash2, Check, X, Menu } from 'lucide-react';
+import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, Pencil, Trash2, Check, X } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
 
 type ViewType = 'card' | 'list';
+
+// Memoized table header to prevent flickering on data updates
+const MemoizedTableHeader = memo(() => {
+  return (
+    <TableHeader className="sticky top-0 z-10 bg-slate-900">
+      <TableRow className="border-slate-800 hover:bg-slate-800">
+        <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Hostname</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Status</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>CPU</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>GPU</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Processes</TableHead>
+        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+});
+
+MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
   const { user, loading, signOut } = useAuth();
@@ -808,21 +829,9 @@ export default function DashboardPage() {
             </div>
 
             {/* List View - Hidden on mobile, only shown on desktop when selected */}
-            <div className={`rounded-lg border border-slate-800 bg-slate-900 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-slate-800 hover:bg-slate-800">
-                      <TableHead className="text-slate-200 w-8"></TableHead>
-                      <TableHead className="text-slate-200">Hostname</TableHead>
-                      <TableHead className="text-slate-200">Status</TableHead>
-                      <TableHead className="text-slate-200">CPU</TableHead>
-                      <TableHead className="text-slate-200">Memory</TableHead>
-                      <TableHead className="text-slate-200">Disk</TableHead>
-                      <TableHead className="text-slate-200">GPU</TableHead>
-                      <TableHead className="text-slate-200">Processes</TableHead>
-                      <TableHead className="text-slate-200">Last Heartbeat</TableHead>
-                    </TableRow>
-                  </TableHeader>
+            <div className={`rounded-lg border border-slate-800 bg-slate-900 overflow-hidden ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
+                <Table style={{ contain: 'layout' }}>
+                  <MemoizedTableHeader />
                   <TableBody>
                     {machines.map((machine) => (
                       <React.Fragment key={machine.machineId}>
@@ -869,10 +878,10 @@ export default function DashboardPage() {
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-white">
-                            {machine.metrics?.gpu ? (
-                              <div className="space-y-1">
+                            {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
+                              <>
                                 <div className="text-xs text-slate-400">{machine.metrics.gpu.name}</div>
-                                <div>
+                                <div className="text-sm">
                                   {machine.metrics.gpu.usage_percent}%
                                   {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                                     <span className="text-slate-500 text-xs ml-1">
@@ -880,8 +889,10 @@ export default function DashboardPage() {
                                     </span>
                                   )}
                                 </div>
-                              </div>
-                            ) : '-'}
+                              </>
+                            ) : (
+                              <span className="text-slate-500">N/A</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-white">
                             {machine.processes ? machine.processes.length : 0}

@@ -148,10 +148,14 @@ export function useMachines(siteId: string) {
       const unsubscribe = onSnapshot(
         machinesRef,
         (snapshot) => {
-          const machineData: Machine[] = [];
+          setMachines(prevMachines => {
+            const machineData: Machine[] = [];
 
-          snapshot.forEach((doc) => {
-            const data = doc.data();
+            snapshot.forEach((doc) => {
+              const data = doc.data();
+
+              // Find previous machine data to preserve GPU if not in update
+              const prevMachine = prevMachines.find(m => m.machineId === doc.id);
 
             // Parse processes from the processes object - try both locations
             let processes: Process[] = [];
@@ -192,16 +196,28 @@ export function useMachines(siteId: string) {
               }
             }
 
-            machineData.push({
-              machineId: doc.id,
-              lastHeartbeat,
-              online: data.online || false,
-              metrics: data.metrics,
-              processes,
-            });
-          });
+              // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
+              const metrics = data.metrics ? {
+                ...data.metrics,
+                gpu: (data.metrics.gpu?.name && data.metrics.gpu.name !== 'N/A')
+                  ? data.metrics.gpu
+                  : prevMachine?.metrics?.gpu
+              } : prevMachine?.metrics;
 
-          setMachines(machineData);
+              machineData.push({
+                machineId: doc.id,
+                lastHeartbeat,
+                online: data.online || false,
+                metrics,
+                processes,
+              });
+            });
+
+            // Sort machines by ID for stable ordering (prevents flickering)
+            machineData.sort((a, b) => a.machineId.localeCompare(b.machineId));
+
+            return machineData;
+          });
           setLoading(false);
         },
         (err) => {
