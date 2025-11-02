@@ -196,6 +196,14 @@ export function useMachines(siteId: string) {
               }
             }
 
+            // Determine online status: use both boolean flag AND heartbeat timestamp
+            // Machine is online if BOTH conditions are true:
+            // 1. online flag is true
+            // 2. Last heartbeat was within 60 seconds (2x the heartbeat interval)
+            const now = Math.floor(Date.now() / 1000); // Current time in seconds
+            const heartbeatAge = now - lastHeartbeat; // Age in seconds
+            const isOnline = (data.online === true) && (heartbeatAge < 60);
+
               // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
               const metrics = data.metrics ? {
                 ...data.metrics,
@@ -207,7 +215,7 @@ export function useMachines(siteId: string) {
               machineData.push({
                 machineId: doc.id,
                 lastHeartbeat,
-                online: data.online || false,
+                online: isOnline,
                 metrics,
                 processes,
               });
