@@ -76,31 +76,17 @@ Copy these 6 values from Firebase SDK config snippet:
 
 ### Add Firebase Variables to Railway
 - [ ] In your service, click "Variables" tab
-- [ ] Click "New Variable" and add **all 6** Firebase variables:
-
-**Variable 1:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_API_KEY`
-- [ ] Value: (paste from Firebase)
-
-**Variable 2:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
-- [ ] Value: (paste from Firebase)
-
-**Variable 3:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
-- [ ] Value: (paste from Firebase)
-
-**Variable 4:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
-- [ ] Value: (paste from Firebase)
-
-**Variable 5:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
-- [ ] Value: (paste from Firebase)
-
-**Variable 6:**
-- [ ] Name: `NEXT_PUBLIC_FIREBASE_APP_ID`
-- [ ] Value: (paste from Firebase)
+- [ ] Copy your `.env.example` file and fill in the correct Firebase values:
+  ```env
+  NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key_here
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+  NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+  NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+  ```
+- [ ] Click "Raw Editor" or "Bulk Import" in Railway Variables tab
+- [ ] Paste all 6 variables at once (Railway accepts `KEY=value` format)
 
 ### Verify Configuration
 - [ ] Click "Show All" to view all variables
