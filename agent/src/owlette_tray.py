@@ -1,7 +1,7 @@
 import shared_utils
 import pystray
 from pystray import MenuItem as item
-from PIL import Image, ImageDraw
+from PIL import Image
 import subprocess
 import logging
 import os
@@ -22,10 +22,10 @@ current_status = {'service': 'unknown', 'firebase': 'unknown'}
 last_status = {'service': 'unknown', 'firebase': 'unknown'}
 status_lock = threading.Lock()
 
-# Function to create icon image with different colors
-def create_image(status='normal'):
+# Function to load icon image from file
+def load_icon(status='normal'):
     """
-    Create HAL 9000-style eye icon with Windows 11 Fluent Design.
+    Load HAL 9000-style eye icon from static PNG files.
 
     Status colors for center dot (pupil):
     - normal: White dot (everything OK, Always Watching)
@@ -34,65 +34,20 @@ def create_image(status='normal'):
 
     Design matches Windows 11 native tray icons (network, audio, etc.)
     """
-    # Windows 11 tray icons are typically 16x16 at 100% DPI
-    # We render at higher resolution for crisp anti-aliasing
-    size = 64
+    icon_path = shared_utils.get_path(f'../icons/{status}.png')
 
-    # Create transparent image (Windows 11 tray supports transparency)
-    image = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
+    if not os.path.exists(icon_path):
+        logging.warning(f"Icon file not found: {icon_path}, falling back to normal.png")
+        icon_path = shared_utils.get_path('../icons/normal.png')
 
-    # Center point
-    center = size // 2
-
-    # Outer circle (eye outline) - Windows 11 style clean white
-    # Slightly thicker outline for visibility at small sizes
-    outer_radius = int(size * 0.44)  # 44% of size for good proportions
-    outline_width = max(2, size // 16)  # Scale outline with size, minimum 2px
-
-    # Draw outer circle (eye outline) in light gray - matches Windows 11 iconography
-    draw.ellipse(
-        [center - outer_radius, center - outer_radius,
-         center + outer_radius, center + outer_radius],
-        outline=(255, 255, 255, 255),  # Solid white outline
-        width=outline_width
-    )
-
-    # Inner circle (pupil/iris) - status indicator
-    inner_radius = int(size * 0.16)  # 16% of size - smaller dot like HAL 9000's central glow
-
-    # Choose pupil color based on status
-    if status == 'error':
-        # Red - critical error / disconnected
-        pupil_color = (239, 68, 68, 255)  # Bright red (red-500) - vibrant but professional
-    elif status == 'warning':
-        # Yellow - warning state
-        pupil_color = (250, 204, 21, 255)  # Bright yellow (yellow-400) - visible but not alarming
-    else:  # normal
-        # White - all systems operational, "Always Watching"
-        pupil_color = (255, 255, 255, 255)  # Pure white - matches Windows 11 success/normal state
-
-    # Draw filled pupil circle
-    draw.ellipse(
-        [center - inner_radius, center - inner_radius,
-         center + inner_radius, center + inner_radius],
-        fill=pupil_color,
-        outline=None
-    )
-
-    # Add subtle inner glow effect for depth (optional - makes it look more polished)
-    # This creates the "lens" effect similar to HAL 9000
-    glow_radius = int(inner_radius * 1.3)
-    glow_color = pupil_color[:3] + (80,)  # Same color, 30% opacity
-    draw.ellipse(
-        [center - glow_radius, center - glow_radius,
-         center + glow_radius, center + glow_radius],
-        fill=None,
-        outline=glow_color,
-        width=1
-    )
-
-    return image
+    try:
+        return Image.open(icon_path)
+    except Exception as e:
+        logging.error(f"Failed to load icon: {e}")
+        # Return a simple fallback icon if files are missing
+        size = 64
+        image = Image.new('RGBA', (size, size), (255, 255, 255, 255))
+        return image
 
 # Function to check Windows service status
 def check_service_running():
@@ -408,7 +363,7 @@ def monitor_status(icon):
                     # Check if status changed
                     if last_status.get('code') != status_code:
                         # Update icon
-                        icon.icon = create_image(status_code)
+                        icon.icon = load_icon(status_code)
 
                         # Update tooltip
                         hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
@@ -502,7 +457,7 @@ if __name__ == "__main__":
         # Create the system tray icon with initial status
         hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
         tooltip = f"Owlette ({hostname})\n{service_msg}\n{firebase_msg}"
-        image = create_image(status_code)
+        image = load_icon(status_code)
 
         icon = pystray.Icon(
             "owlette_icon",
