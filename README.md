@@ -17,7 +17,18 @@
 
 Perfect for managing TouchDesigner installations, digital signage, kiosks, media servers, and any Windows application fleet.
 
-<img src=".github/images/screenshot.png" alt="Screenshot" width="100%"/>
+<div align="center">
+<img src=".github/images/screenshot-agent.png" alt="Owlette Agent Screenshot" width="100%"/>
+<p><em>Owlette Agent - Windows system tray application for local process management</em></p>
+</div>
+
+<br />
+
+<div align="center">
+<img src=".github/images/screenshot-dashboard.png" alt="Owlette Dashboard Screenshot" width="100%"/>
+<p><em>Owlette Dashboard - Web-based control panel for remote machine monitoring</em></p>
+</div>
+<br />
 
 ## 📚 Table of Contents
 
