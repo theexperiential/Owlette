@@ -15,15 +15,6 @@
       "_ship_errors_only_comment": "If true, only ERROR and CRITICAL logs are shipped to Firebase"
     }
   },
-  "gmail": {
-    "_comment": "Legacy email notifications (optional)",
-    "enabled": false,
-    "to": []
-  },
-  "slack": {
-    "_comment": "Legacy Slack notifications (optional)",
-    "enabled": false
-  },
   "firebase": {
     "_comment": "Cloud features: remote control, web dashboard, metrics (OPTIONAL - works great without it!)",
     "enabled": false,
