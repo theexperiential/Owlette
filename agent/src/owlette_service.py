@@ -1154,4 +1154,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             time.sleep(SLEEP_INTERVAL)
 
 if __name__ == '__main__':
-    win32serviceutil.HandleCommandLine(OwletteService)
+    # Check if running under NSSM (no command-line arguments)
+    # or being run directly for debugging/testing
+    import sys
+
+    if len(sys.argv) == 1:
+        # No arguments - running under NSSM or direct execution
+        # Run the service main loop directly
+        print("Starting Owlette service (NSSM mode)...")
+        service = OwletteService(None)
+        service.SvcDoRun()
+    else:
+        # Has arguments - use normal win32serviceutil command-line handling
+        win32serviceutil.HandleCommandLine(OwletteService)
