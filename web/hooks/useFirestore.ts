@@ -31,7 +31,7 @@ export interface Machine {
   lastHeartbeat: number;
   online: boolean;
   metrics?: {
-    cpu: { percent: number; unit: string };
+    cpu: { name?: string; percent: number; unit: string };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
     disk: { percent: number; total_gb: number; used_gb: number; unit: string };
     gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string };

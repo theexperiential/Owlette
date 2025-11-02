@@ -11,10 +11,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { toast } from 'sonner';
 import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, Pencil, Trash2, Check, X } from 'lucide-react';
+import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, Pencil, Trash2, Check, X, User, LogOut } from 'lucide-react';
+import { getUserInitials } from '@/lib/userUtils';
+import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
@@ -56,6 +59,7 @@ export default function DashboardPage() {
   const [siteToDelete, setSiteToDelete] = useState<string | null>(null);
   const [viewType, setViewType] = useState<ViewType>('card');
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
   // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -370,7 +374,7 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-screen bg-slate-950 pb-8">
       {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
@@ -585,19 +589,54 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-400 select-text">{user.email}</span>
-            <Button variant="outline" onClick={signOut} className="cursor-pointer border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white select-none">
-              Sign out
-            </Button>
-          </div>
+          {/* User Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="flex items-center gap-2 h-auto py-2 px-3 hover:bg-slate-800 cursor-pointer">
+                <Avatar className="h-8 w-8">
+                  <AvatarFallback className="bg-blue-600 text-white text-sm font-medium">
+                    {getUserInitials(user)}
+                  </AvatarFallback>
+                </Avatar>
+                {user.displayName && (
+                  <span className="text-sm text-white hidden md:inline">{user.displayName}</span>
+                )}
+                <ChevronDown className="h-4 w-4 text-slate-400" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56 border-slate-700 bg-slate-800">
+              <div className="px-2 py-3 text-sm">
+                {user.displayName && (
+                  <p className="font-medium text-white mb-1">{user.displayName}</p>
+                )}
+                <p className="text-xs text-slate-400 truncate">{user.email}</p>
+              </div>
+              <DropdownMenuSeparator className="bg-slate-700" />
+              <DropdownMenuItem
+                onClick={() => setAccountSettingsOpen(true)}
+                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                Account Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={signOut}
+                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
       {/* Main content */}
       <main className="mx-auto max-w-7xl p-3 md:p-4">
         <div className="mb-4 md:mb-8">
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Welcome back!</h2>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
+            Welcome back{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+          </h2>
           <p className="text-sm md:text-base text-slate-400">
             Manage your Windows processes from the cloud
           </p>
@@ -686,10 +725,15 @@ export default function DashboardPage() {
                   </CardHeader>
                   {machine.metrics && (
                     <CardContent className="space-y-2 select-none">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-400">CPU:</span>
-                        <span className="text-white">{machine.metrics.cpu?.percent}%</span>
-                      </div>
+                      {machine.metrics.cpu && (
+                        <div className="flex text-sm gap-2">
+                          <span className="text-slate-400 flex-shrink-0">CPU:</span>
+                          <span className="text-slate-300 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
+                            {machine.metrics.cpu.name || 'Unknown CPU'}
+                          </span>
+                          <span className="text-white flex-shrink-0 ml-auto">{machine.metrics.cpu.percent}%</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-sm">
                         <span className="text-slate-400">Memory:</span>
                         <span className="text-white">
@@ -713,22 +757,19 @@ export default function DashboardPage() {
                         </span>
                       </div>
                       {machine.metrics.gpu && (
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-sm">
-                            <span className="text-slate-400">GPU:</span>
-                            <span className="text-white">{machine.metrics.gpu.name}</span>
-                          </div>
-                          <div className="flex justify-between text-sm pl-4">
-                            <span className="text-slate-500">Usage:</span>
-                            <span className="text-white">
-                              {machine.metrics.gpu.usage_percent}%
-                              {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                                <span className="text-slate-500 ml-1">
-                                  ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
-                                </span>
-                              )}
-                            </span>
-                          </div>
+                        <div className="flex text-sm gap-2">
+                          <span className="text-slate-400 flex-shrink-0">GPU:</span>
+                          <span className="text-slate-300 truncate" title={machine.metrics.gpu.name}>
+                            {machine.metrics.gpu.name}
+                          </span>
+                          <span className="text-white flex-shrink-0 ml-auto">
+                            {machine.metrics.gpu.usage_percent}%
+                            {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                              <span className="text-slate-500 ml-1">
+                                ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                              </span>
+                            )}
+                          </span>
                         </div>
                       )}
                     </CardContent>
@@ -855,7 +896,12 @@ export default function DashboardPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-white">
-                            {machine.metrics?.cpu?.percent ?? '-'}%
+                            {machine.metrics?.cpu ? (
+                              <>
+                                <div className="text-xs text-slate-400">{machine.metrics.cpu.name || 'Unknown CPU'}</div>
+                                <div className="text-sm">{machine.metrics.cpu.percent}%</div>
+                              </>
+                            ) : '-'}
                           </TableCell>
                           <TableCell className="text-white">
                             {machine.metrics?.memory ? (
@@ -1273,6 +1319,12 @@ export default function DashboardPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Account Settings Dialog */}
+      <AccountSettingsDialog
+        open={accountSettingsOpen}
+        onOpenChange={setAccountSettingsOpen}
+      />
     </div>
   );
 }
