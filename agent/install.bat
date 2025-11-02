@@ -97,8 +97,15 @@ echo.
 echo ----------------------------------------------------------------
 echo Firebase Setup Instructions:
 echo ----------------------------------------------------------------
+echo 1. Go to: https://owlette.app
+echo 2. Log in or create an account
+echo 3. Create or select a site from the dashboard
+echo 4. Copy the Site ID shown in the dashboard (click to copy)
+echo 5. Paste it below
+echo.
+echo For Firebase credentials:
 echo 1. Go to: https://console.firebase.google.com/
-echo 2. Create a project (or use existing)
+echo 2. Open your Owlette project
 echo 3. Go to Project Settings (gear icon) -^> Service Accounts
 echo 4. Click "Generate new private key"
 echo 5. Save the JSON file as: config\firebase-credentials.json
@@ -107,7 +114,7 @@ echo ----------------------------------------------------------------
 echo.
 
 :: Prompt for site ID
-set /p SITE_ID="Enter a unique Site ID (e.g., office-main, studio-01): "
+set /p SITE_ID="Enter your Site ID from owlette.app: "
 if "%SITE_ID%"=="" (
     echo Site ID cannot be empty. Using default: %COMPUTERNAME%
     set SITE_ID=%COMPUTERNAME%
@@ -129,8 +136,9 @@ goto continue_install
 echo.
 echo Firebase setup skipped. Owlette will run in local-only mode.
 echo You can enable Firebase later by:
-echo  1. Following the Firebase setup guide in docs\firebase-setup.md
+echo  1. Creating an account at https://owlette.app
 echo  2. Re-running install.bat
+echo  3. Or manually editing config\config.json
 echo.
 
 :continue_install
