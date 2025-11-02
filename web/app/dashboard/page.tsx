@@ -693,7 +693,7 @@ export default function DashboardPage() {
                   variant={viewType === 'card' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => handleViewChange('card')}
-                  className={`cursor-pointer text-white ${viewType === 'card' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
+                  className={`cursor-pointer ${viewType === 'card' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-slate-600 hover:text-white'}`}
                 >
                   <LayoutGrid className="h-4 w-4" />
                 </Button>
@@ -701,7 +701,7 @@ export default function DashboardPage() {
                   variant={viewType === 'list' ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => handleViewChange('list')}
-                  className={`cursor-pointer text-white ${viewType === 'list' ? 'bg-slate-700' : 'hover:bg-slate-700'}`}
+                  className={`cursor-pointer ${viewType === 'list' ? 'bg-slate-600 text-white' : 'text-slate-400 hover:bg-slate-600 hover:text-white'}`}
                 >
                   <List className="h-4 w-4" />
                 </Button>
@@ -797,12 +797,10 @@ export default function DashboardPage() {
                                 <Badge className={`text-xs flex-shrink-0 select-none ${process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
                                   {process.status}
                                 </Badge>
-                                {process.pid && <span className="text-xs text-slate-400 select-text hidden sm:inline">PID: {process.pid}</span>}
-                                <span className="truncate hidden md:inline text-xs text-slate-400 select-text" title={process.exe_path}>{process.exe_path}</span>
                               </div>
                               <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
-                                <div className="flex items-center gap-2 hidden md:flex">
-                                  <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
+                                <div className="flex items-center gap-2">
+                                  <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none hidden md:inline">
                                     Autolaunch
                                   </Label>
                                   <Switch
@@ -816,20 +814,20 @@ export default function DashboardPage() {
                                   variant="outline"
                                   size="sm"
                                   onClick={() => openEditProcessDialog(machine.machineId, process)}
-                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
+                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer p-2"
+                                  title="Edit"
                                 >
-                                  <Pencil className="h-3 w-3 md:mr-1" />
-                                  <span className="hidden md:inline">Edit</span>
+                                  <Pencil className="h-3 w-3" />
                                 </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
                                   onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
                                   disabled={process.status !== 'RUNNING'}
+                                  title="Kill"
                                 >
-                                  <Square className="h-3 w-3 md:mr-1" />
-                                  <span className="hidden md:inline">Kill</span>
+                                  <Square className="h-3 w-3" />
                                 </Button>
                               </div>
                             </div>
