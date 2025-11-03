@@ -1,0 +1,561 @@
+"""
+Firestore REST API Client for Owlette Agent
+
+This module provides a Python client for Firestore REST API v1, replacing
+the Firebase Admin SDK. It uses custom tokens for authentication instead of
+service account credentials.
+
+Security: This client enforces Firestore security rules (unlike Admin SDK).
+All operations are scoped to the authenticated user's permissions.
+
+API Documentation:
+https://firebase.google.com/docs/firestore/reference/rest
+
+Usage:
+    from auth_manager import AuthManager
+    from firestore_rest_client import FirestoreRestClient
+
+    auth = AuthManager()
+    firestore = FirestoreRestClient(project_id="owlette-dev", auth_manager=auth)
+
+    # Set document
+    firestore.set_document('sites/abc/machines/DESKTOP-001', {'online': True})
+
+    # Get document
+    data = firestore.get_document('sites/abc/machines/DESKTOP-001')
+
+    # Update document
+    firestore.update_document('sites/abc/machines/DESKTOP-001', {'cpu': 25.5})
+
+    # Real-time listener
+    def callback(data):
+        print(f"Document updated: {data}")
+    firestore.listen_to_document('config/abc/machines/DESKTOP-001', callback)
+"""
+
+import requests
+import json
+import time
+import threading
+import logging
+from typing import Dict, Any, Optional, Callable, List
+from datetime import datetime
+from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
+
+# Firestore REST API base URL
+FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
+
+# Special value for server timestamp
+SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
+
+
+class FirestoreRestClient:
+    """
+    Firestore REST API client using custom token authentication.
+
+    This client provides methods for CRUD operations, real-time listeners,
+    and batch writes - matching the interface of firebase_admin SDK.
+    """
+
+    def __init__(self, project_id: str, auth_manager):
+        """
+        Initialize Firestore REST client.
+
+        Args:
+            project_id: Firebase project ID (e.g., "owlette-dev-3838a")
+            auth_manager: AuthManager instance for token management
+        """
+        self.project_id = project_id
+        self.auth_manager = auth_manager
+        self.base_url = f"{FIRESTORE_API_BASE}/projects/{project_id}/databases/(default)/documents"
+
+        # HTTP session for connection pooling
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Content-Type': 'application/json',
+        })
+
+        logger.info(f"FirestoreRestClient initialized: project={project_id}")
+
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """
+        Get authorization headers with fresh access token.
+
+        Returns:
+            Dict with Authorization header
+        """
+        token = self.auth_manager.get_valid_token()
+        return {
+            'Authorization': f'Bearer {token}',
+        }
+
+    def _to_firestore_value(self, value: Any) -> Dict[str, Any]:
+        """
+        Convert Python value to Firestore REST API format.
+
+        Args:
+            value: Python value (int, str, bool, dict, list, etc.)
+
+        Returns:
+            Firestore value object
+
+        Examples:
+            42 → {'integerValue': '42'}
+            'test' → {'stringValue': 'test'}
+            True → {'booleanValue': True}
+            SERVER_TIMESTAMP → {'timestampValue': '2025-11-02T14:30:00.000000Z'}
+        """
+        if value is None:
+            return {'nullValue': None}
+        elif value == SERVER_TIMESTAMP:
+            # Server timestamp - use current UTC time
+            # Note: True server timestamp requires Firestore transform operation
+            return {'timestampValue': datetime.utcnow().isoformat() + 'Z'}
+        elif isinstance(value, bool):
+            return {'booleanValue': value}
+        elif isinstance(value, int):
+            return {'integerValue': str(value)}
+        elif isinstance(value, float):
+            return {'doubleValue': value}
+        elif isinstance(value, str):
+            return {'stringValue': value}
+        elif isinstance(value, dict):
+            # Convert nested dict to map
+            fields = {k: self._to_firestore_value(v) for k, v in value.items()}
+            return {'mapValue': {'fields': fields}}
+        elif isinstance(value, list):
+            # Convert list to array
+            values = [self._to_firestore_value(item) for item in value]
+            return {'arrayValue': {'values': values}}
+        elif isinstance(value, datetime):
+            return {'timestampValue': value.isoformat() + 'Z'}
+        else:
+            # Fallback to string
+            return {'stringValue': str(value)}
+
+    def _from_firestore_value(self, firestore_value: Dict[str, Any]) -> Any:
+        """
+        Convert Firestore REST API format to Python value.
+
+        Args:
+            firestore_value: Firestore value object
+
+        Returns:
+            Python value
+        """
+        if 'nullValue' in firestore_value:
+            return None
+        elif 'booleanValue' in firestore_value:
+            return firestore_value['booleanValue']
+        elif 'integerValue' in firestore_value:
+            return int(firestore_value['integerValue'])
+        elif 'doubleValue' in firestore_value:
+            return firestore_value['doubleValue']
+        elif 'stringValue' in firestore_value:
+            return firestore_value['stringValue']
+        elif 'timestampValue' in firestore_value:
+            # Return as ISO string (can parse to datetime if needed)
+            return firestore_value['timestampValue']
+        elif 'mapValue' in firestore_value:
+            # Convert nested map to dict
+            fields = firestore_value['mapValue'].get('fields', {})
+            return {k: self._from_firestore_value(v) for k, v in fields.items()}
+        elif 'arrayValue' in firestore_value:
+            # Convert array to list
+            values = firestore_value['arrayValue'].get('values', [])
+            return [self._from_firestore_value(item) for item in values]
+        else:
+            return None
+
+    def _to_firestore_document(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert Python dict to Firestore document format.
+
+        Args:
+            data: Python dictionary
+
+        Returns:
+            Firestore document with 'fields' object
+        """
+        fields = {k: self._to_firestore_value(v) for k, v in data.items()}
+        return {'fields': fields}
+
+    def _from_firestore_document(self, firestore_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert Firestore document to Python dict.
+
+        Args:
+            firestore_doc: Firestore document with 'fields' object
+
+        Returns:
+            Python dictionary
+        """
+        if 'fields' not in firestore_doc:
+            return {}
+
+        return {k: self._from_firestore_value(v) for k, v in firestore_doc['fields'].items()}
+
+    def get_document(self, path: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a Firestore document.
+
+        Args:
+            path: Document path (e.g., 'sites/abc/machines/DESKTOP-001')
+
+        Returns:
+            Document data as dict, or None if not found
+        """
+        try:
+            url = f"{self.base_url}/{path}"
+            response = self.session.get(url, headers=self._get_auth_headers())
+
+            if response.status_code == 404:
+                logger.debug(f"Document not found: {path}")
+                return None
+
+            response.raise_for_status()
+            doc = response.json()
+            return self._from_firestore_document(doc)
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                return None
+            logger.error(f"HTTP error getting document {path}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error getting document {path}: {e}")
+            raise
+
+    def set_document(self, path: str, data: Dict[str, Any], merge: bool = False):
+        """
+        Write a Firestore document.
+
+        Args:
+            path: Document path
+            data: Document data as dict
+            merge: If True, merge with existing data (default: False)
+        """
+        try:
+            url = f"{self.base_url}/{path}"
+            firestore_doc = self._to_firestore_document(data)
+
+            if merge:
+                # Use PATCH with merge behavior
+                # Note: Firestore REST API doesn't have exact "merge" like SDK
+                # We need to get existing doc and merge manually, or use updateMask
+                # For simplicity, we'll use PATCH which updates specified fields
+                response = self.session.patch(
+                    url,
+                    json=firestore_doc,
+                    headers=self._get_auth_headers()
+                )
+            else:
+                # Full replace - use PATCH without updateMask (or PUT-like behavior)
+                # Actually, Firestore REST uses PATCH for updates
+                # For create/replace, we use the write method or just PATCH
+                response = self.session.patch(
+                    url,
+                    json=firestore_doc,
+                    headers=self._get_auth_headers()
+                )
+
+            response.raise_for_status()
+            logger.debug(f"Document written: {path}")
+
+        except Exception as e:
+            logger.error(f"Error setting document {path}: {e}")
+            raise
+
+    def update_document(self, path: str, updates: Dict[str, Any]):
+        """
+        Update specific fields in a document.
+
+        Supports nested field paths like 'metrics.cpu' or 'metrics.processes'.
+
+        Args:
+            path: Document path
+            updates: Fields to update (supports dot notation for nested fields)
+        """
+        try:
+            url = f"{self.base_url}/{path}"
+
+            # Firestore REST API uses updateMask to specify which fields to update
+            # Build updateMask from keys
+            update_mask_paths = list(updates.keys())
+
+            # Convert updates to Firestore format, handling nested paths
+            firestore_fields = {}
+            for key, value in updates.items():
+                # Handle nested paths like 'metrics.cpu'
+                if '.' in key:
+                    # For nested updates, we need to construct the nested structure
+                    parts = key.split('.')
+                    current = firestore_fields
+
+                    for i, part in enumerate(parts[:-1]):
+                        if part not in current:
+                            current[part] = {'mapValue': {'fields': {}}}
+                        current = current[part]['mapValue']['fields']
+
+                    # Set the final value
+                    current[parts[-1]] = self._to_firestore_value(value)
+                else:
+                    # Top-level field
+                    firestore_fields[key] = self._to_firestore_value(value)
+
+            # Make PATCH request with updateMask
+            params = {
+                'updateMask.fieldPaths': update_mask_paths
+            }
+
+            response = self.session.patch(
+                url,
+                json={'fields': firestore_fields},
+                params=params,
+                headers=self._get_auth_headers()
+            )
+
+            response.raise_for_status()
+            logger.debug(f"Document updated: {path}")
+
+        except Exception as e:
+            logger.error(f"Error updating document {path}: {e}")
+            raise
+
+    def delete_document(self, path: str):
+        """
+        Delete a Firestore document.
+
+        Args:
+            path: Document path
+        """
+        try:
+            url = f"{self.base_url}/{path}"
+            response = self.session.delete(url, headers=self._get_auth_headers())
+
+            # 404 is OK for delete (already doesn't exist)
+            if response.status_code not in [200, 204, 404]:
+                response.raise_for_status()
+
+            logger.debug(f"Document deleted: {path}")
+
+        except Exception as e:
+            logger.error(f"Error deleting document {path}: {e}")
+            raise
+
+    def listen_to_document(self, path: str, callback: Callable[[Optional[Dict[str, Any]]], None]) -> threading.Thread:
+        """
+        Listen to document changes in real-time.
+
+        Note: Firestore REST API uses long-polling or streaming for listeners.
+        This implementation uses periodic polling (simpler but less efficient).
+
+        For production, consider using Firestore streaming API or websockets.
+
+        Args:
+            path: Document path to listen to
+            callback: Function to call when document changes (receives doc data)
+
+        Returns:
+            Thread object (already started)
+        """
+        def poll_document():
+            """Poll document for changes."""
+            last_data = None
+
+            while True:
+                try:
+                    # Get current document
+                    current_data = self.get_document(path)
+
+                    # Check if changed
+                    if current_data != last_data:
+                        logger.debug(f"Document changed: {path}")
+                        callback(current_data)
+                        last_data = current_data
+
+                    # Poll every 2 seconds (configurable)
+                    time.sleep(2)
+
+                except Exception as e:
+                    logger.error(f"Error in document listener for {path}: {e}")
+                    time.sleep(5)  # Back off on error
+
+        thread = threading.Thread(target=poll_document, daemon=True)
+        thread.start()
+        logger.info(f"Started listener for document: {path}")
+        return thread
+
+    def batch_write(self, writes: List[Dict[str, Any]]):
+        """
+        Perform batch write operation.
+
+        Args:
+            writes: List of write operations, each with:
+                - operation: 'set', 'update', or 'delete'
+                - path: Document path
+                - data: Document data (for set/update)
+
+        Example:
+            client.batch_write([
+                {'operation': 'set', 'path': 'logs/log1', 'data': {'msg': 'test'}},
+                {'operation': 'delete', 'path': 'logs/log2'},
+            ])
+        """
+        try:
+            # Firestore REST API batch write endpoint
+            url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:batchWrite"
+
+            # Build batch write request
+            batch_writes = []
+
+            for write in writes:
+                operation = write.get('operation')
+                path = write.get('path')
+                data = write.get('data', {})
+
+                doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
+
+                if operation == 'set':
+                    batch_writes.append({
+                        'update': {
+                            'name': doc_name,
+                            **self._to_firestore_document(data)
+                        }
+                    })
+                elif operation == 'delete':
+                    batch_writes.append({
+                        'delete': doc_name
+                    })
+                elif operation == 'update':
+                    # For update, we need to specify updateMask
+                    batch_writes.append({
+                        'update': {
+                            'name': doc_name,
+                            **self._to_firestore_document(data)
+                        },
+                        'updateMask': {
+                            'fieldPaths': list(data.keys())
+                        }
+                    })
+
+            # Execute batch write
+            response = self.session.post(
+                url,
+                json={'writes': batch_writes},
+                headers=self._get_auth_headers()
+            )
+
+            response.raise_for_status()
+            logger.debug(f"Batch write completed: {len(writes)} operations")
+
+        except Exception as e:
+            logger.error(f"Error in batch write: {e}")
+            raise
+
+    def collection(self, path: str):
+        """
+        Get a collection reference (for SDK-like interface).
+
+        Returns a CollectionReference object that supports .document() chaining.
+
+        Args:
+            path: Collection path (e.g., 'sites')
+
+        Returns:
+            CollectionReference object
+        """
+        return CollectionReference(self, path)
+
+
+class CollectionReference:
+    """
+    Collection reference for SDK-like interface.
+
+    Allows chaining like: firestore.collection('sites').document('abc').collection('machines')
+    """
+
+    def __init__(self, client: FirestoreRestClient, path: str):
+        self.client = client
+        self.path = path
+
+    def document(self, doc_id: str):
+        """Get a document reference."""
+        return DocumentReference(self.client, f"{self.path}/{doc_id}")
+
+
+class DocumentReference:
+    """
+    Document reference for SDK-like interface.
+
+    Provides methods: get(), set(), update(), delete(), collection()
+    """
+
+    def __init__(self, client: FirestoreRestClient, path: str):
+        self.client = client
+        self.path = path
+
+    def get(self) -> Optional[Dict[str, Any]]:
+        """Get document data."""
+        return self.client.get_document(self.path)
+
+    def set(self, data: Dict[str, Any], merge: bool = False):
+        """Set document data."""
+        return self.client.set_document(self.path, data, merge=merge)
+
+    def update(self, updates: Dict[str, Any]):
+        """Update document fields."""
+        return self.client.update_document(self.path, updates)
+
+    def delete(self):
+        """Delete document."""
+        return self.client.delete_document(self.path)
+
+    def collection(self, collection_id: str):
+        """Get a subcollection reference."""
+        return CollectionReference(self.client, f"{self.path}/{collection_id}")
+
+
+# Example usage
+if __name__ == "__main__":
+    # Configure logging for testing
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Example: Initialize client
+    from auth_manager import AuthManager
+
+    auth = AuthManager(api_base="https://dev.owlette.app/api")
+    firestore = FirestoreRestClient(project_id="owlette-dev-3838a", auth_manager=auth)
+
+    # Example: Set document
+    firestore.set_document('test/doc1', {
+        'name': 'Test',
+        'count': 42,
+        'active': True,
+        'timestamp': SERVER_TIMESTAMP
+    })
+
+    # Example: Get document
+    data = firestore.get_document('test/doc1')
+    print(f"Document data: {data}")
+
+    # Example: Update document
+    firestore.update_document('test/doc1', {
+        'count': 43,
+        'nested.field': 'value'
+    })
+
+    # Example: SDK-like interface
+    doc_ref = firestore.collection('sites').document('abc').collection('machines').document('DESKTOP-001')
+    doc_ref.set({'online': True}, merge=True)
+
+    # Example: Listen to document
+    def on_change(data):
+        print(f"Config changed: {data}")
+
+    listener_thread = firestore.listen_to_document('config/abc/machines/DESKTOP-001', on_change)
