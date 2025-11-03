@@ -111,8 +111,9 @@ Name: "{userstartup}\Owlette Tray"; Filename: "{app}\scripts\launch_tray.bat"; I
 [Run]
 ; Step 1: Configure site (browser-based OAuth flow) - RUNS FIRST
 ; Pass server URL based on /SERVER= command-line parameter
-; Usage: Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
-;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app, default)
+; Usage: Owlette-Installer-v2.0.0.exe              (uses owlette.app, default)
+;        Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
+;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app for testing)
 Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated
 
 ; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
@@ -136,12 +137,12 @@ var
   ServerParam: String;
 begin
   // Get SERVER parameter from command line (e.g., /SERVER=prod or /SERVER=dev)
-  ServerParam := ExpandConstant('{param:SERVER|dev}');  // Default to 'dev'
+  ServerParam := ExpandConstant('{param:SERVER|prod}');  // Default to 'prod'
 
-  if ServerParam = 'prod' then
-    Result := 'https://owlette.app/setup'
+  if ServerParam = 'dev' then
+    Result := 'https://dev.owlette.app/setup'
   else
-    Result := 'https://dev.owlette.app/setup';  // Default to dev
+    Result := 'https://owlette.app/setup';  // Default to production
 
   Log('Server environment: ' + ServerParam + ' -> ' + Result);
 end;
@@ -164,13 +165,15 @@ procedure RestoreConfigIfBackedUp;
 var
   ConfigPath: String;
 begin
+  // Don't restore backup - let OAuth setup create the new config
+  // The backup would overwrite the OAuth setup's changes (enabled=true, project_id, api_base)
+  // Users can manually restore their old processes array after installation if needed
   if ConfigBackupPath <> '' then
   begin
     if FileExists(ConfigBackupPath) then
     begin
-      ConfigPath := ExpandConstant('{app}\agent\config\config.json');
-      FileCopy(ConfigBackupPath, ConfigPath, False);
-      Log('Restored config from backup');
+      Log('Config backup available at: ' + ConfigBackupPath);
+      Log('Not restoring to allow OAuth setup to configure Firebase settings');
     end;
   end;
 end;
