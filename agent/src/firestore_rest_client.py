@@ -469,6 +469,15 @@ class FirestoreRestClient:
         """
         return CollectionReference(self, path)
 
+    def batch(self):
+        """
+        Create a batch writer for atomic operations.
+
+        Returns:
+            BatchWriter object
+        """
+        return BatchWriter(self)
+
 
 class CollectionReference:
     """
@@ -484,6 +493,50 @@ class CollectionReference:
     def document(self, doc_id: str):
         """Get a document reference."""
         return DocumentReference(self.client, f"{self.path}/{doc_id}")
+
+    def stream(self):
+        """
+        Stream all documents in the collection.
+
+        Note: This fetches all documents at once (no true streaming).
+        For large collections, this may be slow or hit memory limits.
+
+        Returns:
+            Generator of DocumentSnapshot objects
+        """
+        try:
+            # Firestore REST API list documents endpoint
+            url = f"{self.client.base_url}/{self.path}"
+
+            response = self.client.session.get(
+                url,
+                headers=self.client._get_auth_headers()
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Parse documents from response
+            documents = data.get('documents', [])
+
+            for doc in documents:
+                # Extract document ID from name
+                # Format: projects/.../databases/.../documents/path/to/doc_id
+                doc_name = doc.get('name', '')
+                doc_id = doc_name.split('/')[-1]
+
+                # Create DocumentSnapshot-like object
+                yield DocumentSnapshot(
+                    reference=DocumentReference(self.client, f"{self.path}/{doc_id}"),
+                    data=self.client._from_firestore_document(doc),
+                    exists=True
+                )
+
+        except Exception as e:
+            logger.error(f"Error streaming collection {self.path}: {e}")
+            # Return empty generator on error
+            return
+            yield  # Make this a generator function
 
 
 class DocumentReference:
@@ -516,6 +569,72 @@ class DocumentReference:
     def collection(self, collection_id: str):
         """Get a subcollection reference."""
         return CollectionReference(self.client, f"{self.path}/{collection_id}")
+
+
+class DocumentSnapshot:
+    """
+    Document snapshot returned by stream() operations.
+
+    Matches the interface of firebase_admin DocumentSnapshot.
+    """
+
+    def __init__(self, reference: DocumentReference, data: Optional[Dict[str, Any]], exists: bool):
+        self.reference = reference
+        self._data = data
+        self.exists = exists
+
+    def to_dict(self) -> Optional[Dict[str, Any]]:
+        """Get document data as dictionary."""
+        return self._data
+
+
+class BatchWriter:
+    """
+    Batch writer for atomic operations.
+
+    Matches the interface of firebase_admin WriteBatch.
+    """
+
+    def __init__(self, client: FirestoreRestClient):
+        self.client = client
+        self.operations: List[Dict[str, Any]] = []
+
+    def set(self, reference: DocumentReference, data: Dict[str, Any]):
+        """Add a set operation to the batch."""
+        self.operations.append({
+            'operation': 'set',
+            'path': reference.path,
+            'data': data
+        })
+        return self
+
+    def update(self, reference: DocumentReference, updates: Dict[str, Any]):
+        """Add an update operation to the batch."""
+        self.operations.append({
+            'operation': 'update',
+            'path': reference.path,
+            'data': updates
+        })
+        return self
+
+    def delete(self, reference: DocumentReference):
+        """Add a delete operation to the batch."""
+        self.operations.append({
+            'operation': 'delete',
+            'path': reference.path
+        })
+        return self
+
+    def commit(self):
+        """Commit all batched operations atomically."""
+        if not self.operations:
+            return
+
+        # Use the existing batch_write method
+        self.client.batch_write(self.operations)
+
+        # Clear operations after commit
+        self.operations = []
 
 
 # Example usage
