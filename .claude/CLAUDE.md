@@ -374,7 +374,9 @@ firestore/
    cp .env.example .env.local
    ```
 
-2. Add Firebase config (from Firebase Console):
+2. Add Firebase config to `.env.local`:
+
+   **Client-Side Config** (Firebase Console → Project Settings → General → Your apps):
    ```env
    NEXT_PUBLIC_FIREBASE_API_KEY=...
    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
@@ -383,6 +385,15 @@ firestore/
    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
    NEXT_PUBLIC_FIREBASE_APP_ID=...
    ```
+
+   **Server-Side Admin SDK** (Firebase Console → Project Settings → Service Accounts):
+   ```env
+   FIREBASE_PROJECT_ID=your-project-id
+   FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+   ```
+
+   > The Admin SDK credentials enable OAuth custom token generation for agent authentication.
 
 3. Install and run:
    ```bash
@@ -694,9 +705,13 @@ taskkill /PID [PID] /F
 
 **Railway Configuration:**
 - Uses `railway.toml` for build settings
-- Environment variables set per service in Railway dashboard
+- **Required Environment Variables** (set per service in Railway dashboard):
+  - Client-side: All `NEXT_PUBLIC_*` variables
+  - Server-side: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
 - Automatic SSL certificate provisioning
 - See [web/DEPLOYMENT-CHECKLIST.md](../web/DEPLOYMENT-CHECKLIST.md) for detailed setup
+
+> **Critical:** Server-side Admin SDK variables (`FIREBASE_*`) are required for agent OAuth authentication. Without them, agents cannot complete installation.
 
 **Manual deployment** (for local testing):
 ```bash
@@ -726,11 +741,16 @@ npm start
 ### Secrets Management
 
 **Never commit**:
-- `web/.env.local` - Firebase config
+- `web/.env.local` - Firebase config (client + server-side Admin SDK)
 - `agent/config/config.json` - Process config
-- `agent/config/firebase-credentials.json` - Service account key
+- Downloaded Firebase Admin SDK JSON files
 
 **All sensitive files are in `.gitignore`**
+
+**Agent OAuth Tokens**:
+- Stored in Windows Credential Manager (encrypted, machine + user specific)
+- Not stored in config files or repository
+- Automatically managed by agent
 
 ### Firebase Security
 

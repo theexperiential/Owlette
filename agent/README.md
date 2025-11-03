@@ -305,6 +305,26 @@ agent/
 
 ---
 
+## Developer Documentation
+
+### Building the Installer
+
+See [BUILD.md](BUILD.md) for comprehensive instructions on building the installer:
+
+- **Full Build**: Complete rebuild with embedded Python (~5-10 min)
+- **Quick Rebuild**: Fast iteration during development (~2 min)
+- Testing procedures and troubleshooting
+
+### End-User Documentation
+
+- **[INSTALLER-USAGE.md](INSTALLER-USAGE.md)** - Installation guide for end users
+  - Environment selection (dev/prod)
+  - OAuth authentication flow
+  - Silent installation
+  - Troubleshooting
+
+---
+
 ## Support
 
 - **Documentation**: See [docs/](../docs/) folder
