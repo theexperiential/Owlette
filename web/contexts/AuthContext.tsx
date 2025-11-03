@@ -11,14 +11,19 @@ import {
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
 import { handleError } from '@/lib/errorHandler';
 import { toast } from 'sonner';
 
+type UserRole = 'user' | 'admin';
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  role: UserRole;
+  isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
@@ -29,6 +34,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
+  role: 'user',
+  isAdmin: false,
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -47,25 +54,54 @@ export const useAuth = () => {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<UserRole>('user');
 
   useEffect(() => {
-    if (!auth) {
+    if (!auth || !db) {
       setLoading(false);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
-      setLoading(false);
 
-      // Manage session cookies based on auth state
       if (user) {
         // User is logged in - set session cookie
         setSessionCookie(user.uid);
+
+        // Fetch user role from Firestore
+        if (db) {
+          try {
+            const userDocRef = doc(db, 'users', user.uid);
+            const userDoc = await getDoc(userDocRef);
+
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              setRole(userData.role || 'user');
+            } else {
+              // Create user document if it doesn't exist (new user)
+              await setDoc(userDocRef, {
+                email: user.email,
+                role: 'user',
+                sites: [],
+                createdAt: new Date(),
+              });
+              setRole('user');
+            }
+          } catch (error) {
+            console.error('Error fetching user role:', error);
+            setRole('user'); // Default to 'user' on error
+          }
+        } else {
+          setRole('user'); // Default if db not configured
+        }
       } else {
-        // User is logged out - clear session cookie
+        // User is logged out - clear session cookie and reset role
         clearSessionCookie();
+        setRole('user');
       }
+
+      setLoading(false);
     });
 
     return unsubscribe;
@@ -210,6 +246,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = {
     user,
     loading,
+    role,
+    isAdmin: role === 'admin',
     signIn,
     signUp,
     signInWithGoogle,
