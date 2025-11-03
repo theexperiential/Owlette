@@ -1,21 +1,29 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.0.0
-// Last Updated: 2025-11-02
+// Version: 2.1.0 - OAuth Custom Token Authentication
+// Last Updated: 2025-11-03
 //
 // Security Model:
-// - Role-based access control (RBAC): user | admin
+// - Role-based access control (RBAC): user | admin | agent
 // - All authenticated users can access sites (trust-based)
-// - Service accounts (agents) have admin access to write machine data
+// - Agents use custom tokens (OAuth) with site-scoped permissions
+// - Agents can ONLY access their assigned site and machine (strict isolation)
 // - Admins can manage users and upload installer versions
 // - Unauthenticated users can read installer_metadata (for public downloads)
 //
 // Key Features:
+// - OAuth Authentication: Agents authenticate via custom tokens (no service accounts)
+// - Scoped Permissions: Agents limited to their site_id + machine_id (from token claims)
 // - Admin Panel: User management, installer version management
 // - Public Downloads: Anyone can download agent installers
 // - Site Access: All authenticated users can manage their sites
 // - Command System: Bidirectional communication with agents
+//
+// Custom Token Claims (for agents):
+// - role: 'agent' (identifies agent authentication)
+// - site_id: 'site_xxx' (which site this agent belongs to)
+// - machine_id: 'DESKTOP-001' (which machine this agent represents)
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -37,9 +45,33 @@ service cloud.firestore {
 
     // Check if request is from service account (Python agent)
     // Service accounts have the 'admin' claim set to true
+    // DEPRECATED: Use isAgent() for OAuth-authenticated agents
     function isServiceAccount() {
       return request.auth != null &&
              request.auth.token.admin == true;
+    }
+
+    // Check if request is from OAuth-authenticated agent
+    // Agents have custom token with claims: {role: 'agent', site_id: 'xxx', machine_id: 'yyy'}
+    function isAgent() {
+      return request.auth != null &&
+             request.auth.token.role == 'agent' &&
+             request.auth.token.site_id is string &&
+             request.auth.token.machine_id is string;
+    }
+
+    // Check if agent has access to a specific site
+    // Agents can ONLY access their assigned site (from token claim)
+    function agentCanAccessSite(siteId) {
+      return isAgent() && request.auth.token.site_id == siteId;
+    }
+
+    // Check if agent is accessing their own machine
+    // Prevents agents from accessing other machines (even in same site)
+    function agentCanAccessMachine(siteId, machineId) {
+      return isAgent() &&
+             request.auth.token.site_id == siteId &&
+             request.auth.token.machine_id == machineId;
     }
 
     // Check if user has access to a site
@@ -72,15 +104,26 @@ service cloud.firestore {
         // Machine status document
         // Agents write heartbeats, metrics, and process status
         // Web dashboard reads machine status
-        allow read: if canAccessSite(siteId) || isServiceAccount();
-        allow write: if isServiceAccount(); // Only agents can write machine data
+        // OAuth agents can ONLY access their own machine (strict isolation)
+        allow read: if canAccessSite(siteId) ||
+                       isServiceAccount() ||
+                       agentCanAccessMachine(siteId, machineId);
+        allow write: if isServiceAccount() ||
+                        agentCanAccessMachine(siteId, machineId); // Only the assigned agent can write
+        allow delete: if canAccessSite(siteId); // Authenticated users can remove machines from sites
 
         // Commands documents (pending/completed)
         // Web dashboard writes pending commands
         // Agents read pending and write completed
+        // OAuth agents can ONLY access commands for their own machine
         match /commands/{commandDoc} {
-          allow read: if canAccessSite(siteId) || isServiceAccount();
-          allow write: if canAccessSite(siteId) || isServiceAccount();
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow write: if canAccessSite(siteId) ||
+                          isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId);
+          allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
         }
       }
 
@@ -147,8 +190,14 @@ service cloud.firestore {
       // Machine configuration (process lists, settings)
       // Web dashboard writes config updates
       // Agents read config and write initial config on first startup
-      allow read: if canAccessSite(siteId) || isServiceAccount();
-      allow write: if canAccessSite(siteId) || isServiceAccount();
+      // OAuth agents can ONLY access config for their own machine
+      allow read: if canAccessSite(siteId) ||
+                     isServiceAccount() ||
+                     agentCanAccessMachine(siteId, machineId);
+      allow write: if canAccessSite(siteId) ||
+                      isServiceAccount() ||
+                      agentCanAccessMachine(siteId, machineId);
+      allow delete: if canAccessSite(siteId); // Authenticated users can delete machine config
     }
 
     // ============================================
@@ -173,6 +222,24 @@ service cloud.firestore {
       // ADMIN WRITE: Only admins can upload/modify installer versions
       allow read: if true;  // Public read for download button
       allow write: if isAdmin();  // Only admins can manage installers
+    }
+
+    // ============================================
+    // OAuth Token Collections (Server-Side Only)
+    // ============================================
+
+    match /agent_tokens/{tokenId} {
+      // Registration codes for agent installer OAuth flow
+      // SECURITY: Only accessible via server-side Admin SDK
+      // Never allow client-side access (prevents token theft)
+      allow read, write: if false;
+    }
+
+    match /agent_refresh_tokens/{tokenHash} {
+      // Refresh tokens for agent authentication
+      // SECURITY: Only accessible via server-side Admin SDK
+      // Tokens are stored hashed for additional security
+      allow read, write: if false;
     }
 
     // ============================================
