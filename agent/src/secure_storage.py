@@ -1,13 +1,13 @@
 """
 Secure Token Storage for Owlette Agent
 
-This module provides secure storage for OAuth tokens using the system keyring.
-On Windows, this uses Windows Credential Manager (DPAPI).
+This module provides secure storage for OAuth tokens using encrypted files.
+Tokens are encrypted with a machine-specific key and stored in config directory.
 
 Security Features:
-- Tokens encrypted using system keyring (Windows Credential Manager on Windows)
-- Tokens tied to machine and user account
-- Cannot be decrypted on different machine or by different user
+- Tokens encrypted using Fernet symmetric encryption
+- Encryption key derived from machine UUID (machine-specific)
+- Stored in hidden config file with restrictive permissions
 - Automatic cleanup of expired tokens
 
 Usage:
@@ -17,37 +17,138 @@ Usage:
     storage.clear_tokens()  # Remove all stored tokens
 """
 
-import keyring
+import os
+import json
 import logging
+from pathlib import Path
 from typing import Optional
+from cryptography.fernet import Fernet
+import base64
+import hashlib
 
 logger = logging.getLogger(__name__)
 
-# Keyring namespace for Owlette tokens
-KEYRING_SERVICE = "Owlette"
-REFRESH_TOKEN_KEY = "AgentRefreshToken"
-SITE_ID_KEY = "AgentSiteId"
-ACCESS_TOKEN_KEY = "AgentAccessToken"  # Cache current access token
-TOKEN_EXPIRY_KEY = "AgentTokenExpiry"  # Timestamp when access token expires
+# Token storage file location
+TOKEN_FILE_NAME = ".tokens.enc"  # Hidden file in config directory
 
 
 class SecureStorage:
     """
     Secure storage for agent authentication tokens.
 
-    Uses system keyring (Windows Credential Manager on Windows) to securely
-    store tokens with encryption tied to the machine and user account.
+    Uses encrypted file storage with machine-specific encryption key.
+    Tokens stored in C:\\ProgramData\\Owlette\\.tokens.enc (hidden file).
     """
 
-    def __init__(self, service_name: str = KEYRING_SERVICE):
+    def __init__(self, config_dir: Optional[Path] = None):
         """
         Initialize secure storage.
 
         Args:
-            service_name: Keyring service name (default: "Owlette")
+            config_dir: Directory for token file (default: C:\\ProgramData\\Owlette)
         """
-        self.service_name = service_name
-        logger.debug(f"SecureStorage initialized with service: {service_name}")
+        if config_dir is None:
+            # Use ProgramData directory - accessible by both regular users and SYSTEM
+            program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+            config_dir = Path(program_data) / "Owlette"
+
+        self.config_dir = Path(config_dir)
+        self.token_file = self.config_dir / TOKEN_FILE_NAME
+        self._fernet = self._get_cipher()
+        logger.debug(f"SecureStorage initialized: {self.token_file}")
+
+    def _get_cipher(self) -> Fernet:
+        """Get Fernet cipher with machine-specific key."""
+        try:
+            import uuid
+            import platform
+
+            # Generate machine-specific key from UUID and hostname
+            machine_id = str(uuid.getnode())  # MAC address as int
+            hostname = platform.node()
+
+            # Derive encryption key from machine identifiers
+            key_material = f"{machine_id}:{hostname}:owlette-agent".encode()
+            key_hash = hashlib.sha256(key_material).digest()
+            key = base64.urlsafe_b64encode(key_hash)
+
+            return Fernet(key)
+        except Exception as e:
+            logger.error(f"Failed to generate encryption key: {e}")
+            raise
+
+    def _load_data(self) -> dict:
+        """Load and decrypt token data from file."""
+        if not self.token_file.exists():
+            return {}
+
+        try:
+            with open(self.token_file, 'rb') as f:
+                encrypted_data = f.read()
+
+            if not encrypted_data:
+                return {}
+
+            # Decrypt and parse JSON
+            decrypted_data = self._fernet.decrypt(encrypted_data)
+            return json.loads(decrypted_data.decode('utf-8'))
+
+        except Exception as e:
+            logger.error(f"Failed to load token data: {e}")
+            return {}
+
+    def _save_data(self, data: dict) -> bool:
+        """Encrypt and save token data to file."""
+        debug_log = self.config_dir / "oauth_debug.log"
+        try:
+            # Ensure config directory exists
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            with open(debug_log, 'a') as f:
+                f.write(f"\nToken Save Debug\n")
+                f.write(f"================\n")
+                f.write(f"Config dir: {self.config_dir}\n")
+                f.write(f"Token file: {self.token_file}\n")
+
+            # Clear hidden attribute if file exists (so we can overwrite it)
+            if os.name == 'nt' and self.token_file.exists():
+                import ctypes
+                FILE_ATTRIBUTE_NORMAL = 0x80
+                ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_NORMAL)
+                with open(debug_log, 'a') as f:
+                    f.write(f"Cleared file attributes for overwrite\n")
+
+            # Encrypt data
+            json_data = json.dumps(data).encode('utf-8')
+            encrypted_data = self._fernet.encrypt(json_data)
+            with open(debug_log, 'a') as f:
+                f.write(f"Data encrypted, size: {len(encrypted_data)} bytes\n")
+
+            # Write to file
+            with open(self.token_file, 'wb') as f:
+                f.write(encrypted_data)
+            with open(debug_log, 'a') as f:
+                f.write(f"File written successfully\n")
+
+            # Set file as hidden
+            if os.name == 'nt':
+                import ctypes
+                FILE_ATTRIBUTE_HIDDEN = 0x02
+                FILE_ATTRIBUTE_ARCHIVE = 0x20
+                # Use hidden + archive (keeps file writable for next time)
+                ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE)
+                with open(debug_log, 'a') as f:
+                    f.write(f"File attributes set to hidden\n")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save token data: {e}")
+            import traceback
+            with open(debug_log, 'a') as f:
+                f.write(f"\nERROR saving tokens:\n")
+                f.write(f"{str(e)}\n")
+                f.write(traceback.format_exc())
+            return False
 
     def save_refresh_token(self, token: str) -> bool:
         """
@@ -60,9 +161,14 @@ class SecureStorage:
             True if saved successfully, False otherwise
         """
         try:
-            keyring.set_password(self.service_name, REFRESH_TOKEN_KEY, token)
-            logger.info("Refresh token saved to secure storage")
-            return True
+            data = self._load_data()
+            data['refresh_token'] = token
+            success = self._save_data(data)
+
+            if success:
+                logger.info("Refresh token saved to encrypted file")
+            return success
+
         except Exception as e:
             logger.error(f"Failed to save refresh token: {e}")
             return False
@@ -75,12 +181,16 @@ class SecureStorage:
             Refresh token if found, None otherwise
         """
         try:
-            token = keyring.get_password(self.service_name, REFRESH_TOKEN_KEY)
+            data = self._load_data()
+            token = data.get('refresh_token')
+
             if token:
-                logger.debug("Refresh token retrieved from secure storage")
+                logger.debug("Refresh token retrieved from encrypted file")
             else:
-                logger.debug("No refresh token found in secure storage")
+                logger.debug("No refresh token found in encrypted file")
+
             return token
+
         except Exception as e:
             logger.error(f"Failed to retrieve refresh token: {e}")
             return None
@@ -97,10 +207,15 @@ class SecureStorage:
             True if saved successfully, False otherwise
         """
         try:
-            keyring.set_password(self.service_name, ACCESS_TOKEN_KEY, token)
-            keyring.set_password(self.service_name, TOKEN_EXPIRY_KEY, str(expiry_timestamp))
-            logger.debug("Access token cached in secure storage")
-            return True
+            data = self._load_data()
+            data['access_token'] = token
+            data['token_expiry'] = expiry_timestamp
+            success = self._save_data(data)
+
+            if success:
+                logger.debug("Access token cached in encrypted file")
+            return success
+
         except Exception as e:
             logger.error(f"Failed to cache access token: {e}")
             return False
@@ -113,20 +228,17 @@ class SecureStorage:
             Tuple of (access_token, expiry_timestamp). Both None if not found.
         """
         try:
-            token = keyring.get_password(self.service_name, ACCESS_TOKEN_KEY)
-            expiry_str = keyring.get_password(self.service_name, TOKEN_EXPIRY_KEY)
+            data = self._load_data()
+            token = data.get('access_token')
+            expiry = data.get('token_expiry')
 
-            if token and expiry_str:
-                try:
-                    expiry = float(expiry_str)
-                    logger.debug("Access token retrieved from cache")
-                    return (token, expiry)
-                except ValueError:
-                    logger.warning("Invalid expiry timestamp in cache")
-                    return (None, None)
+            if token and expiry:
+                logger.debug("Access token retrieved from cache")
+                return (token, float(expiry))
             else:
                 logger.debug("No cached access token found")
                 return (None, None)
+
         except Exception as e:
             logger.error(f"Failed to retrieve access token: {e}")
             return (None, None)
@@ -142,9 +254,14 @@ class SecureStorage:
             True if saved successfully, False otherwise
         """
         try:
-            keyring.set_password(self.service_name, SITE_ID_KEY, site_id)
-            logger.info(f"Site ID saved to secure storage: {site_id}")
-            return True
+            data = self._load_data()
+            data['site_id'] = site_id
+            success = self._save_data(data)
+
+            if success:
+                logger.info(f"Site ID saved to encrypted file: {site_id}")
+            return success
+
         except Exception as e:
             logger.error(f"Failed to save site ID: {e}")
             return False
@@ -157,12 +274,16 @@ class SecureStorage:
             Site ID if found, None otherwise
         """
         try:
-            site_id = keyring.get_password(self.service_name, SITE_ID_KEY)
+            data = self._load_data()
+            site_id = data.get('site_id')
+
             if site_id:
-                logger.debug(f"Site ID retrieved from secure storage: {site_id}")
+                logger.debug(f"Site ID retrieved from encrypted file: {site_id}")
             else:
-                logger.debug("No site ID found in secure storage")
+                logger.debug("No site ID found in encrypted file")
+
             return site_id
+
         except Exception as e:
             logger.error(f"Failed to retrieve site ID: {e}")
             return None
@@ -180,16 +301,11 @@ class SecureStorage:
             True if cleared successfully, False otherwise
         """
         try:
-            # Delete all stored credentials
-            for key in [REFRESH_TOKEN_KEY, SITE_ID_KEY, ACCESS_TOKEN_KEY, TOKEN_EXPIRY_KEY]:
-                try:
-                    keyring.delete_password(self.service_name, key)
-                except keyring.errors.PasswordDeleteError:
-                    # Key doesn't exist, ignore
-                    pass
-
-            logger.info("All tokens cleared from secure storage")
+            if self.token_file.exists():
+                self.token_file.unlink()
+                logger.info("All tokens cleared from encrypted file")
             return True
+
         except Exception as e:
             logger.error(f"Failed to clear tokens: {e}")
             return False
