@@ -1,0 +1,386 @@
+"""
+Authentication Manager for Owlette Agent
+
+This module manages OAuth authentication for the Owlette agent, handling:
+- Registration code exchange for initial authentication
+- Access token lifecycle (caching, expiry checking, auto-refresh)
+- Secure token storage using Windows Credential Manager
+
+The agent uses a two-token system:
+1. Access Token: Short-lived Firebase custom token (1 hour expiry) for Firestore API calls
+2. Refresh Token: Long-lived token (30 days) to obtain new access tokens
+
+Security Features:
+- Tokens never logged (even in debug mode)
+- Automatic refresh 5 minutes before expiry
+- Machine ID validation to prevent token theft
+- Secure storage via Windows Credential Manager (DPAPI)
+
+Usage:
+    auth = AuthManager(api_base="https://owlette.app/api")
+
+    # First-time setup (during installation)
+    auth.exchange_registration_code("abc123...", "DESKTOP-001")
+
+    # Get valid token (auto-refreshes if needed)
+    token = auth.get_valid_token()
+"""
+
+import requests
+import time
+import socket
+import logging
+from typing import Optional, Dict, Any
+from secure_storage import SecureStorage, get_storage
+
+logger = logging.getLogger(__name__)
+
+# Default token refresh buffer (refresh 5 minutes before expiry)
+TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
+
+# Agent version (should match installer version)
+AGENT_VERSION = "2.0.0"
+
+
+class AuthenticationError(Exception):
+    """Raised when authentication fails."""
+    pass
+
+
+class TokenRefreshError(Exception):
+    """Raised when token refresh fails."""
+    pass
+
+
+class AuthManager:
+    """
+    Manages OAuth authentication for the Owlette agent.
+
+    Handles token exchange, refresh, and secure storage using
+    the Windows Credential Manager.
+    """
+
+    def __init__(
+        self,
+        api_base: str = "https://owlette.app/api",
+        machine_id: Optional[str] = None,
+        storage: Optional[SecureStorage] = None,
+    ):
+        """
+        Initialize authentication manager.
+
+        Args:
+            api_base: Base URL for API endpoints (e.g., "https://owlette.app/api")
+            machine_id: Machine identifier (defaults to hostname)
+            storage: Secure storage instance (defaults to singleton)
+        """
+        self.api_base = api_base.rstrip('/')
+        self.machine_id = machine_id or socket.gethostname()
+        self.storage = storage or get_storage()
+
+        # Token state
+        self._access_token: Optional[str] = None
+        self._token_expiry: Optional[float] = None
+        self._site_id: Optional[str] = None
+
+        # Load cached tokens from storage
+        self._load_cached_tokens()
+
+        logger.info(f"AuthManager initialized: machine={self.machine_id}, api={self.api_base}")
+
+    def _load_cached_tokens(self):
+        """Load cached access token and site ID from secure storage."""
+        try:
+            # Load access token and expiry
+            access_token, expiry = self.storage.get_access_token()
+            if access_token and expiry:
+                self._access_token = access_token
+                self._token_expiry = expiry
+                logger.debug("Cached access token loaded")
+
+            # Load site ID
+            site_id = self.storage.get_site_id()
+            if site_id:
+                self._site_id = site_id
+                logger.debug(f"Site ID loaded: {site_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to load cached tokens: {e}")
+
+    def exchange_registration_code(self, registration_code: str, machine_id: Optional[str] = None) -> bool:
+        """
+        Exchange registration code for access and refresh tokens.
+
+        This is called during initial setup (installer OAuth flow).
+        The registration code is a single-use code embedded in the installer.
+
+        Args:
+            registration_code: One-time registration code from installer
+            machine_id: Machine identifier (uses self.machine_id if None)
+
+        Returns:
+            True if exchange successful, False otherwise
+
+        Raises:
+            AuthenticationError: If exchange fails
+        """
+        machine_id = machine_id or self.machine_id
+
+        try:
+            logger.info("Exchanging registration code for tokens...")
+
+            # Call exchange endpoint
+            url = f"{self.api_base}/agent/auth/exchange"
+            response = requests.post(
+                url,
+                json={
+                    'registrationCode': registration_code,
+                    'machineId': machine_id,
+                    'version': AGENT_VERSION,
+                },
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                error_msg = response.json().get('error', 'Unknown error')
+                logger.error(f"Token exchange failed: {error_msg}")
+                raise AuthenticationError(f"Token exchange failed: {error_msg}")
+
+            data = response.json()
+            access_token = data.get('accessToken')
+            refresh_token = data.get('refreshToken')
+            expires_in = data.get('expiresIn', 3600)
+            site_id = data.get('siteId')
+
+            if not access_token or not refresh_token or not site_id:
+                raise AuthenticationError("Invalid response from server (missing tokens)")
+
+            # Calculate expiry timestamp
+            expiry_timestamp = time.time() + expires_in
+
+            # Store tokens securely
+            self.storage.save_refresh_token(refresh_token)
+            self.storage.save_access_token(access_token, expiry_timestamp)
+            self.storage.save_site_id(site_id)
+
+            # Update instance state
+            self._access_token = access_token
+            self._token_expiry = expiry_timestamp
+            self._site_id = site_id
+
+            # Log success (don't log actual tokens!)
+            logger.info(
+                f"Authentication successful: site={site_id}, " +
+                f"token_expires_in={expires_in}s"
+            )
+
+            return True
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during token exchange: {e}")
+            raise AuthenticationError(f"Network error: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during token exchange: {e}")
+            raise AuthenticationError(f"Unexpected error: {e}")
+
+    def refresh_access_token(self) -> bool:
+        """
+        Refresh expired access token using refresh token.
+
+        Custom tokens expire after 1 hour, so this must be called periodically.
+        The get_valid_token() method handles this automatically.
+
+        Returns:
+            True if refresh successful, False otherwise
+
+        Raises:
+            TokenRefreshError: If refresh fails
+        """
+        try:
+            logger.info("Refreshing access token...")
+
+            # Get refresh token from storage
+            refresh_token = self.storage.get_refresh_token()
+            if not refresh_token:
+                raise TokenRefreshError("No refresh token found in storage")
+
+            # Call refresh endpoint
+            url = f"{self.api_base}/agent/auth/refresh"
+            response = requests.post(
+                url,
+                json={
+                    'refreshToken': refresh_token,
+                    'machineId': self.machine_id,
+                },
+                timeout=30,
+            )
+
+            if response.status_code != 200:
+                error_msg = response.json().get('error', 'Unknown error')
+                logger.error(f"Token refresh failed: {error_msg}")
+
+                # If refresh token is invalid/expired, clear storage
+                if response.status_code in [401, 403]:
+                    logger.warning("Refresh token invalid/expired, clearing storage")
+                    self.storage.clear_tokens()
+
+                raise TokenRefreshError(f"Token refresh failed: {error_msg}")
+
+            data = response.json()
+            access_token = data.get('accessToken')
+            expires_in = data.get('expiresIn', 3600)
+
+            if not access_token:
+                raise TokenRefreshError("Invalid response from server (missing token)")
+
+            # Calculate expiry timestamp
+            expiry_timestamp = time.time() + expires_in
+
+            # Update cached token
+            self.storage.save_access_token(access_token, expiry_timestamp)
+
+            # Update instance state
+            self._access_token = access_token
+            self._token_expiry = expiry_timestamp
+
+            logger.info(f"Token refreshed successfully, expires_in={expires_in}s")
+
+            return True
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during token refresh: {e}")
+            raise TokenRefreshError(f"Network error: {e}")
+        except TokenRefreshError:
+            # Re-raise TokenRefreshError as-is
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during token refresh: {e}")
+            raise TokenRefreshError(f"Unexpected error: {e}")
+
+    def get_valid_token(self) -> str:
+        """
+        Get a valid access token, refreshing if necessary.
+
+        This method automatically handles token expiry and refresh.
+        It should be called before every Firestore API request.
+
+        Returns:
+            Valid access token
+
+        Raises:
+            AuthenticationError: If no refresh token available and re-auth needed
+            TokenRefreshError: If token refresh fails
+        """
+        # Check if we have a cached token
+        if not self._access_token or not self._token_expiry:
+            # Try to load from storage
+            self._load_cached_tokens()
+
+        # Check if token is expired or about to expire
+        if self._token_expiry:
+            time_until_expiry = self._token_expiry - time.time()
+
+            # Refresh if token expires in less than 5 minutes
+            if time_until_expiry <= TOKEN_REFRESH_BUFFER_SECONDS:
+                logger.debug(
+                    f"Token expires in {int(time_until_expiry)}s, refreshing..."
+                )
+                self.refresh_access_token()
+
+        # If we still don't have a token, authentication is required
+        if not self._access_token:
+            raise AuthenticationError(
+                "No valid access token available. Please re-authenticate."
+            )
+
+        return self._access_token
+
+    def is_authenticated(self) -> bool:
+        """
+        Check if agent is authenticated with valid credentials.
+
+        Returns:
+            True if refresh token exists in storage, False otherwise
+        """
+        return self.storage.has_refresh_token()
+
+    def get_site_id(self) -> Optional[str]:
+        """
+        Get the site ID this agent is authorized for.
+
+        Returns:
+            Site ID if authenticated, None otherwise
+        """
+        if not self._site_id:
+            self._site_id = self.storage.get_site_id()
+        return self._site_id
+
+    def clear_credentials(self):
+        """
+        Clear all stored credentials.
+
+        This should be called when:
+        - User wants to reconfigure the agent
+        - Tokens are revoked by admin
+        - Machine is being decommissioned
+        """
+        logger.info("Clearing all credentials")
+        self.storage.clear_tokens()
+        self._access_token = None
+        self._token_expiry = None
+        self._site_id = None
+
+    def get_token_info(self) -> Dict[str, Any]:
+        """
+        Get information about current token state (for debugging/monitoring).
+
+        Returns:
+            Dictionary with token state information
+        """
+        if self._token_expiry:
+            time_until_expiry = max(0, self._token_expiry - time.time())
+            is_expired = time_until_expiry <= 0
+        else:
+            time_until_expiry = None
+            is_expired = True
+
+        return {
+            'has_access_token': self._access_token is not None,
+            'has_refresh_token': self.storage.has_refresh_token(),
+            'is_expired': is_expired,
+            'time_until_expiry_seconds': int(time_until_expiry) if time_until_expiry else None,
+            'site_id': self._site_id,
+            'machine_id': self.machine_id,
+            'api_base': self.api_base,
+        }
+
+
+# Example usage
+if __name__ == "__main__":
+    # Configure logging for testing
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Example: Exchange registration code
+    auth = AuthManager(api_base="https://dev.owlette.app/api")
+
+    # Simulate installer providing registration code
+    registration_code = "test_code_12345"  # This would come from installer
+    try:
+        auth.exchange_registration_code(registration_code)
+        print("Authentication successful!")
+    except AuthenticationError as e:
+        print(f"Authentication failed: {e}")
+
+    # Example: Get valid token (auto-refreshes if needed)
+    try:
+        token = auth.get_valid_token()
+        print(f"Got valid token: {token[:20]}...")  # Only print first 20 chars
+    except (AuthenticationError, TokenRefreshError) as e:
+        print(f"Failed to get token: {e}")
+
+    # Example: Check token info
+    info = auth.get_token_info()
+    print(f"Token info: {info}")
