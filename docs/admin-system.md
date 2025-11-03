@@ -260,7 +260,7 @@ firestore/
 - Must be .exe file
 - Version format: `X.Y.Z` (e.g., 2.0.0, 2.1.5)
 - File size: No limit (but large files take longer)
-- Filename: Will be renamed to `Owlette-Setup-{version}.exe`
+- Filename: Will be renamed to `Owlette-Installer-v{version}.exe`
 
 #### Set Version as Latest
 

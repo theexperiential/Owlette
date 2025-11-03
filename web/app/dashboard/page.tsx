@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
+import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +18,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { toast } from 'sonner';
 import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, LogOut, Copy, Check, Pencil, Trash2, Shield } from 'lucide-react';
+import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, LogOut, Copy, Check, Pencil, Trash2, Shield, Download } from 'lucide-react';
 import { getUserInitials } from '@/lib/userUtils';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -57,6 +58,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, loading, signOut, isAdmin } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
+  const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
@@ -510,13 +512,13 @@ export default function DashboardPage() {
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-semibold mb-1">Use this Site ID when installing the agent</p>
+                  <p className="font-semibold mb-1">Your Site ID</p>
                   <p className="text-xs text-slate-300">
-                    Run the installer on your Windows machine and enter this Site ID when prompted,
-                    or set it in <span className="font-mono">config/config.json</span>
+                    This site ID will be automatically configured when you run the installer
+                    and complete the OAuth authorization in your browser
                   </p>
                   <p className="text-xs text-slate-400 mt-2">
-                    Download from: <span className="font-mono text-blue-400">dev.owlette.app</span>
+                    Download installer from: <span className="font-mono text-blue-400">dev.owlette.app</span>
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -945,21 +947,80 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 1: Install Owlette Agent</h3>
+                <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
+                <p className="text-sm text-slate-400 mb-4">
+                  Download and run the installer <strong className="text-white">on the machine you want to add</strong> (not necessarily this one).
+                  Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      if (!downloadUrl) {
+                        toast.error('Download Unavailable', {
+                          description: 'Installer download URL is not available.',
+                        });
+                        return;
+                      }
+                      try {
+                        window.open(downloadUrl, '_blank');
+                        toast.success('Download Started', {
+                          description: `Downloading Owlette v${version}`,
+                        });
+                      } catch (err) {
+                        toast.error('Download Failed', {
+                          description: 'Failed to start download. Please try again.',
+                        });
+                      }
+                    }}
+                    disabled={!downloadUrl}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    <span>Download {version && `v${version}`}</span>
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!downloadUrl) {
+                        toast.error('Copy Failed', {
+                          description: 'Download URL is not available.',
+                        });
+                        return;
+                      }
+                      try {
+                        navigator.clipboard.writeText(downloadUrl);
+                        toast.success('Link Copied', {
+                          description: 'Download link copied to clipboard',
+                        });
+                      } catch (err) {
+                        toast.error('Copy Failed', {
+                          description: 'Failed to copy link. Please try again.',
+                        });
+                      }
+                    }}
+                    disabled={!downloadUrl}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    <span>Copy Link</span>
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+                <h3 className="font-semibold text-white">Step 2: Run the Installer</h3>
                 <p className="text-sm text-slate-400">
-                  Download and install the Owlette agent on your Windows machine
+                  On that machine, double-click the installer - it will automatically open a browser for authentication
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 2: Configure Site ID</h3>
+                <h3 className="font-semibold text-white">Step 3: Authorize Agent</h3>
                 <p className="text-sm text-slate-400">
-                  Set the agent's site_id to <span className="font-mono text-blue-400">{currentSiteId}</span> in the config file
+                  Log in and authorize the agent for site <span className="font-mono text-blue-400">{currentSiteId}</span>
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 3: Start the Service</h3>
+                <h3 className="font-semibold text-white">Step 4: Done!</h3>
                 <p className="text-sm text-slate-400">
-                  Run the agent and refresh this page - your machine will appear above
+                  The installer completes automatically and that machine will appear above within seconds
                 </p>
               </div>
             </CardContent>

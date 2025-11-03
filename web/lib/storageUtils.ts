@@ -40,8 +40,8 @@ export async function uploadInstaller(
   const checksum = await calculateChecksum(file);
 
   // Upload to both /versions/{version}/ and /latest/
-  const versionPath = `agent-installers/versions/${version}/Owlette-Setup-${version}.exe`;
-  const latestPath = `agent-installers/latest/Owlette-Setup.exe`;
+  const versionPath = `agent-installers/versions/${version}/Owlette-Installer-v${version}.exe`;
+  const latestPath = `agent-installers/latest/Owlette-Installer.exe`;
 
   // Upload to version-specific folder
   const versionRef = ref(storage, versionPath);
@@ -105,8 +105,8 @@ export async function getInstallerDownloadUrl(version: string): Promise<string> 
 
   const path =
     version === 'latest'
-      ? 'agent-installers/latest/Owlette-Setup.exe'
-      : `agent-installers/versions/${version}/Owlette-Setup-${version}.exe`;
+      ? 'agent-installers/latest/Owlette-Installer.exe'
+      : `agent-installers/versions/${version}/Owlette-Installer-v${version}.exe`;
 
   const fileRef = ref(storage, path);
 
@@ -131,7 +131,7 @@ export async function deleteInstallerVersion(version: string): Promise<void> {
     throw new Error('Cannot delete the latest version directly');
   }
 
-  const path = `agent-installers/versions/${version}/Owlette-Setup-${version}.exe`;
+  const path = `agent-installers/versions/${version}/Owlette-Installer-v${version}.exe`;
   const fileRef = ref(storage, path);
 
   try {
