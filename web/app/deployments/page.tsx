@@ -10,11 +10,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { ChevronRight, Plus, Download, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Trash2, X } from 'lucide-react';
+import { ChevronRight, Plus, Download, CheckCircle2, XCircle, Clock, Loader2, Settings, ChevronDown, Trash2, X, MoreVertical } from 'lucide-react';
 import Image from 'next/image';
 import DeploymentDialog from '@/components/DeploymentDialog';
+import UninstallDialog from '@/components/UninstallDialog';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
+import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
@@ -22,6 +24,7 @@ export default function DeploymentsPage() {
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
+  const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -39,6 +42,16 @@ export default function DeploymentsPage() {
     cancelDeployment,
     deleteDeployment,
   } = useDeploymentManager(currentSiteId);
+
+  const { createUninstall } = useUninstall();
+
+  const handleCreateUninstall = async (softwareName: string, machineIds: string[]) => {
+    try {
+      await createUninstall(currentSiteId, softwareName, machineIds);
+    } catch (error: any) {
+      throw new Error(error.message || 'Failed to create uninstall task');
+    }
+  };
 
   // Load saved site from localStorage or use first available
   useEffect(() => {
@@ -235,18 +248,34 @@ export default function DeploymentsPage() {
           </div>
 
           <div className="flex-shrink-0">
-            <DeploymentDialog
-              open={deployDialogOpen}
-              onOpenChange={setDeployDialogOpen}
-              siteId={currentSiteId}
-              templates={templates}
-              onCreateDeployment={createDeployment}
-              onCreateTemplate={createTemplate}
-              onUpdateTemplate={updateTemplate}
-              onDeleteTemplate={deleteTemplate}
-            />
+            <Button
+              onClick={() => setDeployDialogOpen(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              New Deployment
+            </Button>
           </div>
         </div>
+
+        {/* Dialogs */}
+        <DeploymentDialog
+          open={deployDialogOpen}
+          onOpenChange={setDeployDialogOpen}
+          siteId={currentSiteId}
+          templates={templates}
+          onCreateDeployment={createDeployment}
+          onCreateTemplate={createTemplate}
+          onUpdateTemplate={updateTemplate}
+          onDeleteTemplate={deleteTemplate}
+        />
+
+        <UninstallDialog
+          open={uninstallDialogOpen}
+          onOpenChange={setUninstallDialogOpen}
+          siteId={currentSiteId}
+          onCreateUninstall={handleCreateUninstall}
+        />
 
         {/* Quick Stats */}
         <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
@@ -341,21 +370,44 @@ export default function DeploymentsPage() {
                       <span className="text-xs text-slate-500">
                         {new Date(deployment.createdAt).toLocaleString()}
                       </span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            await deleteDeployment(deployment.id);
-                          } catch (error: any) {
-                            console.error('Failed to delete deployment:', error);
-                          }
-                        }}
-                        className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-950/30 cursor-pointer"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="border-slate-700 bg-slate-800">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setUninstallDialogOpen(true);
+                            }}
+                            className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Uninstall Software
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await deleteDeployment(deployment.id);
+                              } catch (error: any) {
+                                console.error('Failed to delete deployment:', error);
+                              }
+                            }}
+                            className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
+                          >
+                            <X className="h-4 w-4 mr-2" />
+                            Delete Record
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 </CardHeader>

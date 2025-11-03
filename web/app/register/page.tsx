@@ -180,7 +180,7 @@ export default function RegisterPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleSignup}
             disabled={loading}
           >
