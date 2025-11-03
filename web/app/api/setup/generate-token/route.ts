@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour expiry
 
-    await adminDb.collection('agent_registration_codes').doc(registrationCode).set({
+    await adminDb.value.collection('agent_tokens').doc(registrationCode).set({
       siteId,
       createdBy: userId,
       createdAt: new Date(),
