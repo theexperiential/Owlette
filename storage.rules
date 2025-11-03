@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// Owlette Firebase Storage Security Rules
+// Version: 2.0.0
+// Last Updated: 2025-11-02
+//
+// Security Model:
+// - Public read access for agent installer downloads
+// - Admin-only write access for uploading installers
+// - Authenticated access for other storage (if needed in future)
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper function: Check if user is admin
+    function isAdmin() {
+      return request.auth != null &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ============================================
+    // Agent Installers - Public Read, Admin Write
+    // ============================================
+
+    match /agent-installers/{allPaths=**} {
+      // PUBLIC READ: Anyone can download agent installers
+      allow read: if true;
+
+      // ADMIN WRITE: Only admins can upload/delete installers
+      allow write, delete: if isAdmin();
+    }
+
+    // ============================================
+    // All Other Files - Authenticated Users Only
+    // ============================================
+
+    match /{allPaths=**} {
+      // Default: authenticated users can read/write their own files
+      allow read, write: if request.auth != null;
+    }
+  }
+}

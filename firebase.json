@@ -3,9 +3,16 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "emulators": {
     "firestore": {
       "port": 8080,
+      "host": "127.0.0.1"
+    },
+    "storage": {
+      "port": 9199,
       "host": "127.0.0.1"
     },
     "ui": {
