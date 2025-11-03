@@ -4,6 +4,9 @@ import React, { useEffect, useState, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
+import { useDeployments } from '@/hooks/useDeployments';
+import { useMachineOperations } from '@/hooks/useMachineOperations';
+import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,12 +14,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { toast } from 'sonner';
-import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, LogOut, Copy, Check, Pencil, Trash2 } from 'lucide-react';
-import { getUserInitials } from '@/lib/userUtils';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, Copy, Check, Pencil, Trash2, Download } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -24,6 +23,10 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
+import DownloadButton from '@/components/DownloadButton';
+import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
+import { PageHeader } from '@/components/PageHeader';
 
 type ViewType = 'card' | 'list';
 
@@ -39,8 +42,8 @@ const MemoizedTableHeader = memo(() => {
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>GPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Processes</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
+        <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -49,8 +52,10 @@ const MemoizedTableHeader = memo(() => {
 MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
-  const { user, loading, signOut } = useAuth();
+  const router = useRouter();
+  const { user, loading, signOut, isAdmin } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
+  const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
@@ -79,7 +84,12 @@ export default function DashboardPage() {
   });
 
   const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess } = useMachines(currentSiteId);
-  const router = useRouter();
+  const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
+  const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
+
+  // Remove Machine Dialog state
+  const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
+  const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
   const toggleMachineExpanded = (machineId: string) => {
     setExpandedMachines(prev => {
@@ -225,6 +235,24 @@ export default function DashboardPage() {
     }
   };
 
+  const openRemoveMachineDialog = (machineId: string, machineName: string, isOnline: boolean) => {
+    setMachineToRemove({ id: machineId, name: machineName, isOnline });
+    setRemoveMachineDialogOpen(true);
+  };
+
+  const handleConfirmRemoveMachine = async () => {
+    if (!machineToRemove) return;
+
+    try {
+      await removeMachineFromSite(machineToRemove.id);
+      toast.success(`Machine "${machineToRemove.name}" removed from site successfully!`);
+      setRemoveMachineDialogOpen(false);
+      setMachineToRemove(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to remove machine');
+    }
+  };
+
   // Load view preference from localStorage
   useEffect(() => {
     const savedView = localStorage.getItem('owlette_view_type') as ViewType;
@@ -297,147 +325,42 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-slate-950 pb-8">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
-              <h1 className="text-xl font-bold text-white">Owlette</h1>
+      <PageHeader
+        currentPage="Dashboard"
+        sites={sites}
+        currentSiteId={currentSiteId}
+        onSiteChange={handleSiteChange}
+        onManageSites={() => setManageDialogOpen(true)}
+        onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
+      />
 
-              {/* Breadcrumb separator */}
-              <ChevronRight className="h-4 w-4 text-slate-600" />
+      {/* Site Management Dialogs */}
+      <ManageSitesDialog
+        open={manageDialogOpen}
+        onOpenChange={setManageDialogOpen}
+        sites={sites}
+        currentSiteId={currentSiteId}
+        machineCount={machines.length}
+        onRenameSite={renameSite}
+        onDeleteSite={async (siteId) => {
+          await deleteSite(siteId);
+          // If we deleted the current site, switch to another one
+          if (siteId === currentSiteId) {
+            const remainingSites = sites.filter(s => s.id !== siteId);
+            if (remainingSites.length > 0) {
+              handleSiteChange(remainingSites[0].id);
+            }
+          }
+        }}
+        onCreateSite={() => setCreateDialogOpen(true)}
+      />
 
-              {/* Navigation Menu - Breadcrumb style */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer">
-                    <span className="text-lg">Dashboard</span>
-                    <ChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800">
-                  <DropdownMenuItem
-                    onClick={() => router.push('/dashboard')}
-                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-                  >
-                    Dashboard
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => router.push('/deployments')}
-                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-                  >
-                    Deploy Software
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => router.push('/projects')}
-                    className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-                  >
-                    Distribute Projects
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            {/* Site Selector - GitHub style */}
-            {sites.length > 0 && (
-              <div className="flex items-center gap-2">
-                <ChevronRight className="h-4 w-4 text-slate-600" />
-                <Select value={currentSiteId} onValueChange={handleSiteChange}>
-                  <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white cursor-pointer">
-                    <SelectValue placeholder="Select site" />
-                  </SelectTrigger>
-                  <SelectContent className="border-slate-700 bg-slate-800">
-                    {sites.map((site) => (
-                      <SelectItem
-                        key={site.id}
-                        value={site.id}
-                        className="text-white focus:bg-slate-700 focus:text-white"
-                      >
-                        {site.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setManageDialogOpen(true)}
-                  className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-
-                <ManageSitesDialog
-                  open={manageDialogOpen}
-                  onOpenChange={setManageDialogOpen}
-                  sites={sites}
-                  currentSiteId={currentSiteId}
-                  machineCount={machines.length}
-                  onRenameSite={renameSite}
-                  onDeleteSite={async (siteId) => {
-                    await deleteSite(siteId);
-                    // If we deleted the current site, switch to another one
-                    if (siteId === currentSiteId) {
-                      const remainingSites = sites.filter(s => s.id !== siteId);
-                      if (remainingSites.length > 0) {
-                        handleSiteChange(remainingSites[0].id);
-                      }
-                    }
-                  }}
-                  onCreateSite={() => setCreateDialogOpen(true)}
-                />
-
-                <CreateSiteDialog
-                  open={createDialogOpen}
-                  onOpenChange={setCreateDialogOpen}
-                  onCreateSite={createSite}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* User Menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center gap-2 h-auto py-2 px-3 hover:bg-slate-800 cursor-pointer">
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-blue-600 text-white text-sm font-medium">
-                    {getUserInitials(user)}
-                  </AvatarFallback>
-                </Avatar>
-                {user.displayName && (
-                  <span className="text-sm text-white hidden md:inline">{user.displayName}</span>
-                )}
-                <ChevronDown className="h-4 w-4 text-slate-400" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 border-slate-700 bg-slate-800">
-              <div className="px-2 py-3 text-sm">
-                {user.displayName && (
-                  <p className="font-medium text-white mb-1">{user.displayName}</p>
-                )}
-                <p className="text-xs text-slate-400 truncate">{user.email}</p>
-              </div>
-              <DropdownMenuSeparator className="bg-slate-700" />
-              <DropdownMenuItem
-                onClick={() => setAccountSettingsOpen(true)}
-                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-              >
-                <Settings className="mr-2 h-4 w-4" />
-                Account Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={signOut}
-                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-              >
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
+      <CreateSiteDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreateSite={createSite}
+      />
 
       {/* Main content */}
       <main className="mx-auto max-w-7xl p-3 md:p-4">
@@ -469,13 +392,13 @@ export default function DashboardPage() {
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-semibold mb-1">Use this Site ID when installing the agent</p>
+                  <p className="font-semibold mb-1">Your Site ID</p>
                   <p className="text-xs text-slate-300">
-                    Run the installer on your Windows machine and enter this Site ID when prompted,
-                    or set it in <span className="font-mono">config/config.json</span>
+                    This site ID will be automatically configured when you run the installer
+                    and complete the OAuth authorization in your browser
                   </p>
                   <p className="text-xs text-slate-400 mt-2">
-                    Download from: <span className="font-mono text-blue-400">owlette.app</span>
+                    Download installer from: <span className="font-mono text-blue-400">dev.owlette.app</span>
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -556,9 +479,18 @@ export default function DashboardPage() {
                   <CardHeader className="pb-3 md:pb-6">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base md:text-lg text-white select-text">{machine.machineId}</CardTitle>
-                      <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                        {machine.online ? 'Online' : 'Offline'}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                          {machine.online ? 'Online' : 'Offline'}
+                        </Badge>
+                        <MachineContextMenu
+                          machineId={machine.machineId}
+                          machineName={machine.machineId}
+                          siteId={currentSiteId}
+                          isOnline={machine.online}
+                          onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
+                        />
+                      </div>
                     </div>
                     <CardDescription className="text-xs md:text-sm text-slate-400 select-none hidden md:block">
                       Last heartbeat: {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
@@ -779,11 +711,17 @@ export default function DashboardPage() {
                               <span className="text-slate-500">N/A</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-white">
-                            {machine.processes ? machine.processes.length : 0}
-                          </TableCell>
                           <TableCell className="text-slate-400 text-xs">
                             {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <MachineContextMenu
+                              machineId={machine.machineId}
+                              machineName={machine.machineId}
+                              siteId={currentSiteId}
+                              isOnline={machine.online}
+                              onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
+                            />
                           </TableCell>
                         </TableRow>
 
@@ -889,21 +827,80 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 1: Install Owlette Agent</h3>
+                <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
+                <p className="text-sm text-slate-400 mb-4">
+                  Download and run the installer <strong className="text-white">on the machine you want to add</strong> (not necessarily this one).
+                  Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      if (!downloadUrl) {
+                        toast.error('Download Unavailable', {
+                          description: 'Installer download URL is not available.',
+                        });
+                        return;
+                      }
+                      try {
+                        window.open(downloadUrl, '_blank');
+                        toast.success('Download Started', {
+                          description: `Downloading Owlette v${version}`,
+                        });
+                      } catch (err) {
+                        toast.error('Download Failed', {
+                          description: 'Failed to start download. Please try again.',
+                        });
+                      }
+                    }}
+                    disabled={!downloadUrl}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    <span>Download {version && `v${version}`}</span>
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!downloadUrl) {
+                        toast.error('Copy Failed', {
+                          description: 'Download URL is not available.',
+                        });
+                        return;
+                      }
+                      try {
+                        navigator.clipboard.writeText(downloadUrl);
+                        toast.success('Link Copied', {
+                          description: 'Download link copied to clipboard',
+                        });
+                      } catch (err) {
+                        toast.error('Copy Failed', {
+                          description: 'Failed to copy link. Please try again.',
+                        });
+                      }
+                    }}
+                    disabled={!downloadUrl}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    <span>Copy Link</span>
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+                <h3 className="font-semibold text-white">Step 2: Run the Installer</h3>
                 <p className="text-sm text-slate-400">
-                  Download and install the Owlette agent on your Windows machine
+                  On that machine, double-click the installer - it will automatically open a browser for authentication
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 2: Configure Site ID</h3>
+                <h3 className="font-semibold text-white">Step 3: Authorize Agent</h3>
                 <p className="text-sm text-slate-400">
-                  Set the agent's site_id to <span className="font-mono text-blue-400">{currentSiteId}</span> in the config file
+                  Log in and authorize the agent for site <span className="font-mono text-blue-400">{currentSiteId}</span>
                 </p>
               </div>
               <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white">Step 3: Start the Service</h3>
+                <h3 className="font-semibold text-white">Step 4: Done!</h3>
                 <p className="text-sm text-slate-400">
-                  Run the agent and refresh this page - your machine will appear above
+                  The installer completes automatically and that machine will appear above within seconds
                 </p>
               </div>
             </CardContent>
@@ -1124,6 +1121,20 @@ export default function DashboardPage() {
         open={accountSettingsOpen}
         onOpenChange={setAccountSettingsOpen}
       />
+
+      {/* Remove Machine Dialog */}
+      {machineToRemove && (
+        <RemoveMachineDialog
+          open={removeMachineDialogOpen}
+          onOpenChange={setRemoveMachineDialogOpen}
+          machineId={machineToRemove.id}
+          machineName={machineToRemove.name}
+          isOnline={machineToRemove.isOnline}
+          hasActiveDeployments={checkMachineHasActiveDeployment(machineToRemove.id)}
+          isRemoving={isRemovingMachine}
+          onConfirmRemove={handleConfirmRemoveMachine}
+        />
+      )}
     </div>
   );
 }

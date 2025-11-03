@@ -73,7 +73,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
       <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
@@ -87,7 +87,7 @@ export default function RegisterPage() {
           <div className="space-y-1 text-center">
             <CardTitle className="text-2xl font-bold text-white">Create an account</CardTitle>
             <CardDescription className="text-slate-400">
-              Always Watching - Join Owlette for remote fleet management
+              Join Owlette to manage your fleet
             </CardDescription>
           </div>
         </CardHeader>
@@ -180,7 +180,7 @@ export default function RegisterPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleSignup}
             disabled={loading}
           >

@@ -10,6 +10,7 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 // Firebase configuration
 // These values come from Firebase Console > Project Settings > Web App
@@ -31,15 +32,18 @@ const isConfigured = typeof window !== 'undefined' &&
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
+let storage: FirebaseStorage | null = null;
 
 if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
+  storage = getStorage(app);
 } else if (typeof window !== 'undefined' && getApps().length) {
   app = getApps()[0];
   auth = getAuth(app);
   db = getFirestore(app);
+  storage = getStorage(app);
 }
 
-export { app, auth, db, isConfigured };
+export { app, auth, db, storage, isConfigured };

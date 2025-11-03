@@ -9,6 +9,7 @@ if src_dir not in sys.path:
 import shared_utils
 import installer_utils
 import project_utils
+import registry_utils
 import win32serviceutil
 import win32service
 import win32event
@@ -115,19 +116,33 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             if firebase_enabled:
                 try:
+                    # Get configuration
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
-                    credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                    project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
+                    api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
                     cache_path = shared_utils.get_path('../config/firebase_cache.json')
 
-                    logging.info(f"Firebase paths - credentials: {credentials_path}, cache: {cache_path}")
-                    logging.info(f"Firebase site_id: {site_id}")
+                    logging.info(f"Firebase config - site: {site_id}, project: {project_id}")
 
-                    self.firebase_client = FirebaseClient(
-                        credentials_path=credentials_path,
-                        site_id=site_id,
-                        config_cache_path=cache_path
-                    )
-                    logging.info(f"Firebase client initialized for site: {site_id}")
+                    # Initialize OAuth authentication manager
+                    from auth_manager import AuthManager
+                    auth_manager = AuthManager(api_base=api_base)
+
+                    # Check if authenticated
+                    if not auth_manager.is_authenticated():
+                        logging.error("Agent not authenticated - no refresh token found")
+                        logging.error("Please run the installer or re-authenticate via web dashboard")
+                        self.firebase_client = None
+                    else:
+                        # Initialize Firebase client with OAuth
+                        self.firebase_client = FirebaseClient(
+                            auth_manager=auth_manager,
+                            project_id=project_id,
+                            site_id=site_id,
+                            config_cache_path=cache_path
+                        )
+                        logging.info(f"Firebase client initialized for site: {site_id}")
+
                 except Exception as e:
                     logging.error(f"Failed to initialize Firebase client: {e}")
                     logging.exception("Firebase initialization error details:")
@@ -960,6 +975,149 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if success:
                     logging.info(f"Installation cancelled: {installer_name}")
                     return f"Installation cancelled: {installer_name}"
+                else:
+                    logging.warning(f"Cancellation failed: {message}")
+                    return f"Cancellation failed: {message}"
+
+            elif cmd_type == 'uninstall_software':
+                # Uninstall software using registry-detected uninstall command
+                software_name = cmd_data.get('software_name')
+                uninstall_command = cmd_data.get('uninstall_command')
+                silent_flags = cmd_data.get('silent_flags', '')
+                installer_type = cmd_data.get('installer_type', 'custom')
+                verify_paths = cmd_data.get('verify_paths', [])  # Paths to verify removal
+                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+
+                if not software_name or not uninstall_command:
+                    return "Error: Software name and uninstall command required"
+
+                logging.info(f"Starting software uninstallation: {software_name}")
+                logging.info(f"Uninstall command: {uninstall_command}")
+                logging.info(f"Installer type: {installer_type}")
+                logging.info(f"Timeout: {timeout_seconds} seconds")
+
+                # Build complete silent uninstall command
+                if not silent_flags:
+                    # Auto-detect silent flags if not provided
+                    silent_flags = registry_utils.get_silent_uninstall_flags(installer_type)
+                    logging.info(f"Auto-detected silent flags: {silent_flags}")
+
+                complete_command = registry_utils.build_silent_uninstall_command(
+                    uninstall_command,
+                    installer_type
+                ) if not silent_flags else f"{uninstall_command} {silent_flags}"
+
+                logging.info(f"Complete uninstall command: {complete_command}")
+
+                try:
+                    # Update status: uninstalling
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'uninstalling', deployment_id)
+
+                    # Execute the uninstaller (track for cancellation)
+                    logging.info("Executing uninstaller with silent flags")
+
+                    # Use installer_utils.execute_installer since it handles process tracking
+                    # For uninstall, we don't have a file path, so we'll use subprocess directly
+                    import subprocess
+
+                    # Track process name for cancellation
+                    uninstall_process_name = f"uninstall_{software_name.replace(' ', '_')}"
+
+                    process = subprocess.Popen(
+                        complete_command,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+
+                    # Track process for potential cancellation
+                    self.active_installations[uninstall_process_name] = process
+                    logging.info(f"Tracking uninstall process: {uninstall_process_name} (PID: {process.pid})")
+
+                    # Wait for uninstallation to complete
+                    try:
+                        stdout, stderr = process.communicate(timeout=timeout_seconds)
+                        exit_code = process.returncode
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        if uninstall_process_name in self.active_installations:
+                            del self.active_installations[uninstall_process_name]
+                        return f"Error: Uninstallation timeout (exceeded {timeout_seconds} seconds)"
+
+                    # Remove from active processes once complete
+                    if uninstall_process_name in self.active_installations:
+                        del self.active_installations[uninstall_process_name]
+
+                    logging.info(f"Uninstaller exit code: {exit_code}")
+
+                    # Check if uninstallation was successful
+                    # Note: Some uninstallers return non-zero even on success
+                    if exit_code not in [0, 3010]:  # 0 = success, 3010 = success but reboot required
+                        logging.warning(f"Uninstaller returned exit code {exit_code}")
+                        if stderr:
+                            logging.error(f"Uninstaller stderr: {stderr}")
+
+                    # Verify uninstallation
+                    verification_results = []
+                    if verify_paths:
+                        for verify_path in verify_paths:
+                            if verify_path:
+                                # Check if path still exists (should NOT exist after uninstall)
+                                import os
+                                path_exists = os.path.exists(verify_path)
+                                verification_results.append({
+                                    'path': verify_path,
+                                    'removed': not path_exists
+                                })
+                                if path_exists:
+                                    logging.warning(f"Verification: Path still exists after uninstall: {verify_path}")
+                                else:
+                                    logging.info(f"Verification: Path successfully removed: {verify_path}")
+
+                    # Check if software still appears in registry
+                    registry_check = registry_utils.search_software_by_name(software_name)
+                    still_in_registry = len(registry_check) > 0
+
+                    if still_in_registry:
+                        logging.warning(f"Software still appears in registry after uninstall: {software_name}")
+                        result_msg = f"Uninstall completed with exit code {exit_code}, but software still appears in registry (may require reboot)"
+                    elif any(not vr['removed'] for vr in verification_results):
+                        result_msg = f"Uninstall completed with exit code {exit_code}, but some files remain (may require reboot)"
+                    else:
+                        result_msg = f"Uninstall completed successfully (exit code {exit_code})"
+
+                    logging.info(result_msg)
+                    return result_msg
+
+                except Exception as e:
+                    error_msg = f"Unexpected error during uninstallation: {e}"
+                    logging.error(error_msg)
+                    logging.exception("Uninstall error details:")
+                    return f"Error: {error_msg}"
+
+            elif cmd_type == 'cancel_uninstall':
+                # Cancel an active uninstallation
+                software_name = cmd_data.get('software_name')
+
+                if not software_name:
+                    return "Error: No software name provided for cancellation"
+
+                # Build process tracking name
+                uninstall_process_name = f"uninstall_{software_name.replace(' ', '_')}"
+                logging.info(f"Cancellation requested for: {uninstall_process_name}")
+
+                # Attempt to cancel the uninstallation
+                success, message = installer_utils.cancel_installation(
+                    uninstall_process_name,
+                    self.active_installations
+                )
+
+                if success:
+                    logging.info(f"Uninstallation cancelled: {software_name}")
+                    return f"Uninstallation cancelled: {software_name}"
                 else:
                     logging.warning(f"Cancellation failed: {message}")
                     return f"Cancellation failed: {message}"

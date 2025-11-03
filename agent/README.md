@@ -40,13 +40,12 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
    - Or use the GUI: `python src/owlette_gui.py`
    - Or manage from web portal (coming in Phase 2)
 
-3. **Add Firebase later** (optional):
-   - Re-run `install.bat` and choose "Yes" for Firebase
-   - Or manually:
-     - Download service account key from [Firebase Console](https://console.firebase.google.com/)
-     - Save as `config/firebase-credentials.json`
-     - Edit `config/config.json`: set `firebase.enabled` to `true`
-     - Restart service: `net stop OwletteService && net start OwletteService`
+3. **Connect to Owlette Dashboard**:
+   - Download the installer from the Owlette web dashboard
+   - Run the installer - it will automatically open your browser
+   - Log in and authorize the agent via OAuth
+   - Installation completes automatically with secure token storage
+   - See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for detailed OAuth flow documentation
 
 ---
 
@@ -108,13 +107,15 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 | `enabled` | Enable Firebase cloud features |
 | `site_id` | Unique identifier for this site/location |
 
-**To get Firebase credentials:**
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Select your project → Settings (⚙️) → Service Accounts
-3. Click "Generate new private key"
-4. Save the JSON file as `config/firebase-credentials.json`
+**To connect to Owlette Dashboard:**
 
-See [docs/firebase-setup.md](../docs/firebase-setup.md) for detailed Firebase setup.
+Modern installations use OAuth authentication (no manual credentials needed):
+1. Download installer from the Owlette web dashboard
+2. Run installer - browser opens automatically for OAuth authorization
+3. Tokens stored securely in Windows Credential Manager
+4. See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the OAuth flow details
+
+Legacy service account setup is deprecated. Use the OAuth flow above for all new installations.
 
 ---
 
@@ -145,9 +146,9 @@ If `install.bat` doesn't work, follow these manual steps:
    copy config.template.json config\config.json
    ```
 
-5. **Add Firebase credentials** (optional but recommended)
-   - Download from Firebase Console
-   - Save as `config/firebase-credentials.json`
+5. **Connect to Owlette Dashboard** (optional but recommended)
+   - Use the OAuth installer from the web dashboard (recommended)
+   - Or for manual/development setups, see [INSTALLER-USAGE.md](INSTALLER-USAGE.md)
 
 6. **Install service**
    ```cmd
@@ -234,7 +235,7 @@ python owlette_service.py remove
 1. **Check logs**: `logs/service.log`
 2. **Verify Python**: `python --version` should be 3.9+
 3. **Check permissions**: Service needs admin rights
-4. **Firebase credentials**: If enabled, ensure `config/firebase-credentials.json` exists
+4. **Check OAuth tokens**: If using dashboard, ensure agent completed OAuth authorization
 
 ### Processes won't launch
 
@@ -243,13 +244,15 @@ python owlette_service.py remove
 3. **Check logs**: Look for errors in `logs/service.log`
 4. **Increase `time_to_init`**: Some apps need more time to start
 
-### Firebase not connecting
+### Dashboard not connecting
 
-1. **Check credentials**: Ensure `config/firebase-credentials.json` is valid
-2. **Check internet**: Service needs internet for Firebase
-3. **Check config**: Ensure `firebase.enabled` is `true`
-4. **Check logs**: Look for Firebase errors in `logs/service.log`
-5. **Offline mode**: Service will continue with cached config if Firebase unavailable
+1. **Check authentication**: Ensure OAuth authorization completed successfully
+2. **Check tokens**: Tokens stored in Windows Credential Manager (use `auth_manager.py` to verify)
+3. **Check internet**: Service needs internet to connect to dashboard
+4. **Check config**: Ensure `firebase.enabled` is `true` in `config/config.json`
+5. **Check logs**: Look for authentication errors in `logs/service.log`
+6. **Offline mode**: Service will continue with cached config if dashboard unavailable
+7. **Re-authenticate**: Run installer again to refresh OAuth tokens if expired
 
 ### "Access Denied" errors
 
@@ -270,8 +273,7 @@ agent/
 │   ├── owlette_tray.py        # System tray icon
 │   └── ...
 ├── config/                    # Configuration (gitignored)
-│   ├── config.json            # Main config
-│   └── firebase-credentials.json  # Firebase key
+│   └── config.json            # Main config (OAuth tokens stored in Windows Credential Manager)
 ├── logs/                      # Log files (gitignored)
 │   └── service.log
 ├── tmp/                       # Temporary files (gitignored)
@@ -300,6 +302,26 @@ agent/
 - Process monitoring and auto-restart
 - System tray interface
 - Configuration GUI
+
+---
+
+## Developer Documentation
+
+### Building the Installer
+
+See [BUILD.md](BUILD.md) for comprehensive instructions on building the installer:
+
+- **Full Build**: Complete rebuild with embedded Python (~5-10 min)
+- **Quick Rebuild**: Fast iteration during development (~2 min)
+- Testing procedures and troubleshooting
+
+### End-User Documentation
+
+- **[INSTALLER-USAGE.md](INSTALLER-USAGE.md)** - Installation guide for end users
+  - Environment selection (dev/prod)
+  - OAuth authentication flow
+  - Silent installation
+  - Troubleshooting
 
 ---
 

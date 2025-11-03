@@ -97,7 +97,7 @@ echo.
 echo ----------------------------------------------------------------
 echo Firebase Setup Instructions:
 echo ----------------------------------------------------------------
-echo 1. Go to: https://owlette.app
+echo 1. Go to: https://dev.owlette.app
 echo 2. Log in or create an account
 echo 3. Create or select a site from the dashboard
 echo 4. Copy the Site ID shown in the dashboard (click to copy)
@@ -114,7 +114,7 @@ echo ----------------------------------------------------------------
 echo.
 
 :: Prompt for site ID
-set /p SITE_ID="Enter your Site ID from owlette.app: "
+set /p SITE_ID="Enter your Site ID from dev.owlette.app: "
 if "%SITE_ID%"=="" (
     echo Site ID cannot be empty. Using default: %COMPUTERNAME%
     set SITE_ID=%COMPUTERNAME%
@@ -136,7 +136,7 @@ goto continue_install
 echo.
 echo Firebase setup skipped. Owlette will run in local-only mode.
 echo You can enable Firebase later by:
-echo  1. Creating an account at https://owlette.app
+echo  1. Creating an account at https://dev.owlette.app
 echo  2. Re-running install.bat
 echo  3. Or manually editing config\config.json
 echo.

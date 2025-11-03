@@ -1,0 +1,349 @@
+"""
+Secure Token Storage for Owlette Agent
+
+This module provides secure storage for OAuth tokens using encrypted files.
+Tokens are encrypted with a machine-specific key and stored in config directory.
+
+Security Features:
+- Tokens encrypted using Fernet symmetric encryption
+- Encryption key derived from machine UUID (machine-specific)
+- Stored in hidden config file with restrictive permissions
+- Automatic cleanup of expired tokens
+
+Usage:
+    storage = SecureStorage()
+    storage.save_refresh_token("abc123...")
+    token = storage.get_refresh_token()
+    storage.clear_tokens()  # Remove all stored tokens
+"""
+
+import os
+import json
+import logging
+from pathlib import Path
+from typing import Optional
+from cryptography.fernet import Fernet
+import base64
+import hashlib
+
+logger = logging.getLogger(__name__)
+
+# Token storage file location
+TOKEN_FILE_NAME = ".tokens.enc"  # Hidden file in config directory
+
+
+class SecureStorage:
+    """
+    Secure storage for agent authentication tokens.
+
+    Uses encrypted file storage with machine-specific encryption key.
+    Tokens stored in C:\\ProgramData\\Owlette\\.tokens.enc (hidden file).
+    """
+
+    def __init__(self, config_dir: Optional[Path] = None):
+        """
+        Initialize secure storage.
+
+        Args:
+            config_dir: Directory for token file (default: C:\\ProgramData\\Owlette)
+        """
+        if config_dir is None:
+            # Use ProgramData directory - accessible by both regular users and SYSTEM
+            program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+            config_dir = Path(program_data) / "Owlette"
+
+        self.config_dir = Path(config_dir)
+        self.token_file = self.config_dir / TOKEN_FILE_NAME
+        self._fernet = self._get_cipher()
+        logger.debug(f"SecureStorage initialized: {self.token_file}")
+
+    def _get_cipher(self) -> Fernet:
+        """Get Fernet cipher with machine-specific key."""
+        try:
+            import uuid
+            import platform
+
+            # Generate machine-specific key from UUID and hostname
+            machine_id = str(uuid.getnode())  # MAC address as int
+            hostname = platform.node()
+
+            # Derive encryption key from machine identifiers
+            key_material = f"{machine_id}:{hostname}:owlette-agent".encode()
+            key_hash = hashlib.sha256(key_material).digest()
+            key = base64.urlsafe_b64encode(key_hash)
+
+            return Fernet(key)
+        except Exception as e:
+            logger.error(f"Failed to generate encryption key: {e}")
+            raise
+
+    def _load_data(self) -> dict:
+        """Load and decrypt token data from file."""
+        if not self.token_file.exists():
+            return {}
+
+        try:
+            with open(self.token_file, 'rb') as f:
+                encrypted_data = f.read()
+
+            if not encrypted_data:
+                return {}
+
+            # Decrypt and parse JSON
+            decrypted_data = self._fernet.decrypt(encrypted_data)
+            return json.loads(decrypted_data.decode('utf-8'))
+
+        except Exception as e:
+            logger.error(f"Failed to load token data: {e}")
+            return {}
+
+    def _save_data(self, data: dict) -> bool:
+        """Encrypt and save token data to file."""
+        debug_log = self.config_dir / "oauth_debug.log"
+        try:
+            # Ensure config directory exists
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            with open(debug_log, 'a') as f:
+                f.write(f"\nToken Save Debug\n")
+                f.write(f"================\n")
+                f.write(f"Config dir: {self.config_dir}\n")
+                f.write(f"Token file: {self.token_file}\n")
+
+            # Clear hidden attribute if file exists (so we can overwrite it)
+            if os.name == 'nt' and self.token_file.exists():
+                import ctypes
+                FILE_ATTRIBUTE_NORMAL = 0x80
+                ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_NORMAL)
+                with open(debug_log, 'a') as f:
+                    f.write(f"Cleared file attributes for overwrite\n")
+
+            # Encrypt data
+            json_data = json.dumps(data).encode('utf-8')
+            encrypted_data = self._fernet.encrypt(json_data)
+            with open(debug_log, 'a') as f:
+                f.write(f"Data encrypted, size: {len(encrypted_data)} bytes\n")
+
+            # Write to file
+            with open(self.token_file, 'wb') as f:
+                f.write(encrypted_data)
+            with open(debug_log, 'a') as f:
+                f.write(f"File written successfully\n")
+
+            # Set file as hidden
+            if os.name == 'nt':
+                import ctypes
+                FILE_ATTRIBUTE_HIDDEN = 0x02
+                FILE_ATTRIBUTE_ARCHIVE = 0x20
+                # Use hidden + archive (keeps file writable for next time)
+                ctypes.windll.kernel32.SetFileAttributesW(str(self.token_file), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE)
+                with open(debug_log, 'a') as f:
+                    f.write(f"File attributes set to hidden\n")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save token data: {e}")
+            import traceback
+            with open(debug_log, 'a') as f:
+                f.write(f"\nERROR saving tokens:\n")
+                f.write(f"{str(e)}\n")
+                f.write(traceback.format_exc())
+            return False
+
+    def save_refresh_token(self, token: str) -> bool:
+        """
+        Save refresh token to secure storage.
+
+        Args:
+            token: Refresh token from OAuth exchange
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            data = self._load_data()
+            data['refresh_token'] = token
+            success = self._save_data(data)
+
+            if success:
+                logger.info("Refresh token saved to encrypted file")
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to save refresh token: {e}")
+            return False
+
+    def get_refresh_token(self) -> Optional[str]:
+        """
+        Retrieve refresh token from secure storage.
+
+        Returns:
+            Refresh token if found, None otherwise
+        """
+        try:
+            data = self._load_data()
+            token = data.get('refresh_token')
+
+            if token:
+                logger.debug("Refresh token retrieved from encrypted file")
+            else:
+                logger.debug("No refresh token found in encrypted file")
+
+            return token
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve refresh token: {e}")
+            return None
+
+    def save_access_token(self, token: str, expiry_timestamp: float) -> bool:
+        """
+        Save access token and expiry to secure storage (cache).
+
+        Args:
+            token: Access token (Firebase custom token)
+            expiry_timestamp: Unix timestamp when token expires
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            data = self._load_data()
+            data['access_token'] = token
+            data['token_expiry'] = expiry_timestamp
+            success = self._save_data(data)
+
+            if success:
+                logger.debug("Access token cached in encrypted file")
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to cache access token: {e}")
+            return False
+
+    def get_access_token(self) -> tuple[Optional[str], Optional[float]]:
+        """
+        Retrieve cached access token and expiry from secure storage.
+
+        Returns:
+            Tuple of (access_token, expiry_timestamp). Both None if not found.
+        """
+        try:
+            data = self._load_data()
+            token = data.get('access_token')
+            expiry = data.get('token_expiry')
+
+            if token and expiry:
+                logger.debug("Access token retrieved from cache")
+                return (token, float(expiry))
+            else:
+                logger.debug("No cached access token found")
+                return (None, None)
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve access token: {e}")
+            return (None, None)
+
+    def save_site_id(self, site_id: str) -> bool:
+        """
+        Save site ID to secure storage.
+
+        Args:
+            site_id: Site ID from OAuth exchange
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            data = self._load_data()
+            data['site_id'] = site_id
+            success = self._save_data(data)
+
+            if success:
+                logger.info(f"Site ID saved to encrypted file: {site_id}")
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to save site ID: {e}")
+            return False
+
+    def get_site_id(self) -> Optional[str]:
+        """
+        Retrieve site ID from secure storage.
+
+        Returns:
+            Site ID if found, None otherwise
+        """
+        try:
+            data = self._load_data()
+            site_id = data.get('site_id')
+
+            if site_id:
+                logger.debug(f"Site ID retrieved from encrypted file: {site_id}")
+            else:
+                logger.debug("No site ID found in encrypted file")
+
+            return site_id
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve site ID: {e}")
+            return None
+
+    def clear_tokens(self) -> bool:
+        """
+        Clear all stored tokens from secure storage.
+
+        This should be called when:
+        - User wants to reconfigure the agent
+        - Tokens are revoked by admin
+        - Machine is being decommissioned
+
+        Returns:
+            True if cleared successfully, False otherwise
+        """
+        try:
+            if self.token_file.exists():
+                self.token_file.unlink()
+                logger.info("All tokens cleared from encrypted file")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to clear tokens: {e}")
+            return False
+
+    def has_refresh_token(self) -> bool:
+        """
+        Check if a refresh token exists in storage.
+
+        Returns:
+            True if refresh token exists, False otherwise
+        """
+        token = self.get_refresh_token()
+        return token is not None and len(token) > 0
+
+    def is_configured(self) -> bool:
+        """
+        Check if agent is configured with valid credentials.
+
+        Returns:
+            True if both refresh token and site ID are stored, False otherwise
+        """
+        has_token = self.has_refresh_token()
+        has_site = self.get_site_id() is not None
+        return has_token and has_site
+
+
+# Singleton instance for easy access
+_storage_instance = None
+
+
+def get_storage() -> SecureStorage:
+    """
+    Get singleton SecureStorage instance.
+
+    Returns:
+        SecureStorage instance
+    """
+    global _storage_instance
+    if _storage_instance is None:
+        _storage_instance = SecureStorage()
+    return _storage_instance

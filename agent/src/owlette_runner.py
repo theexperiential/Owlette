@@ -13,11 +13,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import shared_utils
 
-# Initialize Firebase import
+# Initialize Firebase and Auth imports
 FIREBASE_AVAILABLE = False
 FIREBASE_IMPORT_ERROR = None
 try:
     from firebase_client import FirebaseClient
+    from auth_manager import AuthManager
     FIREBASE_AVAILABLE = True
 except ImportError as e:
     FIREBASE_IMPORT_ERROR = str(e)
@@ -75,18 +76,29 @@ if __name__ == '__main__':
                 if firebase_enabled:
                     try:
                         site_id = shared_utils.read_config(['firebase', 'site_id'])
-                        credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                        project_id = shared_utils.read_config(['firebase', 'project_id'])
+                        api_base = shared_utils.read_config(['firebase', 'api_base'])
                         cache_path = shared_utils.get_path('../config/firebase_cache.json')
 
-                        logging.info(f"Firebase paths - credentials: {credentials_path}, cache: {cache_path}")
-                        logging.info(f"Firebase site_id: {site_id}")
+                        logging.info(f"Firebase config - site_id: {site_id}, project_id: {project_id}")
+                        logging.info(f"Firebase API base: {api_base}")
 
-                        self.firebase_client = FirebaseClient(
-                            credentials_path=credentials_path,
-                            site_id=site_id,
-                            config_cache_path=cache_path
-                        )
-                        logging.info(f"Firebase client initialized for site: {site_id}")
+                        # Initialize AuthManager
+                        auth_manager = AuthManager(api_base=api_base)
+
+                        if not auth_manager.is_authenticated():
+                            logging.error("Agent not authenticated - no refresh token found in Windows Credential Manager")
+                            logging.error("Please run the installer to complete OAuth authentication")
+                            self.firebase_client = None
+                        else:
+                            logging.info("Agent authenticated - OAuth tokens found")
+                            self.firebase_client = FirebaseClient(
+                                auth_manager=auth_manager,
+                                project_id=project_id,
+                                site_id=site_id,
+                                config_cache_path=cache_path
+                            )
+                            logging.info(f"Firebase client initialized for site: {site_id}")
                     except Exception as e:
                         logging.error(f"Failed to initialize Firebase client: {e}")
                         logging.exception("Firebase initialization error details:")

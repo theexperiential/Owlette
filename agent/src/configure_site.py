@@ -1,13 +1,28 @@
 """
 Owlette Site Configuration - OAuth Flow
-Runs during installer to configure Firebase site_id via browser-based authentication.
+Runs during installer to configure Firebase site_id via browser-based OAuth authentication.
 
 This script:
 1. Starts an HTTP server on localhost:8765
-2. Opens the user's browser to owlette.app/setup
-3. Waits for callback with site_id and token
-4. Writes configuration to config.json
-5. Returns success/failure status
+2. Opens the user's browser to dev.owlette.app/setup (or owlette.app/setup if --url specified)
+3. Waits for callback with site_id and registration code
+4. Exchanges registration code for OAuth tokens (access + refresh)
+5. Stores tokens securely in Windows Credential Manager (not config.json)
+6. Writes minimal configuration to config.json (site_id, project_id, api_base)
+7. Returns success/failure status
+
+OAuth Flow:
+- Registration code (from callback) → Access token + Refresh token (via API)
+- Access token: Short-lived (1h), used for Firestore API calls
+- Refresh token: Long-lived (30d), stored encrypted, used to get new access tokens
+
+Usage:
+    python configure_site.py [--url URL]
+
+    --url URL    Override the setup URL (default: https://owlette.app/setup)
+                 Examples:
+                   python configure_site.py --url https://dev.owlette.app/setup
+                   python configure_site.py --url https://owlette.app/setup
 """
 
 import http.server
@@ -17,12 +32,13 @@ import json
 import os
 import sys
 import time
+import argparse
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
 # Configuration
 CALLBACK_PORT = 8765
-WEB_APP_URL = os.environ.get("OWLETTE_SETUP_URL", "https://owlette.app/setup")
+DEFAULT_URL = "https://owlette.app/setup"
 TIMEOUT_SECONDS = 300  # 5 minutes
 
 # Determine config path relative to script location
@@ -32,6 +48,7 @@ CONFIG_PATH = SCRIPT_DIR.parent / "config" / "config.json"
 # Global state
 received_config = None
 server_error = None
+web_app_url = None  # Set in main(), used in save_config()
 
 
 class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -45,13 +62,13 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == '/callback':
             params = parse_qs(parsed.query)
             site_id = params.get('site_id', [None])[0]
-            token = params.get('token', [None])[0]
+            registration_code = params.get('token', [None])[0]  # 'token' param contains registration code
 
-            if site_id and token:
+            if site_id and registration_code:
                 try:
-                    # Save configuration
-                    self.save_config(site_id, token)
-                    received_config = {'site_id': site_id, 'token': token}
+                    # Exchange registration code for OAuth tokens and save configuration
+                    self.save_config(site_id, registration_code)
+                    received_config = {'site_id': site_id, 'registration_code': registration_code}
 
                     # Send success response
                     self.send_response(200)
@@ -63,17 +80,98 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
                     <html>
                     <head>
                         <title>Owlette Configuration Complete</title>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <style>
-                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-                            h1 { color: #4CAF50; }
-                            .checkmark { font-size: 100px; color: #4CAF50; }
+                            * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                            }
+                            body {
+                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+                                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+                                color: #e2e8f0;
+                                min-height: 100vh;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                padding: 20px;
+                            }
+                            .container {
+                                text-align: center;
+                                max-width: 500px;
+                            }
+                            .logo {
+                                font-size: 120px;
+                                margin-bottom: 30px;
+                                filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.3));
+                                animation: fadeIn 0.6s ease-out;
+                            }
+                            h1 {
+                                color: #10b981;
+                                font-size: 2.5rem;
+                                font-weight: 700;
+                                margin-bottom: 20px;
+                                animation: fadeIn 0.8s ease-out;
+                            }
+                            .message {
+                                color: #cbd5e1;
+                                font-size: 1.1rem;
+                                line-height: 1.6;
+                                margin-bottom: 15px;
+                                animation: fadeIn 1s ease-out;
+                            }
+                            .checkmark {
+                                display: inline-block;
+                                width: 80px;
+                                height: 80px;
+                                border-radius: 50%;
+                                background: #10b981;
+                                position: relative;
+                                margin: 20px auto 30px;
+                                animation: scaleIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+                            }
+                            .checkmark::after {
+                                content: '✓';
+                                position: absolute;
+                                top: 50%;
+                                left: 50%;
+                                transform: translate(-50%, -50%);
+                                color: white;
+                                font-size: 48px;
+                                font-weight: bold;
+                            }
+                            @keyframes fadeIn {
+                                from {
+                                    opacity: 0;
+                                    transform: translateY(20px);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: translateY(0);
+                                }
+                            }
+                            @keyframes scaleIn {
+                                from {
+                                    opacity: 0;
+                                    transform: scale(0);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: scale(1);
+                                }
+                            }
                         </style>
                     </head>
                     <body>
-                        <div class="checkmark">✓</div>
-                        <h1>Configuration Complete!</h1>
-                        <p>Your Owlette agent has been configured successfully.</p>
-                        <p>You can close this window and return to the installer.</p>
+                        <div class="container">
+                            <div class="logo">🦉</div>
+                            <div class="checkmark"></div>
+                            <h1>Configuration Complete!</h1>
+                            <p class="message">Your Owlette agent has been configured successfully.</p>
+                            <p class="message">You can close this window and return to the installer.</p>
+                        </div>
                     </body>
                     </html>
                     """
@@ -83,7 +181,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
                     server_error = str(e)
                     self.send_error(500, f"Configuration error: {e}")
             else:
-                server_error = "Missing site_id or token in callback"
+                server_error = "Missing site_id or registration_code in callback"
                 self.send_error(400, server_error)
 
         elif parsed.path == '/health':
@@ -95,10 +193,66 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def save_config(self, site_id, token):
-        """Write site_id and token to config.json"""
+    def save_config(self, site_id, registration_code):
+        """
+        Exchange registration code for OAuth tokens and save configuration.
+
+        Args:
+            site_id: Site ID from OAuth callback
+            registration_code: Registration code to exchange for tokens
+        """
         # Ensure config directory exists
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        # Import auth_manager here to avoid import errors if not installed
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from auth_manager import AuthManager, AuthenticationError
+
+        # Determine API base URL from setup URL
+        # If using dev.owlette.app, use dev API. Otherwise production API.
+        global web_app_url
+        # Use the global web_app_url set in main(), or fall back to env var + default
+        url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
+        if 'dev.owlette.app' in url_to_check:
+            api_base = "https://dev.owlette.app/api"
+            project_id = "owlette-dev-3838a"
+        else:
+            api_base = "https://owlette.app/api"
+            project_id = "owlette-prod"  # Update this with actual prod project ID
+
+        print(f"  API Base: {api_base}")
+        print(f"  Project ID: {project_id}")
+        print()
+        print("Exchanging registration code for OAuth tokens...")
+
+        # Write debug info to file for troubleshooting (APPEND, don't overwrite)
+        debug_log = CONFIG_PATH.parent / "oauth_debug.log"
+        with open(debug_log, 'a') as f:
+            f.write(f"\nOAuth Exchange Debug\n")
+            f.write(f"====================\n")
+            f.write(f"API Base: {api_base}\n")
+            f.write(f"Project ID: {project_id}\n")
+            f.write(f"Site ID: {site_id}\n")
+            f.write(f"Registration Code: {registration_code[:20]}...\n\n")
+
+        # Initialize auth manager
+        auth_manager = AuthManager(api_base=api_base)
+
+        try:
+            # Exchange registration code for access + refresh tokens
+            success = auth_manager.exchange_registration_code(registration_code)
+
+            if not success:
+                raise Exception("Token exchange returned False")
+
+            print("✓ OAuth tokens received and stored securely")
+            print("  - Access token: Valid for 1 hour")
+            print("  - Refresh token: Valid for 30 days (stored in Windows Credential Manager)")
+
+        except AuthenticationError as e:
+            raise Exception(f"OAuth authentication failed: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to exchange registration code: {e}")
 
         # Read existing config or create default
         if CONFIG_PATH.exists():
@@ -130,17 +284,23 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
 
         config['firebase']['enabled'] = True
         config['firebase']['site_id'] = site_id
+        config['firebase']['project_id'] = project_id
+        config['firebase']['api_base'] = api_base
 
-        # Store token securely (for future API authentication)
-        # Note: In production, consider using Windows Credential Manager
-        config['firebase']['token'] = token
+        # DO NOT store tokens in config.json - they are in Windows Credential Manager
+        # Remove old token field if it exists (from previous versions)
+        if 'token' in config['firebase']:
+            del config['firebase']['token']
 
         # Write updated config
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config, f, indent=2)
 
+        print()
         print(f"✓ Configuration saved to {CONFIG_PATH}")
         print(f"  Site ID: {site_id}")
+        print(f"  Project ID: {project_id}")
+        print(f"  API Base: {api_base}")
 
     def log_message(self, format, *args):
         """Suppress HTTP server logs during normal operation"""
@@ -173,11 +333,32 @@ def wait_for_callback(httpd, timeout_seconds):
 
 def main():
     """Start HTTP server and open browser for OAuth flow"""
-    global received_config, server_error
+    global received_config, server_error, web_app_url
+
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Owlette Site Configuration')
+    parser.add_argument('--url', type=str, default=DEFAULT_URL,
+                       help='Setup URL (default: https://owlette.app/setup)')
+    args = parser.parse_args()
+
+    # Use provided URL or environment variable override (set global for save_config())
+    web_app_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+
+    # Write command line args to debug log FIRST
+    debug_log = CONFIG_PATH.parent / "oauth_debug.log"
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(debug_log, 'w') as f:
+        f.write(f"Command Line Debug\n")
+        f.write(f"==================\n")
+        f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
+        f.write(f"--url argument received: {args.url}\n")
+        f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
+        f.write(f"Final web_app_url: {web_app_url}\n\n")
 
     print("=" * 60)
     print("Owlette Site Configuration")
     print("=" * 60)
+    print(f"Setup URL: {web_app_url}")
     print()
 
     # Check if already configured
@@ -204,8 +385,8 @@ def main():
             print()
 
             # Open browser to owlette.app
-            setup_url = f"{WEB_APP_URL}?callback_port={CALLBACK_PORT}"
-            print(f"Opening browser to: {WEB_APP_URL}")
+            setup_url = f"{web_app_url}?callback_port={CALLBACK_PORT}"
+            print(f"Opening browser to: {web_app_url}")
             print()
             print("Please complete the following steps in your browser:")
             print("1. Log in to your Owlette account")

@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { adminDb } from '@/lib/firebase-admin';
 
 /**
  * POST /api/setup/generate-token
  *
- * Generates a secure token for agent authorization.
- * This token is used to authenticate the agent during the installer OAuth flow.
+ * Generates a registration code for agent OAuth authentication.
+ * Saves the code to Firestore for validation during token exchange.
  *
  * Request body:
  * - siteId: string - The site ID the agent will be associated with
  * - userId: string - The user ID authorizing this agent
  *
  * Response:
- * - token: string - A secure token to pass to the agent
+ * - token: string - Registration code to pass to the agent (24h expiry)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -39,33 +40,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate a secure random token
-    // Using crypto API available in Node.js runtime
+    // Generate a secure registration code (URL-safe)
     const crypto = await import('crypto');
-    const tokenBytes = crypto.randomBytes(32);
-    const token = tokenBytes.toString('base64url'); // URL-safe base64
+    const codeBytes = crypto.randomBytes(32);
+    const registrationCode = codeBytes.toString('base64url');
 
-    // In a production environment, you might want to:
-    // 1. Store this token in Firestore with an expiration time
-    // 2. Associate it with the siteId and userId
-    // 3. Validate it when the agent connects
-    //
-    // For now, we're using a simple token generation approach.
-    // The agent will use this token as proof of authorization.
-    //
-    // Future enhancement: Create an agent_tokens collection in Firestore:
-    // {
-    //   token: string,
-    //   siteId: string,
-    //   userId: string,
-    //   createdAt: timestamp,
-    //   expiresAt: timestamp,
-    //   used: boolean
-    // }
+    // Save registration code to Firestore
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour expiry
+
+    await adminDb.value.collection('agent_tokens').doc(registrationCode).set({
+      siteId,
+      createdBy: userId,
+      createdAt: new Date(),
+      expiresAt,
+      used: false,
+    });
+
+    console.log(`Generated registration code for site ${siteId} by user ${userId}`);
 
     return NextResponse.json(
       {
-        token,
+        token: registrationCode, // "token" field for backward compatibility with setup page
         siteId,
         userId,
       },
@@ -73,7 +69,7 @@ export async function POST(request: NextRequest) {
     );
 
   } catch (error: any) {
-    console.error('Error generating token:', error);
+    console.error('Error generating registration code:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }

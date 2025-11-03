@@ -174,7 +174,7 @@ echo.
 echo [9/9] Checking for Inno Setup...
 
 :: Check for Inno Setup
-set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+set INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 if exist "%INNO_PATH%" (
     echo Found Inno Setup! Creating installer.exe...
     mkdir build\installer_output 2>nul
@@ -190,11 +190,11 @@ if exist "%INNO_PATH%" (
         echo SUCCESS! Installer Created!
         echo ========================================
         echo.
-        echo Output: build\installer_output\Owlette-Setup-2.0.0.exe
+        echo Output: build\installer_output\Owlette-Installer-v2.0.0.exe
         echo.
     )
 ) else (
-    echo Inno Setup not found at: %INNO_PATH%
+    echo Inno Setup not found
     echo.
     echo ========================================
     echo Build Complete!
@@ -205,8 +205,8 @@ if exist "%INNO_PATH%" (
     echo To create installer.exe, install Inno Setup 6 from:
     echo   https://jrsoftware.org/isdl.php
     echo.
-    echo Then run:
-    echo   "%INNO_PATH%" owlette_installer.iss
+    echo Then run manually:
+    echo   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" owlette_installer.iss
     echo.
 )
 

@@ -22,18 +22,40 @@ current_status = {'service': 'unknown', 'firebase': 'unknown'}
 last_status = {'service': 'unknown', 'firebase': 'unknown'}
 status_lock = threading.Lock()
 
+# Function to detect Windows theme (light or dark)
+def is_windows_dark_theme():
+    """
+    Detect if Windows is using dark theme.
+    Returns True for dark theme, False for light theme.
+    """
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize',
+            0,
+            winreg.KEY_READ
+        )
+        value, _ = winreg.QueryValueEx(key, 'SystemUsesLightTheme')
+        winreg.CloseKey(key)
+        # 0 = dark theme, 1 = light theme
+        return value == 0
+    except Exception as e:
+        logging.debug(f"Could not detect Windows theme: {e}")
+        # Default to dark theme if detection fails
+        return True
+
 # Function to load icon image from file
 def load_icon(status='normal'):
     """
-    Load HAL 9000-style eye icon from static PNG files.
+    Load universal tray icon (white lines on dark grey background).
 
-    Status colors for center dot (pupil):
+    Single icon design that works on both light and dark taskbars.
+    Status indicated by center dot color:
     - normal: White dot (everything OK, Always Watching)
-    - warning: Yellow dot (Firebase connection issues)
+    - warning: Orange dot (Firebase connection issues)
     - error: Red dot (service stopped/disconnected)
-
-    Design matches Windows 11 native tray icons (network, audio, etc.)
     """
+    # Use universal icon from root icons folder (no light/dark variants)
     icon_path = shared_utils.get_path(f'../icons/{status}.png')
 
     if not os.path.exists(icon_path):
@@ -83,12 +105,12 @@ def check_firebase_status():
         if not firebase_enabled:
             return 'disabled'
 
-        # Check if credentials exist
-        credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-        if not os.path.exists(credentials_path):
+        # Check if OAuth tokens exist (new authentication method)
+        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
+        if not os.path.exists(token_path):
             return 'error'
 
-        # If enabled and credentials exist, assume connected
+        # If enabled and OAuth tokens exist, assume connected
         # (We could add more sophisticated checks by reading the log file)
         return 'connected'
     except Exception as e:
@@ -366,6 +388,88 @@ def send_status_notification(icon, status_code, service_msg, firebase_msg):
         # Don't notify on normal status (too noisy)
     except Exception as e:
         logging.error(f"Failed to send notification: {e}")
+
+def leave_site(icon, item):
+    """Handle Leave Site action - kept for GUI use."""
+    import ctypes
+
+    # Get current site ID for display
+    config = shared_utils.read_config()
+    site_id = config.get('firebase', {}).get('site_id', 'this site')
+
+    # Show confirmation dialog using Windows MessageBox
+    MB_YESNO = 0x04
+    MB_ICONWARNING = 0x30
+    IDYES = 6
+
+    message = (
+        f"This will remove this machine from '{site_id}'.\n\n"
+        "The following will happen:\n"
+        "• Firebase sync will be disabled\n"
+        "• Machine will be deregistered\n"
+        "• Service will be restarted\n\n"
+        "To re-join a site, you will need to run the Owlette installer again.\n\n"
+        "Are you sure you want to leave this site?"
+    )
+
+    result = ctypes.windll.user32.MessageBoxW(
+        0,
+        message,
+        "Leave Site?",
+        MB_YESNO | MB_ICONWARNING
+    )
+
+    if result == IDYES:
+        try:
+            # Disable Firebase and clear site_id
+            if 'firebase' not in config:
+                config['firebase'] = {}
+
+            config['firebase']['enabled'] = False
+            config['firebase']['site_id'] = ''
+
+            # Save config
+            shared_utils.save_config(config)
+            logging.info("Left site successfully - Firebase disabled and site_id cleared")
+
+            # Show success notification
+            icon.notify(
+                title="✓ Left Site Successfully",
+                message="This machine has been removed from the site.\nRestarting the service..."
+            )
+
+            # Restart service
+            try:
+                import win32serviceutil
+                service_name = 'OwletteService'
+
+                # Stop and start service
+                win32serviceutil.StopService(service_name)
+                time.sleep(2)
+                win32serviceutil.StartService(service_name)
+
+                logging.info("Service restarted successfully after leaving site")
+                icon.notify(
+                    title="✓ Service Restarted",
+                    message="The Owlette service has been restarted successfully."
+                )
+            except Exception as restart_error:
+                logging.error(f"Error restarting service: {restart_error}")
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    f"Failed to restart service:\n{str(restart_error)}\n\nPlease restart manually.",
+                    "Restart Failed",
+                    0x10  # MB_ICONERROR
+                )
+
+        except Exception as e:
+            logging.error(f"Error leaving site: {e}")
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Failed to leave site:\n{str(e)}",
+                "Error",
+                0x10  # MB_ICONERROR
+            )
 
 # Dynamically generate the menu with status info
 def generate_menu():

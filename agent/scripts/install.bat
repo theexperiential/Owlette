@@ -91,6 +91,11 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DisplayName "Owlette Service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
+
+:: CRITICAL: Run service as logged-in user so OAuth tokens in Windows Credential Manager are accessible
+echo Configuring service to run as current user...
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName ".\%USERNAME%"
+
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStdout "%INSTALL_DIR%\agent\logs\service_stdout.log"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStderr "%INSTALL_DIR%\agent\logs\service_stderr.log"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRotateFiles 1
