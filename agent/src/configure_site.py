@@ -4,10 +4,18 @@ Runs during installer to configure Firebase site_id via browser-based authentica
 
 This script:
 1. Starts an HTTP server on localhost:8765
-2. Opens the user's browser to dev.owlette.app/setup
+2. Opens the user's browser to dev.owlette.app/setup (or owlette.app/setup if --url specified)
 3. Waits for callback with site_id and token
 4. Writes configuration to config.json
 5. Returns success/failure status
+
+Usage:
+    python configure_site.py [--url URL]
+
+    --url URL    Override the setup URL (default: https://dev.owlette.app/setup)
+                 Examples:
+                   python configure_site.py --url https://owlette.app/setup
+                   python configure_site.py --url https://dev.owlette.app/setup
 """
 
 import http.server
@@ -17,12 +25,13 @@ import json
 import os
 import sys
 import time
+import argparse
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
 # Configuration
 CALLBACK_PORT = 8765
-WEB_APP_URL = os.environ.get("OWLETTE_SETUP_URL", "https://dev.owlette.app/setup")
+DEFAULT_URL = "https://dev.owlette.app/setup"
 TIMEOUT_SECONDS = 300  # 5 minutes
 
 # Determine config path relative to script location
@@ -63,17 +72,98 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
                     <html>
                     <head>
                         <title>Owlette Configuration Complete</title>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <style>
-                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-                            h1 { color: #4CAF50; }
-                            .checkmark { font-size: 100px; color: #4CAF50; }
+                            * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                            }
+                            body {
+                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+                                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+                                color: #e2e8f0;
+                                min-height: 100vh;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                padding: 20px;
+                            }
+                            .container {
+                                text-align: center;
+                                max-width: 500px;
+                            }
+                            .logo {
+                                font-size: 120px;
+                                margin-bottom: 30px;
+                                filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.3));
+                                animation: fadeIn 0.6s ease-out;
+                            }
+                            h1 {
+                                color: #10b981;
+                                font-size: 2.5rem;
+                                font-weight: 700;
+                                margin-bottom: 20px;
+                                animation: fadeIn 0.8s ease-out;
+                            }
+                            .message {
+                                color: #cbd5e1;
+                                font-size: 1.1rem;
+                                line-height: 1.6;
+                                margin-bottom: 15px;
+                                animation: fadeIn 1s ease-out;
+                            }
+                            .checkmark {
+                                display: inline-block;
+                                width: 80px;
+                                height: 80px;
+                                border-radius: 50%;
+                                background: #10b981;
+                                position: relative;
+                                margin: 20px auto 30px;
+                                animation: scaleIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+                            }
+                            .checkmark::after {
+                                content: '✓';
+                                position: absolute;
+                                top: 50%;
+                                left: 50%;
+                                transform: translate(-50%, -50%);
+                                color: white;
+                                font-size: 48px;
+                                font-weight: bold;
+                            }
+                            @keyframes fadeIn {
+                                from {
+                                    opacity: 0;
+                                    transform: translateY(20px);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: translateY(0);
+                                }
+                            }
+                            @keyframes scaleIn {
+                                from {
+                                    opacity: 0;
+                                    transform: scale(0);
+                                }
+                                to {
+                                    opacity: 1;
+                                    transform: scale(1);
+                                }
+                            }
                         </style>
                     </head>
                     <body>
-                        <div class="checkmark">✓</div>
-                        <h1>Configuration Complete!</h1>
-                        <p>Your Owlette agent has been configured successfully.</p>
-                        <p>You can close this window and return to the installer.</p>
+                        <div class="container">
+                            <div class="logo">🦉</div>
+                            <div class="checkmark"></div>
+                            <h1>Configuration Complete!</h1>
+                            <p class="message">Your Owlette agent has been configured successfully.</p>
+                            <p class="message">You can close this window and return to the installer.</p>
+                        </div>
                     </body>
                     </html>
                     """
@@ -175,9 +265,19 @@ def main():
     """Start HTTP server and open browser for OAuth flow"""
     global received_config, server_error
 
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Owlette Site Configuration')
+    parser.add_argument('--url', type=str, default=DEFAULT_URL,
+                       help='Setup URL (default: https://dev.owlette.app/setup)')
+    args = parser.parse_args()
+
+    # Use provided URL or environment variable override
+    web_app_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+
     print("=" * 60)
     print("Owlette Site Configuration")
     print("=" * 60)
+    print(f"Setup URL: {web_app_url}")
     print()
 
     # Check if already configured
@@ -204,8 +304,8 @@ def main():
             print()
 
             # Open browser to owlette.app
-            setup_url = f"{WEB_APP_URL}?callback_port={CALLBACK_PORT}"
-            print(f"Opening browser to: {WEB_APP_URL}")
+            setup_url = f"{web_app_url}?callback_port={CALLBACK_PORT}"
+            print(f"Opening browser to: {web_app_url}")
             print()
             print("Please complete the following steps in your browser:")
             print("1. Log in to your Owlette account")
