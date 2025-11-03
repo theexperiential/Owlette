@@ -56,10 +56,54 @@ if (!admin.apps.length) {
   }
 }
 
-// Export Admin SDK services
-export const adminAuth = admin.auth();
-export const adminDb = admin.firestore();
-export const adminStorage = admin.storage();
+// Export getter functions for Admin SDK services (lazy initialization)
+// This prevents errors during Next.js build when env vars aren't available
+// These are called at runtime, not during module load
+
+let _adminAuth: admin.auth.Auth | null = null;
+let _adminDb: admin.firestore.Firestore | null = null;
+let _adminStorage: admin.storage.Storage | null = null;
+
+export const adminAuth = {
+  get value() {
+    if (!_adminAuth && admin.apps.length) {
+      _adminAuth = admin.auth();
+    }
+    if (!_adminAuth) {
+      throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
+    }
+    return _adminAuth;
+  }
+};
+
+export const adminDb = {
+  get value() {
+    if (!_adminDb && admin.apps.length) {
+      _adminDb = admin.firestore();
+    }
+    if (!_adminDb) {
+      throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
+    }
+    return _adminDb;
+  }
+};
+
+export const adminStorage = {
+  get value() {
+    if (!_adminStorage && admin.apps.length) {
+      _adminStorage = admin.storage();
+    }
+    if (!_adminStorage) {
+      throw new Error('Firebase Admin SDK not initialized. Check environment variables.');
+    }
+    return _adminStorage;
+  }
+};
+
+// Helper functions for easier access
+export const getAdminAuth = () => adminAuth.value;
+export const getAdminDb = () => adminDb.value;
+export const getAdminStorage = () => adminStorage.value;
 
 // Export admin instance for advanced use cases
 export default admin;

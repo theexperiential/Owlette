@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 
 /**
@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
       .digest('hex');
 
     // Validate refresh token in Firestore
+    const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
     const tokenDoc = await tokenRef.get();
 
@@ -94,6 +95,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate new custom token with same claims
+    const adminAuth = getAdminAuth();
     const customToken = await adminAuth.createCustomToken(agentUid, {
       site_id: siteId,
       machine_id: machineId,

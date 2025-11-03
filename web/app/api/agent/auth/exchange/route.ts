@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 
 /**
@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate registration code in Firestore
+    const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_tokens').doc(registrationCode);
     const tokenDoc = await tokenRef.get();
 
@@ -84,6 +85,7 @@ export async function POST(request: NextRequest) {
     const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
     // Generate Firebase custom token with claims
+    const adminAuth = getAdminAuth();
     const customToken = await adminAuth.createCustomToken(agentUid, {
       site_id: siteId,
       machine_id: machineId,

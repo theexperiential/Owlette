@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminAuth, adminDb } from '@/lib/firebase-admin';
+import { getAdminDb } from '@/lib/firebase-admin';
 import { cookies } from 'next/headers';
 import { FieldValue } from 'firebase-admin/firestore';
 
@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
 
     // Verify user has access to the site
     // Check if user is listed as owner/member of the site
+    const adminDb = getAdminDb();
     const siteRef = adminDb.collection('sites').doc(siteId);
     const siteDoc = await siteRef.get();
 
