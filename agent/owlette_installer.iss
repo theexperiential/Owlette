@@ -5,7 +5,7 @@
 ; ============================================================================
 
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"
@@ -29,6 +29,7 @@ OutputBaseFilename=Owlette-Setup-{#MyAppVersion}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+SetupWindowTitle=Setup Owlette v{#MyAppVersion}
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64
@@ -41,7 +42,7 @@ DisableProgramGroupPage=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-FinishedLabel=Setup has finished installing [name] on your computer.%n%nThe Owlette service and tray icon will start automatically within a few moments. Look for the Owlette icon (a dot in a circle) in your taskbar—it may be hidden under the overflow menu (^).%n%nClick Finish to exit Setup.
+FinishedLabel=Setup has finished installing [name] on your computer.%n%nThe Owlette service and tray icon will start automatically within a few moments. Look for the Owlette icon (a dot in a circle) in your taskbar—it may be hidden under the overflow menu (^).
 
 [Tasks]
 ; Desktop icons removed - tray icon auto-starts on login via startup folder
