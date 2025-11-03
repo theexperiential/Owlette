@@ -29,7 +29,7 @@ def load_icon(status='normal'):
 
     Status colors for center dot (pupil):
     - normal: White dot (everything OK, Always Watching)
-    - warning: Yellow dot (Firebase connection issues)
+    - warning: Orange dot (Firebase connection issues)
     - error: Red dot (service stopped/disconnected)
 
     Design matches Windows 11 native tray icons (network, audio, etc.)

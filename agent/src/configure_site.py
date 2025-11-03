@@ -1,13 +1,20 @@
 """
 Owlette Site Configuration - OAuth Flow
-Runs during installer to configure Firebase site_id via browser-based authentication.
+Runs during installer to configure Firebase site_id via browser-based OAuth authentication.
 
 This script:
 1. Starts an HTTP server on localhost:8765
 2. Opens the user's browser to dev.owlette.app/setup (or owlette.app/setup if --url specified)
-3. Waits for callback with site_id and token
-4. Writes configuration to config.json
-5. Returns success/failure status
+3. Waits for callback with site_id and registration code
+4. Exchanges registration code for OAuth tokens (access + refresh)
+5. Stores tokens securely in Windows Credential Manager (not config.json)
+6. Writes minimal configuration to config.json (site_id, project_id, api_base)
+7. Returns success/failure status
+
+OAuth Flow:
+- Registration code (from callback) → Access token + Refresh token (via API)
+- Access token: Short-lived (1h), used for Firestore API calls
+- Refresh token: Long-lived (30d), stored encrypted, used to get new access tokens
 
 Usage:
     python configure_site.py [--url URL]
@@ -54,13 +61,13 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == '/callback':
             params = parse_qs(parsed.query)
             site_id = params.get('site_id', [None])[0]
-            token = params.get('token', [None])[0]
+            registration_code = params.get('token', [None])[0]  # 'token' param contains registration code
 
-            if site_id and token:
+            if site_id and registration_code:
                 try:
-                    # Save configuration
-                    self.save_config(site_id, token)
-                    received_config = {'site_id': site_id, 'token': token}
+                    # Exchange registration code for OAuth tokens and save configuration
+                    self.save_config(site_id, registration_code)
+                    received_config = {'site_id': site_id, 'registration_code': registration_code}
 
                     # Send success response
                     self.send_response(200)
@@ -173,7 +180,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
                     server_error = str(e)
                     self.send_error(500, f"Configuration error: {e}")
             else:
-                server_error = "Missing site_id or token in callback"
+                server_error = "Missing site_id or registration_code in callback"
                 self.send_error(400, server_error)
 
         elif parsed.path == '/health':
@@ -185,10 +192,54 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
 
-    def save_config(self, site_id, token):
-        """Write site_id and token to config.json"""
+    def save_config(self, site_id, registration_code):
+        """
+        Exchange registration code for OAuth tokens and save configuration.
+
+        Args:
+            site_id: Site ID from OAuth callback
+            registration_code: Registration code to exchange for tokens
+        """
         # Ensure config directory exists
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        # Import auth_manager here to avoid import errors if not installed
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from auth_manager import AuthManager, AuthenticationError
+
+        # Determine API base URL from setup URL
+        # If using dev.owlette.app, use dev API. Otherwise production API.
+        web_app_url = os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
+        if 'dev.owlette.app' in web_app_url:
+            api_base = "https://dev.owlette.app/api"
+            project_id = "owlette-dev-3838a"
+        else:
+            api_base = "https://owlette.app/api"
+            project_id = "owlette-prod"  # Update this with actual prod project ID
+
+        print(f"  API Base: {api_base}")
+        print(f"  Project ID: {project_id}")
+        print()
+        print("Exchanging registration code for OAuth tokens...")
+
+        # Initialize auth manager
+        auth_manager = AuthManager(api_base=api_base)
+
+        try:
+            # Exchange registration code for access + refresh tokens
+            success = auth_manager.exchange_registration_code(registration_code)
+
+            if not success:
+                raise Exception("Token exchange returned False")
+
+            print("✓ OAuth tokens received and stored securely")
+            print("  - Access token: Valid for 1 hour")
+            print("  - Refresh token: Valid for 30 days (stored in Windows Credential Manager)")
+
+        except AuthenticationError as e:
+            raise Exception(f"OAuth authentication failed: {e}")
+        except Exception as e:
+            raise Exception(f"Failed to exchange registration code: {e}")
 
         # Read existing config or create default
         if CONFIG_PATH.exists():
@@ -220,17 +271,23 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
 
         config['firebase']['enabled'] = True
         config['firebase']['site_id'] = site_id
+        config['firebase']['project_id'] = project_id
+        config['firebase']['api_base'] = api_base
 
-        # Store token securely (for future API authentication)
-        # Note: In production, consider using Windows Credential Manager
-        config['firebase']['token'] = token
+        # DO NOT store tokens in config.json - they are in Windows Credential Manager
+        # Remove old token field if it exists (from previous versions)
+        if 'token' in config['firebase']:
+            del config['firebase']['token']
 
         # Write updated config
         with open(CONFIG_PATH, 'w') as f:
             json.dump(config, f, indent=2)
 
+        print()
         print(f"✓ Configuration saved to {CONFIG_PATH}")
         print(f"  Site ID: {site_id}")
+        print(f"  Project ID: {project_id}")
+        print(f"  API Base: {api_base}")
 
     def log_message(self, format, *args):
         """Suppress HTTP server logs during normal operation"""

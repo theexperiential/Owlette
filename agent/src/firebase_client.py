@@ -7,11 +7,12 @@ Handles all Firestore operations including:
 - Command queue (bidirectional communication)
 - System metrics reporting
 - Offline resilience
+
+OAuth Authentication:
+This version uses custom token authentication via REST API instead of
+service account credentials, eliminating the need for firebase-credentials.json.
 """
 
-import firebase_admin
-from firebase_admin import credentials, firestore
-from google.cloud.firestore_v1 import DocumentSnapshot
 import threading
 import time
 import json
@@ -25,6 +26,10 @@ from datetime import datetime
 import shared_utils
 import registry_utils
 
+# Import new OAuth-based modules (replace firebase_admin)
+from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
+from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP
+
 
 class FirebaseClient:
     """
@@ -32,22 +37,24 @@ class FirebaseClient:
     Handles all cloud communication with offline resilience.
     """
 
-    def __init__(self, credentials_path: str, site_id: str, config_cache_path: str = "config/firebase_cache.json"):
+    def __init__(self, auth_manager: AuthManager, project_id: str, site_id: str, config_cache_path: str = "config/firebase_cache.json"):
         """
-        Initialize Firebase client.
+        Initialize Firebase client with OAuth authentication.
 
         Args:
-            credentials_path: Path to firebase-credentials.json
+            auth_manager: AuthManager instance for token management
+            project_id: Firebase project ID (e.g., "owlette-dev-3838a")
             site_id: Site ID this machine belongs to
             config_cache_path: Path to store cached config for offline mode
         """
-        self.credentials_path = credentials_path
+        self.auth_manager = auth_manager
+        self.project_id = project_id
         self.site_id = site_id
         self.machine_id = socket.gethostname()
         self.config_cache_path = config_cache_path
 
-        # Firebase instances
-        self.db: Optional[firestore.Client] = None
+        # Firestore REST client instance
+        self.db: Optional[FirestoreRestClient] = None
         self.connected = False
 
         # Threads
@@ -72,27 +79,20 @@ class FirebaseClient:
         self._initialize_firebase()
 
     def _initialize_firebase(self):
-        """Initialize Firebase connection."""
+        """Initialize Firebase connection using OAuth authentication."""
         try:
-            if not os.path.exists(self.credentials_path):
-                self.logger.error(f"Firebase credentials not found at {self.credentials_path}")
+            # Check if authenticated
+            if not self.auth_manager.is_authenticated():
+                self.logger.error("Agent not authenticated - no refresh token found")
                 self.logger.warning("Running in OFFLINE MODE - will use cached config only")
                 self._load_cached_config()
                 return
 
-            # Initialize Firebase Admin SDK
-            cred = credentials.Certificate(self.credentials_path)
-
-            # Check if app already initialized
-            try:
-                firebase_admin.get_app()
-                self.logger.info("Firebase already initialized")
-            except ValueError:
-                firebase_admin.initialize_app(cred)
-                self.logger.info("Firebase initialized successfully")
-
-            # Get Firestore client
-            self.db = firestore.client()
+            # Initialize Firestore REST client
+            self.db = FirestoreRestClient(
+                project_id=self.project_id,
+                auth_manager=self.auth_manager
+            )
             self.connected = True
             self.logger.info(f"Connected to Firestore - Site: {self.site_id}, Machine: {self.machine_id}")
 
@@ -174,7 +174,7 @@ class FirebaseClient:
                     try:
                         presence_ref.update({
                             'online': False,
-                            'lastHeartbeat': firestore.SERVER_TIMESTAMP
+                            'lastHeartbeat': SERVER_TIMESTAMP
                         })
                         self.logger.info(f"✓ Machine marked OFFLINE in Firestore (attempt {attempt + 1}/{max_attempts})")
                         # Give network time to complete the write
@@ -227,29 +227,22 @@ class FirebaseClient:
             return
 
         try:
-            # Reference to pending commands
-            commands_ref = self.db.collection('sites').document(self.site_id)\
-                .collection('machines').document(self.machine_id)\
-                .collection('commands').document('pending')
+            # Document path for pending commands
+            commands_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/pending"
 
-            # Watch for changes
-            def on_snapshot(doc_snapshots, changes, read_time):
-                for doc in doc_snapshots:
-                    if doc.exists:
-                        commands = doc.to_dict()
-                        if commands:
-                            for cmd_id, cmd_data in commands.items():
-                                self._process_command(cmd_id, cmd_data)
+            # Callback for document changes
+            def on_commands_changed(commands_data):
+                """Handle commands document changes."""
+                if commands_data:
+                    for cmd_id, cmd_data in commands_data.items():
+                        self._process_command(cmd_id, cmd_data)
 
-            # Listen to document changes
-            doc_watch = commands_ref.on_snapshot(on_snapshot)
+            # Start listener (runs in separate thread, polls every 2 seconds)
+            self.db.listen_to_document(commands_path, on_commands_changed)
 
-            # Keep thread alive
+            # Keep this thread alive
             while self.running:
                 time.sleep(1)
-
-            # Unsubscribe when stopping
-            doc_watch.unsubscribe()
 
         except Exception as e:
             self.logger.error(f"Command listener error: {e}")
@@ -261,15 +254,15 @@ class FirebaseClient:
             return
 
         try:
-            # Reference to config document
-            config_ref = self.db.collection('config').document(self.site_id)\
-                .collection('machines').document(self.machine_id)
+            # Document path for config
+            config_path = f"config/{self.site_id}/machines/{self.machine_id}"
 
             # Track if this is the first snapshot (to skip initial load)
             first_snapshot = True
 
-            # Watch for changes
-            def on_snapshot(doc_snapshots, changes, read_time):
+            # Callback for config changes
+            def on_config_changed(config_data):
+                """Handle config document changes."""
                 nonlocal first_snapshot
 
                 # Skip the first snapshot (initial load)
@@ -278,34 +271,29 @@ class FirebaseClient:
                     self.logger.info("Config listener initialized (skipping initial snapshot)")
                     return
 
-                for doc in doc_snapshots:
-                    if doc.exists:
-                        new_config = doc.to_dict()
-                        self.logger.info("Config change detected in Firestore")
+                if config_data:
+                    self.logger.info("Config change detected in Firestore")
 
-                        # Cache the new config
-                        self._save_cached_config(new_config)
-                        self.cached_config = new_config
+                    # Cache the new config
+                    self._save_cached_config(config_data)
+                    self.cached_config = config_data
 
-                        # Call the registered callback
-                        if self.config_update_callback:
-                            try:
-                                self.config_update_callback(new_config)
-                                self.logger.info("Config update applied successfully")
-                            except Exception as e:
-                                self.logger.error(f"Error in config update callback: {e}")
-                        else:
-                            self.logger.warning("No config update callback registered")
+                    # Call the registered callback
+                    if self.config_update_callback:
+                        try:
+                            self.config_update_callback(config_data)
+                            self.logger.info("Config update applied successfully")
+                        except Exception as e:
+                            self.logger.error(f"Error in config update callback: {e}")
+                    else:
+                        self.logger.warning("No config update callback registered")
 
-            # Listen to document changes
-            doc_watch = config_ref.on_snapshot(on_snapshot)
+            # Start listener (runs in separate thread, polls every 2 seconds)
+            self.db.listen_to_document(config_path, on_config_changed)
 
-            # Keep thread alive
+            # Keep this thread alive
             while self.running:
                 time.sleep(1)
-
-            # Unsubscribe when stopping
-            doc_watch.unsubscribe()
 
         except Exception as e:
             self.logger.error(f"Config listener error: {e}")
@@ -360,7 +348,7 @@ class FirebaseClient:
 
             presence_ref.set({
                 'online': online,
-                'lastHeartbeat': firestore.SERVER_TIMESTAMP,
+                'lastHeartbeat': SERVER_TIMESTAMP,
                 'machineId': self.machine_id,
                 'siteId': self.site_id
             }, merge=True)
@@ -393,7 +381,7 @@ class FirebaseClient:
                 'metrics.memory': metrics.get('memory', {}),
                 'metrics.disk': metrics.get('disk', {}),
                 'metrics.gpu': metrics.get('gpu', {}),
-                'metrics.timestamp': firestore.SERVER_TIMESTAMP,
+                'metrics.timestamp': SERVER_TIMESTAMP,
                 'metrics.processes': metrics.get('processes', {})  # This replaces entire processes object
             })
         except Exception as e:
@@ -409,7 +397,7 @@ class FirebaseClient:
                         'memory': metrics.get('memory', {}),
                         'disk': metrics.get('disk', {}),
                         'gpu': metrics.get('gpu', {}),
-                        'timestamp': firestore.SERVER_TIMESTAMP,
+                        'timestamp': SERVER_TIMESTAMP,
                         'processes': metrics.get('processes', {})
                     }
                 })
@@ -469,7 +457,7 @@ class FirebaseClient:
             # Build the progress data
             progress_data = {
                 'status': status,
-                'updatedAt': firestore.SERVER_TIMESTAMP
+                'updatedAt': SERVER_TIMESTAMP
             }
 
             # Include deployment_id if present
@@ -513,7 +501,7 @@ class FirebaseClient:
             completed_data = {
                 'result': result,
                 'status': 'completed',
-                'completedAt': firestore.SERVER_TIMESTAMP
+                'completedAt': SERVER_TIMESTAMP
             }
 
             # Include deployment_id if present (needed for web app to track deployment status)
@@ -553,7 +541,7 @@ class FirebaseClient:
             failed_data = {
                 'error': error,
                 'status': 'failed',
-                'completedAt': firestore.SERVER_TIMESTAMP
+                'completedAt': SERVER_TIMESTAMP
             }
 
             # Include deployment_id if present (needed for web app to track deployment status)
@@ -593,7 +581,7 @@ class FirebaseClient:
             cancelled_data = {
                 'result': result,
                 'status': 'cancelled',
-                'completedAt': firestore.SERVER_TIMESTAMP
+                'completedAt': SERVER_TIMESTAMP
             }
 
             # Include deployment_id if present (needed for web app to track deployment status)
@@ -686,7 +674,7 @@ class FirebaseClient:
 
             for log_entry in log_entries:
                 # Add server timestamp
-                log_entry['server_timestamp'] = firestore.SERVER_TIMESTAMP
+                log_entry['server_timestamp'] = SERVER_TIMESTAMP
                 log_entry['machine_id'] = self.machine_id
                 log_entry['site_id'] = self.site_id
 
@@ -894,7 +882,7 @@ class FirebaseClient:
                 # Add timestamp
                 software_data = {
                     **software,
-                    'detected_at': firestore.SERVER_TIMESTAMP
+                    'detected_at': SERVER_TIMESTAMP
                 }
 
                 batch.set(doc_ref, software_data)

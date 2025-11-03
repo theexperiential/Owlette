@@ -116,19 +116,33 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             if firebase_enabled:
                 try:
+                    # Get configuration
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
-                    credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
+                    project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
+                    api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
                     cache_path = shared_utils.get_path('../config/firebase_cache.json')
 
-                    logging.info(f"Firebase paths - credentials: {credentials_path}, cache: {cache_path}")
-                    logging.info(f"Firebase site_id: {site_id}")
+                    logging.info(f"Firebase config - site: {site_id}, project: {project_id}")
 
-                    self.firebase_client = FirebaseClient(
-                        credentials_path=credentials_path,
-                        site_id=site_id,
-                        config_cache_path=cache_path
-                    )
-                    logging.info(f"Firebase client initialized for site: {site_id}")
+                    # Initialize OAuth authentication manager
+                    from auth_manager import AuthManager
+                    auth_manager = AuthManager(api_base=api_base)
+
+                    # Check if authenticated
+                    if not auth_manager.is_authenticated():
+                        logging.error("Agent not authenticated - no refresh token found")
+                        logging.error("Please run the installer or re-authenticate via web dashboard")
+                        self.firebase_client = None
+                    else:
+                        # Initialize Firebase client with OAuth
+                        self.firebase_client = FirebaseClient(
+                            auth_manager=auth_manager,
+                            project_id=project_id,
+                            site_id=site_id,
+                            config_cache_path=cache_path
+                        )
+                        logging.info(f"Firebase client initialized for site: {site_id}")
+
                 except Exception as e:
                     logging.error(f"Failed to initialize Firebase client: {e}")
                     logging.exception("Firebase initialization error details:")
