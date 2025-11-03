@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import admin from '@/lib/firebase-admin';
 
 /**
  * POST /api/agent/auth/refresh
@@ -13,7 +14,7 @@ import { FieldValue } from 'firebase-admin/firestore';
  * - machineId: string - Machine identifier (for validation)
  *
  * Response (200 OK):
- * - accessToken: string - New Firebase custom token (1 hour expiry)
+ * - accessToken: string - New OAuth 2.0 access token for Firestore API (1 hour expiry)
  * - expiresIn: number - Access token expiry in seconds (3600)
  *
  * Errors:
@@ -94,14 +95,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate new custom token with same claims
-    const adminAuth = getAdminAuth();
-    const customToken = await adminAuth.createCustomToken(agentUid, {
-      site_id: siteId,
-      machine_id: machineId,
-      role: 'agent',
-      version: version,
-    });
+    // Generate new OAuth 2.0 access token for Firestore REST API
+    const credential = admin.app().options.credential;
+    if (!credential) {
+      throw new Error('No service account credential available');
+    }
+
+    const accessTokenData = await credential.getAccessToken();
+    const accessToken = accessTokenData.access_token;
 
     // Update last used timestamp (for monitoring)
     await tokenRef.update({
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        accessToken: customToken,
+        accessToken,
         expiresIn: 3600, // 1 hour in seconds
       },
       { status: 200 }

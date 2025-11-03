@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import admin from '@/lib/firebase-admin';
 
 /**
  * POST /api/agent/auth/exchange
@@ -15,7 +16,7 @@ import { FieldValue } from 'firebase-admin/firestore';
  * - version: string - Agent version (e.g., "2.0.0")
  *
  * Response (200 OK):
- * - accessToken: string - Firebase custom token (1 hour expiry)
+ * - accessToken: string - OAuth 2.0 access token for Firestore API (1 hour expiry)
  * - refreshToken: string - Long-lived refresh token (30 days expiry)
  * - expiresIn: number - Access token expiry in seconds (3600)
  * - siteId: string - Site ID this agent is authorized for
@@ -84,15 +85,15 @@ export async function POST(request: NextRequest) {
     // Generate unique agent user ID
     const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
-    // Generate Firebase custom token with claims
-    const adminAuth = getAdminAuth();
-    const customToken = await adminAuth.createCustomToken(agentUid, {
-      site_id: siteId,
-      machine_id: machineId,
-      role: 'agent',
-      version: version,
-      created_by: createdBy,
-    });
+    // Generate OAuth 2.0 access token for Firestore REST API
+    // This uses the service account credentials to create a valid access token
+    const credential = admin.app().options.credential;
+    if (!credential) {
+      throw new Error('No service account credential available');
+    }
+
+    const accessTokenData = await credential.getAccessToken();
+    const accessToken = accessTokenData.access_token;
 
     // Generate refresh token (cryptographically secure random)
     const crypto = await import('crypto');
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        accessToken: customToken,
+        accessToken,
         refreshToken,
         expiresIn: 3600, // 1 hour in seconds
         siteId,
