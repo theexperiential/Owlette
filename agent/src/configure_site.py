@@ -19,10 +19,10 @@ OAuth Flow:
 Usage:
     python configure_site.py [--url URL]
 
-    --url URL    Override the setup URL (default: https://dev.owlette.app/setup)
+    --url URL    Override the setup URL (default: https://owlette.app/setup)
                  Examples:
-                   python configure_site.py --url https://owlette.app/setup
                    python configure_site.py --url https://dev.owlette.app/setup
+                   python configure_site.py --url https://owlette.app/setup
 """
 
 import http.server
@@ -38,7 +38,7 @@ from pathlib import Path
 
 # Configuration
 CALLBACK_PORT = 8765
-DEFAULT_URL = "https://dev.owlette.app/setup"
+DEFAULT_URL = "https://owlette.app/setup"
 TIMEOUT_SECONDS = 300  # 5 minutes
 
 # Determine config path relative to script location
@@ -48,6 +48,7 @@ CONFIG_PATH = SCRIPT_DIR.parent / "config" / "config.json"
 # Global state
 received_config = None
 server_error = None
+web_app_url = None  # Set in main(), used in save_config()
 
 
 class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -209,8 +210,10 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
 
         # Determine API base URL from setup URL
         # If using dev.owlette.app, use dev API. Otherwise production API.
-        web_app_url = os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
-        if 'dev.owlette.app' in web_app_url:
+        global web_app_url
+        # Use the global web_app_url set in main(), or fall back to env var + default
+        url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
+        if 'dev.owlette.app' in url_to_check:
             api_base = "https://dev.owlette.app/api"
             project_id = "owlette-dev-3838a"
         else:
@@ -221,6 +224,16 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         print(f"  Project ID: {project_id}")
         print()
         print("Exchanging registration code for OAuth tokens...")
+
+        # Write debug info to file for troubleshooting (APPEND, don't overwrite)
+        debug_log = CONFIG_PATH.parent / "oauth_debug.log"
+        with open(debug_log, 'a') as f:
+            f.write(f"\nOAuth Exchange Debug\n")
+            f.write(f"====================\n")
+            f.write(f"API Base: {api_base}\n")
+            f.write(f"Project ID: {project_id}\n")
+            f.write(f"Site ID: {site_id}\n")
+            f.write(f"Registration Code: {registration_code[:20]}...\n\n")
 
         # Initialize auth manager
         auth_manager = AuthManager(api_base=api_base)
@@ -320,16 +333,27 @@ def wait_for_callback(httpd, timeout_seconds):
 
 def main():
     """Start HTTP server and open browser for OAuth flow"""
-    global received_config, server_error
+    global received_config, server_error, web_app_url
 
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Owlette Site Configuration')
     parser.add_argument('--url', type=str, default=DEFAULT_URL,
-                       help='Setup URL (default: https://dev.owlette.app/setup)')
+                       help='Setup URL (default: https://owlette.app/setup)')
     args = parser.parse_args()
 
-    # Use provided URL or environment variable override
+    # Use provided URL or environment variable override (set global for save_config())
     web_app_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+
+    # Write command line args to debug log FIRST
+    debug_log = CONFIG_PATH.parent / "oauth_debug.log"
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(debug_log, 'w') as f:
+        f.write(f"Command Line Debug\n")
+        f.write(f"==================\n")
+        f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
+        f.write(f"--url argument received: {args.url}\n")
+        f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
+        f.write(f"Final web_app_url: {web_app_url}\n\n")
 
     print("=" * 60)
     print("Owlette Site Configuration")

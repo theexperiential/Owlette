@@ -30,6 +30,7 @@ import requests
 import time
 import socket
 import logging
+import json
 from typing import Optional, Dict, Any
 from secure_storage import SecureStorage, get_storage
 
@@ -62,7 +63,7 @@ class AuthManager:
 
     def __init__(
         self,
-        api_base: str = "https://owlette.app/api",
+        api_base: Optional[str] = "https://owlette.app/api",
         machine_id: Optional[str] = None,
         storage: Optional[SecureStorage] = None,
     ):
@@ -74,6 +75,8 @@ class AuthManager:
             machine_id: Machine identifier (defaults to hostname)
             storage: Secure storage instance (defaults to singleton)
         """
+        if not api_base:
+            raise ValueError("api_base is required for AuthManager initialization")
         self.api_base = api_base.rstrip('/')
         self.machine_id = machine_id or socket.gethostname()
         self.storage = storage or get_storage()
@@ -131,6 +134,16 @@ class AuthManager:
 
             # Call exchange endpoint
             url = f"{self.api_base}/agent/auth/exchange"
+            print(f"DEBUG: Calling exchange endpoint: {url}")
+            logger.info(f"Exchange URL: {url}")
+            logger.info(f"Machine ID: {machine_id}")
+
+            # Write to debug log for troubleshooting
+            from pathlib import Path
+            debug_log = Path(__file__).parent.parent / "config" / "oauth_debug.log"
+            with open(debug_log, 'a') as f:
+                f.write(f"Calling URL: {url}\n")
+
             response = requests.post(
                 url,
                 json={
@@ -140,13 +153,30 @@ class AuthManager:
                 },
                 timeout=30,
             )
+            print(f"DEBUG: Response status: {response.status_code}")
+            logger.info(f"Exchange response status: {response.status_code}")
+
+            # Log response to debug file
+            with open(debug_log, 'a') as f:
+                f.write(f"Response Status: {response.status_code}\n")
+                f.write(f"Response Headers: {dict(response.headers)}\n")
+                f.write(f"Response Body: {response.text[:500]}\n\n")
 
             if response.status_code != 200:
-                error_msg = response.json().get('error', 'Unknown error')
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    # Response is not JSON, use status code and text
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
                 logger.error(f"Token exchange failed: {error_msg}")
                 raise AuthenticationError(f"Token exchange failed: {error_msg}")
 
-            data = response.json()
+            try:
+                data = response.json()
+            except (ValueError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid JSON response from server: {response.text[:200]}")
+                raise AuthenticationError(f"Invalid JSON response from server: {e}")
+
             access_token = data.get('accessToken')
             refresh_token = data.get('refreshToken')
             expires_in = data.get('expiresIn', 3600)
@@ -159,9 +189,15 @@ class AuthManager:
             expiry_timestamp = time.time() + expires_in
 
             # Store tokens securely
-            self.storage.save_refresh_token(refresh_token)
-            self.storage.save_access_token(access_token, expiry_timestamp)
-            self.storage.save_site_id(site_id)
+            print(f"DEBUG: Saving tokens to encrypted file...")
+            success_refresh = self.storage.save_refresh_token(refresh_token)
+            success_access = self.storage.save_access_token(access_token, expiry_timestamp)
+            success_site = self.storage.save_site_id(site_id)
+
+            if not success_refresh or not success_access or not success_site:
+                raise AuthenticationError("Failed to save tokens to encrypted file")
+
+            print(f"DEBUG: Tokens saved successfully")
 
             # Update instance state
             self._access_token = access_token
@@ -216,7 +252,10 @@ class AuthManager:
             )
 
             if response.status_code != 200:
-                error_msg = response.json().get('error', 'Unknown error')
+                try:
+                    error_msg = response.json().get('error', 'Unknown error')
+                except (ValueError, json.JSONDecodeError):
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
                 logger.error(f"Token refresh failed: {error_msg}")
 
                 # If refresh token is invalid/expired, clear storage
@@ -226,7 +265,11 @@ class AuthManager:
 
                 raise TokenRefreshError(f"Token refresh failed: {error_msg}")
 
-            data = response.json()
+            try:
+                data = response.json()
+            except (ValueError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid JSON response from server: {response.text[:200]}")
+                raise TokenRefreshError(f"Invalid JSON response from server: {e}")
             access_token = data.get('accessToken')
             expires_in = data.get('expiresIn', 3600)
 

@@ -33,7 +33,7 @@ class OwletteConfigApp:
         self.master.title(f"Owlette Configuration: {hostname}")
         # Set window icon
         try:
-            icon_path = shared_utils.get_path('../../icons/owlette.ico')
+            icon_path = shared_utils.get_path('../../icons/normal.ico')
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
@@ -1008,19 +1008,19 @@ class OwletteConfigApp:
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
         site_id = self.config.get('firebase', {}).get('site_id', '')
 
-        # Check if credentials file exists
-        credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-        credentials_exist = os.path.exists(credentials_path)
+        # Check if OAuth tokens exist (new authentication method)
+        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
+        tokens_exist = os.path.exists(token_path)
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
             self.firebase_status_label.configure(text="Firebase: Removed from Site", text_color="#f87171")  # Red
             self.leave_site_button.configure(state="disabled")
-        elif firebase_enabled and credentials_exist:
-            self.firebase_status_label.configure(text="Firebase: Connected", text_color="#4ade80")  # Green
+        elif firebase_enabled and tokens_exist:
+            self.firebase_status_label.configure(text="Firebase: Connected (OAuth)", text_color="#4ade80")  # Green
             self.leave_site_button.configure(state="normal")
-        elif firebase_enabled and not credentials_exist:
-            self.firebase_status_label.configure(text="Firebase: Missing Credentials", text_color="#fbbf24")  # Yellow/Warning
+        elif firebase_enabled and not tokens_exist:
+            self.firebase_status_label.configure(text="Firebase: Missing OAuth Tokens", text_color="#fbbf24")  # Yellow/Warning
             self.leave_site_button.configure(state="disabled")
         else:
             self.firebase_status_label.configure(text="Firebase: Disabled", text_color="#6b7280")  # Gray

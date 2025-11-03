@@ -22,18 +22,40 @@ current_status = {'service': 'unknown', 'firebase': 'unknown'}
 last_status = {'service': 'unknown', 'firebase': 'unknown'}
 status_lock = threading.Lock()
 
+# Function to detect Windows theme (light or dark)
+def is_windows_dark_theme():
+    """
+    Detect if Windows is using dark theme.
+    Returns True for dark theme, False for light theme.
+    """
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize',
+            0,
+            winreg.KEY_READ
+        )
+        value, _ = winreg.QueryValueEx(key, 'SystemUsesLightTheme')
+        winreg.CloseKey(key)
+        # 0 = dark theme, 1 = light theme
+        return value == 0
+    except Exception as e:
+        logging.debug(f"Could not detect Windows theme: {e}")
+        # Default to dark theme if detection fails
+        return True
+
 # Function to load icon image from file
 def load_icon(status='normal'):
     """
-    Load HAL 9000-style eye icon from static PNG files.
+    Load universal tray icon (white lines on dark grey background).
 
-    Status colors for center dot (pupil):
+    Single icon design that works on both light and dark taskbars.
+    Status indicated by center dot color:
     - normal: White dot (everything OK, Always Watching)
     - warning: Orange dot (Firebase connection issues)
     - error: Red dot (service stopped/disconnected)
-
-    Design matches Windows 11 native tray icons (network, audio, etc.)
     """
+    # Use universal icon from root icons folder (no light/dark variants)
     icon_path = shared_utils.get_path(f'../icons/{status}.png')
 
     if not os.path.exists(icon_path):
@@ -83,12 +105,12 @@ def check_firebase_status():
         if not firebase_enabled:
             return 'disabled'
 
-        # Check if credentials exist
-        credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-        if not os.path.exists(credentials_path):
+        # Check if OAuth tokens exist (new authentication method)
+        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
+        if not os.path.exists(token_path):
             return 'error'
 
-        # If enabled and credentials exist, assume connected
+        # If enabled and OAuth tokens exist, assume connected
         # (We could add more sophisticated checks by reading the log file)
         return 'connected'
     except Exception as e:
@@ -368,7 +390,7 @@ def send_status_notification(icon, status_code, service_msg, firebase_msg):
         logging.error(f"Failed to send notification: {e}")
 
 def leave_site(icon, item):
-    """Handle Leave Site action from tray menu."""
+    """Handle Leave Site action - kept for GUI use."""
     import ctypes
 
     # Get current site ID for display
@@ -458,11 +480,6 @@ def generate_menu():
         service_status = current_status.get('service', 'Checking...')
         firebase_status = current_status.get('firebase', 'Checking...')
 
-    # Check if Firebase is enabled for Leave Site option
-    config = shared_utils.read_config()
-    firebase_enabled = config.get('firebase', {}).get('enabled', False)
-    has_site_id = bool(config.get('firebase', {}).get('site_id', ''))
-
     return pystray.Menu(
         item(f'Owlette: {hostname}', lambda icon, item: None, enabled=False),
         item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
@@ -470,7 +487,6 @@ def generate_menu():
         item(f'{firebase_status}', lambda icon, item: None, enabled=False),
         pystray.Menu.SEPARATOR,
         item('Open Config', open_config_gui),
-        item('Leave Site', leave_site, enabled=firebase_enabled and has_site_id),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
         item('Restart', restart_service),
         item('Exit', exit_action)
