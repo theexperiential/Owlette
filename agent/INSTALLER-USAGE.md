@@ -5,7 +5,7 @@
 Double-click the installer and follow the prompts:
 
 ```bash
-Owlette-Setup-2.0.0.exe
+Owlette-Installer-v2.0.0.exe
 ```
 
 This will install Owlette configured for the **development environment** (dev.owlette.app) by default.
@@ -18,14 +18,14 @@ The installer supports switching between development and production environments
 
 #### Development Environment (Default)
 ```bash
-Owlette-Setup-2.0.0.exe /SERVER=dev
+Owlette-Installer-v2.0.0.exe /SERVER=dev
 ```
 - Connects to: `https://dev.owlette.app`
 - Use for testing, development, and staging
 
 #### Production Environment
 ```bash
-Owlette-Setup-2.0.0.exe /SERVER=prod
+Owlette-Installer-v2.0.0.exe /SERVER=prod
 ```
 - Connects to: `https://owlette.app`
 - Use for production deployments
@@ -45,13 +45,13 @@ For automated deployments, combine with standard Inno Setup silent flags:
 
 ```bash
 # Silent install for development
-Owlette-Setup-2.0.0.exe /SILENT /SERVER=dev
+Owlette-Installer-v2.0.0.exe /SILENT /SERVER=dev
 
 # Silent install for production
-Owlette-Setup-2.0.0.exe /SILENT /SERVER=prod
+Owlette-Installer-v2.0.0.exe /SILENT /SERVER=prod
 
 # Very silent (no progress window)
-Owlette-Setup-2.0.0.exe /VERYSILENT /SERVER=prod
+Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
 ```
 
 **Note:** Silent installation will still require Firebase credentials to be configured manually after installation.
@@ -71,12 +71,18 @@ Owlette-Setup-2.0.0.exe /VERYSILENT /SERVER=prod
 4. **Site Configuration (OAuth)**
    - Opens browser to specified environment (dev/prod)
    - User logs in and selects/creates a site
-   - Site ID and auth token are saved to `config.json`
+   - **Automatic OAuth token exchange:**
+     - Web backend generates registration code
+     - Agent exchanges code for access + refresh tokens
+     - Tokens stored securely in Windows Credential Manager
+     - Site ID and configuration saved to `config.json`
+   - **No manual credential downloads required!**
 
 5. **Service Installation**
    - Installs Owlette as a Windows service using NSSM
    - Configures service to start automatically
    - Starts the service
+   - Agent automatically authenticates using stored OAuth tokens
 
 6. **Shortcuts Creation**
    - Start Menu shortcuts for GUI and tray icon
@@ -84,21 +90,37 @@ Owlette-Setup-2.0.0.exe /VERYSILENT /SERVER=prod
 
 ## Post-Installation
 
-### Firebase Credentials (Optional)
+### Firebase Integration
 
-If you want full Firebase integration, you'll need to add service account credentials:
+**Firebase integration is automatic!** The installer OAuth flow handles all authentication:
 
-1. Download credentials from [Firebase Console](https://console.firebase.google.com/)
-   - Go to Project Settings → Service Accounts
-   - Click "Generate new private key"
+✅ **Automatic:**
+- OAuth tokens (access + refresh)
+- Windows Credential Manager storage (encrypted)
+- Automatic token refresh (when access token expires)
+- Site assignment and permissions
 
-2. Save as: `C:\Owlette\agent\config\firebase-credentials.json`
+❌ **No longer needed:**
+- Manual Firebase credential downloads
+- Service account JSON files
+- Manual configuration steps
 
-3. Restart service:
-   ```bash
-   sc stop OwletteService
-   sc start OwletteService
-   ```
+### Authentication Details
+
+**Where tokens are stored:**
+- Location: Windows Credential Manager
+- Encryption: Machine + user specific (DPAPI)
+- Access: Only the logged-in user on this machine
+
+**Token lifecycle:**
+- Access token: Valid for 1 hour (auto-refreshes)
+- Refresh token: Valid for 30 days (stored encrypted)
+- Automatic refresh: Agent handles this transparently
+
+**Token revocation:**
+- Via web dashboard: "Remove Machine" button
+- Immediately revokes agent access
+- Agent stops syncing within 1 hour (when access token expires)
 
 ### Verify Installation
 
@@ -160,7 +182,7 @@ Common issues:
 
 The installer uses `C:\Owlette` by default. To change:
 ```bash
-Owlette-Setup-2.0.0.exe /DIR="D:\CustomPath\Owlette"
+Owlette-Installer-v2.0.0.exe /DIR="D:\CustomPath\Owlette"
 ```
 
 ### Skip OAuth Configuration
@@ -175,13 +197,13 @@ During development, you can test both environments:
 
 ```bash
 # Test dev environment
-Owlette-Setup-2.0.0.exe /SERVER=dev
+Owlette-Installer-v2.0.0.exe /SERVER=dev
 
 # Uninstall
 C:\Owlette\unins000.exe
 
 # Test prod environment
-Owlette-Setup-2.0.0.exe /SERVER=prod
+Owlette-Installer-v2.0.0.exe /SERVER=prod
 ```
 
 ### Manual Configuration Override
@@ -195,5 +217,11 @@ python configure_site.py --url https://localhost:3000/setup
 This is useful for local web development.
 
 ## Version History
+
+- **2.1.0** - OAuth custom token authentication (eliminated service accounts)
+  - Automatic OAuth flow during installation
+  - Tokens stored in Windows Credential Manager
+  - No manual credential downloads required
+  - Token revocation via web dashboard
 
 - **2.0.0** - Initial release with dev/prod environment support

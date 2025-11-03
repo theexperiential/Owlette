@@ -190,7 +190,7 @@ if exist "%INNO_PATH%" (
         echo SUCCESS! Installer Created!
         echo ========================================
         echo.
-        echo Output: build\installer_output\Owlette-Setup-2.0.0.exe
+        echo Output: build\installer_output\Owlette-Installer-v2.0.0.exe
         echo.
     )
 ) else (
