@@ -367,6 +367,88 @@ def send_status_notification(icon, status_code, service_msg, firebase_msg):
     except Exception as e:
         logging.error(f"Failed to send notification: {e}")
 
+def leave_site(icon, item):
+    """Handle Leave Site action from tray menu."""
+    import ctypes
+
+    # Get current site ID for display
+    config = shared_utils.read_config()
+    site_id = config.get('firebase', {}).get('site_id', 'this site')
+
+    # Show confirmation dialog using Windows MessageBox
+    MB_YESNO = 0x04
+    MB_ICONWARNING = 0x30
+    IDYES = 6
+
+    message = (
+        f"This will remove this machine from '{site_id}'.\n\n"
+        "The following will happen:\n"
+        "• Firebase sync will be disabled\n"
+        "• Machine will be deregistered\n"
+        "• Service will be restarted\n\n"
+        "To re-join a site, you will need to run the Owlette installer again.\n\n"
+        "Are you sure you want to leave this site?"
+    )
+
+    result = ctypes.windll.user32.MessageBoxW(
+        0,
+        message,
+        "Leave Site?",
+        MB_YESNO | MB_ICONWARNING
+    )
+
+    if result == IDYES:
+        try:
+            # Disable Firebase and clear site_id
+            if 'firebase' not in config:
+                config['firebase'] = {}
+
+            config['firebase']['enabled'] = False
+            config['firebase']['site_id'] = ''
+
+            # Save config
+            shared_utils.save_config(config)
+            logging.info("Left site successfully - Firebase disabled and site_id cleared")
+
+            # Show success notification
+            icon.notify(
+                title="✓ Left Site Successfully",
+                message="This machine has been removed from the site.\nRestarting the service..."
+            )
+
+            # Restart service
+            try:
+                import win32serviceutil
+                service_name = 'OwletteService'
+
+                # Stop and start service
+                win32serviceutil.StopService(service_name)
+                time.sleep(2)
+                win32serviceutil.StartService(service_name)
+
+                logging.info("Service restarted successfully after leaving site")
+                icon.notify(
+                    title="✓ Service Restarted",
+                    message="The Owlette service has been restarted successfully."
+                )
+            except Exception as restart_error:
+                logging.error(f"Error restarting service: {restart_error}")
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    f"Failed to restart service:\n{str(restart_error)}\n\nPlease restart manually.",
+                    "Restart Failed",
+                    0x10  # MB_ICONERROR
+                )
+
+        except Exception as e:
+            logging.error(f"Error leaving site: {e}")
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Failed to leave site:\n{str(e)}",
+                "Error",
+                0x10  # MB_ICONERROR
+            )
+
 # Dynamically generate the menu with status info
 def generate_menu():
     hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
@@ -376,6 +458,11 @@ def generate_menu():
         service_status = current_status.get('service', 'Checking...')
         firebase_status = current_status.get('firebase', 'Checking...')
 
+    # Check if Firebase is enabled for Leave Site option
+    config = shared_utils.read_config()
+    firebase_enabled = config.get('firebase', {}).get('enabled', False)
+    has_site_id = bool(config.get('firebase', {}).get('site_id', ''))
+
     return pystray.Menu(
         item(f'Owlette: {hostname}', lambda icon, item: None, enabled=False),
         item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
@@ -383,6 +470,7 @@ def generate_menu():
         item(f'{firebase_status}', lambda icon, item: None, enabled=False),
         pystray.Menu.SEPARATOR,
         item('Open Config', open_config_gui),
+        item('Leave Site', leave_site, enabled=firebase_enabled and has_site_id),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
         item('Restart', restart_service),
         item('Exit', exit_action)

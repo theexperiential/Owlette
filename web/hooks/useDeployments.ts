@@ -422,7 +422,34 @@ export function useDeployments(siteId: string) {
     await deleteDoc(deploymentRef);
   };
 
-  return { deployments, loading, error, createDeployment, cancelDeployment, deleteDeployment };
+  const checkMachineHasActiveDeployment = (machineId: string): boolean => {
+    return deployments.some(deployment => {
+      // Check if deployment is active
+      if (deployment.status !== 'pending' && deployment.status !== 'in_progress') {
+        return false;
+      }
+
+      // Check if this machine is a target with active status
+      return deployment.targets.some(target => {
+        if (target.machineId !== machineId) return false;
+
+        // Check if target status is active (not completed, failed, or cancelled)
+        return target.status === 'pending' ||
+               target.status === 'downloading' ||
+               target.status === 'installing';
+      });
+    });
+  };
+
+  return {
+    deployments,
+    loading,
+    error,
+    createDeployment,
+    cancelDeployment,
+    deleteDeployment,
+    checkMachineHasActiveDeployment
+  };
 }
 
 // Convenience hook to get both templates and deployments
@@ -444,5 +471,6 @@ export function useDeploymentManager(siteId: string) {
     createDeployment: deployments.createDeployment,
     cancelDeployment: deployments.cancelDeployment,
     deleteDeployment: deployments.deleteDeployment,
+    checkMachineHasActiveDeployment: deployments.checkMachineHasActiveDeployment,
   };
 }

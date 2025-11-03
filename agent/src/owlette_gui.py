@@ -243,6 +243,19 @@ class OwletteConfigApp:
         self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 10))
 
+        # Leave Site button (next to Firebase status)
+        self.leave_site_button = ctk.CTkButton(
+            self.master,
+            text="Leave Site",
+            command=self.on_leave_site_click,
+            width=100,
+            height=24,
+            fg_color="#991b1b",  # Red
+            hover_color="#7f1d1d",  # Darker red
+            font=("", 11)
+        )
+        self.leave_site_button.grid(row=10, column=2, sticky='sw', padx=(10, 0), pady=(5, 10))
+
         # Footer label (perfectly centered in row 10)
         footer_text = "Made with ♥ in California by TEC"
         self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#6b7280", font=("", 11))
@@ -993,17 +1006,123 @@ class OwletteConfigApp:
 
         # Check if Firebase is enabled in config
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
+        site_id = self.config.get('firebase', {}).get('site_id', '')
 
         # Check if credentials file exists
         credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
         credentials_exist = os.path.exists(credentials_path)
 
-        if firebase_enabled and credentials_exist:
+        if firebase_enabled and not site_id:
+            # Firebase was enabled but site_id is missing (removed from site)
+            self.firebase_status_label.configure(text="Firebase: Removed from Site", text_color="#f87171")  # Red
+            self.leave_site_button.configure(state="disabled")
+        elif firebase_enabled and credentials_exist:
             self.firebase_status_label.configure(text="Firebase: Connected", text_color="#4ade80")  # Green
+            self.leave_site_button.configure(state="normal")
         elif firebase_enabled and not credentials_exist:
             self.firebase_status_label.configure(text="Firebase: Missing Credentials", text_color="#fbbf24")  # Yellow/Warning
+            self.leave_site_button.configure(state="disabled")
         else:
             self.firebase_status_label.configure(text="Firebase: Disabled", text_color="#6b7280")  # Gray
+            self.leave_site_button.configure(state="disabled")
+
+    def on_leave_site_click(self):
+        """Handle Leave Site button click."""
+        # Get current site ID for display
+        site_id = self.config.get('firebase', {}).get('site_id', 'this site')
+
+        # Show confirmation dialog
+        response = CTkMessagebox(
+            master=self.master,
+            title="Leave Site?",
+            message=f"This will remove this machine from '{site_id}'.\n\n"
+                   "The following will happen:\n"
+                   "• Firebase sync will be disabled\n"
+                   "• Machine will be deregistered\n"
+                   "• Service must be restarted\n\n"
+                   "To re-join a site, you will need to run the Owlette installer again.",
+            icon="warning",
+            option_1="Cancel",
+            option_2="Leave Site"
+        )
+
+        if response.get() == "Leave Site":
+            try:
+                # Disable Firebase and clear site_id
+                if 'firebase' not in self.config:
+                    self.config['firebase'] = {}
+
+                self.config['firebase']['enabled'] = False
+                self.config['firebase']['site_id'] = ''
+
+                # Save config
+                shared_utils.save_config(self.config)
+                logging.info("Left site successfully - Firebase disabled and site_id cleared")
+
+                # Stop Firebase client if running
+                if self.firebase_client:
+                    try:
+                        self.firebase_client.stop()
+                        logging.info("Firebase client stopped")
+                    except Exception as e:
+                        logging.error(f"Error stopping Firebase client: {e}")
+
+                # Update status
+                self.update_firebase_status()
+
+                # Show success message and ask about restart
+                restart_response = CTkMessagebox(
+                    master=self.master,
+                    title="Left Site Successfully",
+                    message="This machine has been removed from the site.\n\n"
+                           "The Owlette service should be restarted for changes to take full effect.\n\n"
+                           "Would you like to restart the service now?",
+                    icon="check",
+                    option_1="Not Now",
+                    option_2="Restart Service"
+                )
+
+                if restart_response.get() == "Restart Service":
+                    self.restart_service()
+
+            except Exception as e:
+                logging.error(f"Error leaving site: {e}")
+                CTkMessagebox(
+                    master=self.master,
+                    title="Error",
+                    message=f"Failed to leave site:\n{str(e)}",
+                    icon="cancel"
+                )
+
+    def restart_service(self):
+        """Restart the Owlette service."""
+        try:
+            import win32serviceutil
+            service_name = 'OwletteService'
+
+            # Stop the service
+            win32serviceutil.StopService(service_name)
+            logging.info(f"Stopping {service_name}...")
+            time.sleep(2)
+
+            # Start the service
+            win32serviceutil.StartService(service_name)
+            logging.info(f"Starting {service_name}...")
+
+            CTkMessagebox(
+                master=self.master,
+                title="Service Restarted",
+                message="The Owlette service has been restarted successfully.",
+                icon="check"
+            )
+        except Exception as e:
+            logging.error(f"Error restarting service: {e}")
+            CTkMessagebox(
+                master=self.master,
+                title="Error",
+                message=f"Failed to restart service:\n{str(e)}\n\nPlease restart manually.",
+                icon="cancel"
+            )
 
     # UI
 

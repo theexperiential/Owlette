@@ -23,6 +23,7 @@ from datetime import datetime
 
 # Import shared utilities
 import shared_utils
+import registry_utils
 
 
 class FirebaseClient:
@@ -54,6 +55,7 @@ class FirebaseClient:
         self.metrics_thread: Optional[threading.Thread] = None
         self.command_listener_thread: Optional[threading.Thread] = None
         self.config_listener_thread: Optional[threading.Thread] = None
+        self.software_inventory_thread: Optional[threading.Thread] = None
         self.running = False
 
         # Callbacks
@@ -144,9 +146,15 @@ class FirebaseClient:
             self.config_listener_thread = threading.Thread(target=self._config_listener_loop, daemon=True)
             self.config_listener_thread.start()
             self.logger.info("Config listener thread started")
+
+            # Start software inventory thread (5 minute interval)
+            self.software_inventory_thread = threading.Thread(target=self._software_inventory_loop, daemon=True)
+            self.software_inventory_thread.start()
+            self.logger.info("Software inventory thread started")
         else:
             self.logger.warning("Command listener NOT started (offline mode)")
             self.logger.warning("Config listener NOT started (offline mode)")
+            self.logger.warning("Software inventory NOT started (offline mode)")
 
     def stop(self):
         """Stop all background threads and set machine offline."""
@@ -303,26 +311,71 @@ class FirebaseClient:
             self.logger.error(f"Config listener error: {e}")
             self.connected = False
 
+    def _handle_removal_detection(self, error: Exception):
+        """
+        Handle detection of machine removal from web dashboard.
+        If Firestore operations fail with permission denied or not found,
+        it likely means the machine was removed via the web dashboard.
+        """
+        error_str = str(error).lower()
+
+        # Check for permission denied or not found errors
+        if '403' in error_str or 'permission' in error_str or 'not found' in error_str or '404' in error_str:
+            self.logger.warning("Machine may have been removed from site via web dashboard")
+            self.logger.info("Disabling Firebase and clearing site_id in local config")
+
+            try:
+                # Load current config
+                config = shared_utils.read_config()
+
+                # Disable Firebase and clear site_id
+                if 'firebase' not in config:
+                    config['firebase'] = {}
+
+                config['firebase']['enabled'] = False
+                config['firebase']['site_id'] = ''
+
+                # Save config
+                shared_utils.save_config(config)
+
+                self.logger.info("Local config updated - machine deregistered from site")
+
+                # Stop this Firebase client
+                self.stop()
+
+                return True  # Handled
+            except Exception as config_error:
+                self.logger.error(f"Failed to update local config after removal detection: {config_error}")
+
+        return False  # Not handled
+
     def _update_presence(self, online: bool):
         """Update machine presence/heartbeat in Firestore."""
         if not self.connected or not self.db:
             return
 
-        presence_ref = self.db.collection('sites').document(self.site_id)\
-            .collection('machines').document(self.machine_id)
+        try:
+            presence_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
 
-        presence_ref.set({
-            'online': online,
-            'lastHeartbeat': firestore.SERVER_TIMESTAMP,
-            'machineId': self.machine_id,
-            'siteId': self.site_id
-        }, merge=True)
+            presence_ref.set({
+                'online': online,
+                'lastHeartbeat': firestore.SERVER_TIMESTAMP,
+                'machineId': self.machine_id,
+                'siteId': self.site_id
+            }, merge=True)
 
-        # Log for debugging
-        if online:
-            self.logger.debug("Heartbeat: Machine online")
-        else:
-            self.logger.info(f"✓ Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
+            # Log for debugging
+            if online:
+                self.logger.debug("Heartbeat: Machine online")
+            else:
+                self.logger.info(f"✓ Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
+        except Exception as e:
+            # Check if this is due to machine removal from web dashboard
+            if self._handle_removal_detection(e):
+                return  # Machine was removed, stop processing
+            else:
+                self.logger.error(f"Error updating presence: {e}")
 
     def _upload_metrics(self, metrics: Dict[str, Any]):
         """Upload system metrics to Firestore."""
@@ -344,17 +397,28 @@ class FirebaseClient:
                 'metrics.processes': metrics.get('processes', {})  # This replaces entire processes object
             })
         except Exception as e:
-            # If document doesn't exist, create it with set
-            metrics_ref.set({
-                'metrics': {
-                    'cpu': metrics.get('cpu', {}),
-                    'memory': metrics.get('memory', {}),
-                    'disk': metrics.get('disk', {}),
-                    'gpu': metrics.get('gpu', {}),
-                    'timestamp': firestore.SERVER_TIMESTAMP,
-                    'processes': metrics.get('processes', {})
-                }
-            })
+            # Check if this is due to machine removal from web dashboard
+            if self._handle_removal_detection(e):
+                return  # Machine was removed, stop processing
+
+            # If document doesn't exist (but not removed), create it with set
+            try:
+                metrics_ref.set({
+                    'metrics': {
+                        'cpu': metrics.get('cpu', {}),
+                        'memory': metrics.get('memory', {}),
+                        'disk': metrics.get('disk', {}),
+                        'gpu': metrics.get('gpu', {}),
+                        'timestamp': firestore.SERVER_TIMESTAMP,
+                        'processes': metrics.get('processes', {})
+                    }
+                })
+            except Exception as set_error:
+                # Check again for removal
+                if self._handle_removal_detection(set_error):
+                    return
+                else:
+                    self.logger.error(f"Error uploading metrics: {set_error}")
 
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Process a command received from Firestore."""
@@ -768,6 +832,89 @@ class FirebaseClient:
     def get_site_id(self) -> str:
         """Get the site ID."""
         return self.site_id
+
+    def _software_inventory_loop(self):
+        """Software inventory loop - syncs installed software every 5 minutes."""
+        while self.running:
+            try:
+                if self.connected:
+                    self._sync_software_inventory()
+                    self.logger.debug("Software inventory synced to Firestore")
+            except Exception as e:
+                self.logger.error(f"Software inventory sync failed: {e}")
+
+            # Sleep for 5 minutes (300 seconds)
+            time.sleep(300)
+
+    def _sync_software_inventory(self):
+        """
+        Sync installed software to Firestore.
+
+        Queries Windows registry for installed software and uploads to:
+        sites/{site_id}/machines/{machine_id}/installed_software
+        """
+        if not self.connected or not self.db:
+            return
+
+        try:
+            # Get installed software from Windows registry
+            installed_software = registry_utils.get_installed_software()
+
+            if not installed_software:
+                self.logger.debug("No installed software detected")
+                return
+
+            # Reference to installed_software subcollection
+            software_collection_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('installed_software')
+
+            # Clear existing entries first (for clean sync)
+            # Note: In production, you might want to do a diff-based update instead
+            try:
+                # Delete all existing documents
+                existing_docs = software_collection_ref.stream()
+                for doc in existing_docs:
+                    doc.reference.delete()
+            except Exception as e:
+                self.logger.warning(f"Failed to clear existing software inventory: {e}")
+
+            # Upload new software list
+            batch = self.db.batch()
+            batch_count = 0
+
+            for software in installed_software:
+                # Create a unique document ID from software name + version
+                # Replace invalid characters for Firestore document IDs
+                doc_id = f"{software['name']}_{software['version']}".replace('/', '_').replace('\\', '_')
+                doc_id = doc_id[:1500]  # Firestore doc ID limit
+
+                doc_ref = software_collection_ref.document(doc_id)
+
+                # Add timestamp
+                software_data = {
+                    **software,
+                    'detected_at': firestore.SERVER_TIMESTAMP
+                }
+
+                batch.set(doc_ref, software_data)
+                batch_count += 1
+
+                # Firestore batches limited to 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db.batch()
+                    batch_count = 0
+
+            # Commit remaining items
+            if batch_count > 0:
+                batch.commit()
+
+            self.logger.info(f"Synced {len(installed_software)} software packages to Firestore")
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync software inventory: {e}")
+            self.logger.exception("Software inventory sync error details:")
 
 
 # Example usage / testing

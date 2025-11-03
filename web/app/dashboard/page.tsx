@@ -4,6 +4,8 @@ import React, { useEffect, useState, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
+import { useDeployments } from '@/hooks/useDeployments';
+import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { toast } from 'sonner';
 import Image from 'next/image';
-import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, LogOut, Copy, Check, Pencil, Trash2 } from 'lucide-react';
+import { ChevronRight, Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, LogOut, Copy, Check, Pencil, Trash2, Shield } from 'lucide-react';
 import { getUserInitials } from '@/lib/userUtils';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,6 +26,9 @@ import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
+import DownloadButton from '@/components/DownloadButton';
+import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 
 type ViewType = 'card' | 'list';
 
@@ -39,8 +44,8 @@ const MemoizedTableHeader = memo(() => {
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>GPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Processes</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
+        <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -49,7 +54,8 @@ const MemoizedTableHeader = memo(() => {
 MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
-  const { user, loading, signOut } = useAuth();
+  const router = useRouter();
+  const { user, loading, signOut, isAdmin } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -79,7 +85,12 @@ export default function DashboardPage() {
   });
 
   const { machines, loading: machinesLoading, killProcess, toggleAutolaunch, updateProcess, deleteProcess, createProcess } = useMachines(currentSiteId);
-  const router = useRouter();
+  const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
+  const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
+
+  // Remove Machine Dialog state
+  const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
+  const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
   const toggleMachineExpanded = (machineId: string) => {
     setExpandedMachines(prev => {
@@ -222,6 +233,24 @@ export default function DashboardPage() {
       setDeleteConfirmOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete process');
+    }
+  };
+
+  const openRemoveMachineDialog = (machineId: string, machineName: string, isOnline: boolean) => {
+    setMachineToRemove({ id: machineId, name: machineName, isOnline });
+    setRemoveMachineDialogOpen(true);
+  };
+
+  const handleConfirmRemoveMachine = async () => {
+    if (!machineToRemove) return;
+
+    try {
+      await removeMachineFromSite(machineToRemove.id);
+      toast.success(`Machine "${machineToRemove.name}" removed from site successfully!`);
+      setRemoveMachineDialogOpen(false);
+      setMachineToRemove(null);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to remove machine');
     }
   };
 
@@ -397,6 +426,9 @@ export default function DashboardPage() {
             )}
           </div>
 
+          {/* Download Button */}
+          <DownloadButton />
+
           {/* User Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -420,6 +452,15 @@ export default function DashboardPage() {
                 <p className="text-xs text-slate-400 truncate">{user.email}</p>
               </div>
               <DropdownMenuSeparator className="bg-slate-700" />
+              {isAdmin && (
+                <DropdownMenuItem
+                  onClick={() => router.push('/admin/installers')}
+                  className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  Admin Panel
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={() => setAccountSettingsOpen(true)}
                 className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
@@ -556,9 +597,18 @@ export default function DashboardPage() {
                   <CardHeader className="pb-3 md:pb-6">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base md:text-lg text-white select-text">{machine.machineId}</CardTitle>
-                      <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                        {machine.online ? 'Online' : 'Offline'}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                          {machine.online ? 'Online' : 'Offline'}
+                        </Badge>
+                        <MachineContextMenu
+                          machineId={machine.machineId}
+                          machineName={machine.machineId}
+                          siteId={currentSiteId}
+                          isOnline={machine.online}
+                          onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
+                        />
+                      </div>
                     </div>
                     <CardDescription className="text-xs md:text-sm text-slate-400 select-none hidden md:block">
                       Last heartbeat: {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
@@ -779,11 +829,17 @@ export default function DashboardPage() {
                               <span className="text-slate-500">N/A</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-white">
-                            {machine.processes ? machine.processes.length : 0}
-                          </TableCell>
                           <TableCell className="text-slate-400 text-xs">
                             {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <MachineContextMenu
+                              machineId={machine.machineId}
+                              machineName={machine.machineId}
+                              siteId={currentSiteId}
+                              isOnline={machine.online}
+                              onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
+                            />
                           </TableCell>
                         </TableRow>
 
@@ -1124,6 +1180,20 @@ export default function DashboardPage() {
         open={accountSettingsOpen}
         onOpenChange={setAccountSettingsOpen}
       />
+
+      {/* Remove Machine Dialog */}
+      {machineToRemove && (
+        <RemoveMachineDialog
+          open={removeMachineDialogOpen}
+          onOpenChange={setRemoveMachineDialogOpen}
+          machineId={machineToRemove.id}
+          machineName={machineToRemove.name}
+          isOnline={machineToRemove.isOnline}
+          hasActiveDeployments={checkMachineHasActiveDeployment(machineToRemove.id)}
+          isRemoving={isRemovingMachine}
+          onConfirmRemove={handleConfirmRemoveMachine}
+        />
+      )}
     </div>
   );
 }
