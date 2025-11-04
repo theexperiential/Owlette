@@ -15,11 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automatic Log Cleanup** - Delete log files older than configurable days (default: 90 days)
 - **Enhanced Log Rotation** - Increased to 10 MB per file with 5 backups (60 MB total retention)
 - **CPU Model Detection** - Display CPU model name (e.g., "Intel Core i9-9900X") alongside usage percentage
-- **HAL 9000-Style Tray Icon** - Color-coded status indicator (white=normal, yellow=Firebase issues, red=service stopped)
+- **Universal White Tray Icons** - Redesigned HAL 9000-style icons with pure white ring, grey background, smaller center dot for better visibility in all themes
 - **Status Monitoring** - Background thread monitors service and Firebase health every 60 seconds
 - **Status Notifications** - Windows toast notifications when service state changes
-- **Improved Tray Menu** - Shows live service and Firebase connection status
+- **Improved Tray Menu** - Shows live service and Firebase connection status with cleaner labels
 - **Attribution Footer** - "Made with ♥ in California by TEC" footer in GUI with clickable link
+- **Emergency Offline Handler** - atexit handler ensures machines marked offline even during abrupt shutdowns
 
 #### Web Dashboard Enhancements
 - **User Profile Management** - Collect and display first/last name during registration
@@ -39,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config Version** - Bumped to v1.4.0 for logging configuration
 - **Service Restart Timing** - Increased wait times (5s after stop, 3s after start) to prevent race conditions
 - **Default Log Level** - Now configurable via `logging.level` in config.json (defaults to INFO)
+- **Firebase Heartbeat** - Disabled separate 30s heartbeat thread (now included in 60s metrics) for 33% fewer Firestore writes
+- **Atomic Metrics Upload** - Combined online/heartbeat with metrics data to prevent "undefined" flicker in web dashboard
+- **Config Backup Restoration** - Installer now restores config.json on upgrades to preserve processes and "Leave Site" state
+- **Icon Directory Structure** - Simplified from light/dark theme directories to single unified icons/ folder
 
 #### Web
 - **Page Layouts** - Added bottom padding to accommodate fixed footer
@@ -50,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Agent
 - **Tray Icon Visibility** - Fixed icon not updating when service status changes
 - **Service Status Detection** - Improved reliability of service running checks
+- **"Leave Site" Workflow** - Fixed machine document recreation by stopping service BEFORE Firestore deletion
+- **Config Race Conditions** - Eliminated TOCTOU issues with get_system_metrics_with_config() passing config directly
+- **Config Feedback Loops** - Added MD5 hash tracking to prevent processing self-originated config changes
+- **Service Stop Reliability** - Tray exit action now uses NSSM with subprocess instead of ShellExecuteW
+- **GUI Icon Path** - Corrected icon path from ../../icons to ../icons for new directory structure
+- **Metrics Snapshot Flicker** - Fixed brief "metrics: undefined" in web app with atomic Firestore updates
 
 #### Web
 - **Footer Overlap** - Fixed content being hidden behind footer on long pages
