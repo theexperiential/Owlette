@@ -178,15 +178,15 @@ procedure RestoreConfigIfBackedUp;
 var
   ConfigPath: String;
 begin
-  // Don't restore backup - let OAuth setup create the new config
-  // The backup would overwrite the OAuth setup's changes (enabled=true, project_id, api_base)
-  // Users can manually restore their old processes array after installation if needed
+  // For upgrades: restore the old config to preserve processes and Firebase settings
+  // This ensures "Leave Site" (enabled=false) is preserved across upgrades
   if ConfigBackupPath <> '' then
   begin
     if FileExists(ConfigBackupPath) then
     begin
-      Log('Config backup available at: ' + ConfigBackupPath);
-      Log('Not restoring to allow OAuth setup to configure Firebase settings');
+      ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
+      FileCopy(ConfigBackupPath, ConfigPath, False);
+      Log('Restored config from backup to preserve settings');
     end;
   end;
 end;
@@ -235,9 +235,10 @@ begin
     DataDir := ExpandConstant('{commonappdata}\Owlette');
     if DirExists(DataDir) then
     begin
-      if MsgBox('Do you want to remove all Owlette configuration files and logs?' + #13#10#13#10 +
+      if MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
                 'This includes:' + #13#10 +
                 '  • Configuration (config.json)' + #13#10 +
+                '  • Authentication tokens' + #13#10 +
                 '  • Log files' + #13#10 +
                 '  • Cache files' + #13#10#13#10 +
                 'Choose "No" to keep your settings for future installations.',
@@ -277,7 +278,7 @@ begin
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}_is1', 'UninstallString', UninstallString) then
   begin
     if MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
-              'Your configuration will be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
+              'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
               'Click OK to uninstall and continue, or Cancel to exit.',
               mbConfirmation, MB_OKCANCEL) = IDOK then
     begin
