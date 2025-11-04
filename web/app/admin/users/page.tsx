@@ -4,10 +4,26 @@ import { useState } from 'react';
 import { useUserManagement } from '@/hooks/useUserManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Users, Shield, ShieldAlert, Loader2, Settings } from 'lucide-react';
+import { Users, Shield, ShieldAlert, Loader2, Settings, MoreVertical, UserCog, UserMinus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 /**
  * User Management Page
@@ -19,11 +35,16 @@ import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
  * - Demote admins to user
  */
 export default function UserManagementPage() {
-  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser } = useUserManagement();
+  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
   const { user: currentUser } = useAuth();
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
+  const [deletingUser, setDeletingUser] = useState<string | null>(null);
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
+  const [deleteConfirmDialogOpen, setDeleteConfirmDialogOpen] = useState(false);
+  const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; sites: string[] } | null>(null);
+  const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
+  const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: 'user' | 'admin'; newRole: 'user' | 'admin' } | null>(null);
 
   const counts = getUserCounts();
 
@@ -32,7 +53,7 @@ export default function UserManagementPage() {
     setManageSitesDialogOpen(true);
   };
 
-  const handleToggleRole = async (userId: string, currentRole: 'user' | 'admin') => {
+  const handleOpenRoleChangeDialog = (userId: string, email: string, currentRole: 'user' | 'admin') => {
     // Prevent user from demoting themselves
     if (userId === currentUser?.uid && currentRole === 'admin') {
       toast.error('Cannot Demote Yourself', {
@@ -42,22 +63,22 @@ export default function UserManagementPage() {
     }
 
     const newRole = currentRole === 'admin' ? 'user' : 'admin';
-    const action = newRole === 'admin' ? 'promote' : 'demote';
+    setUserToChangeRole({ uid: userId, email, currentRole, newRole });
+    setRoleChangeDialogOpen(true);
+  };
 
-    // Confirm action
-    const userEmail = users.find((u) => u.uid === userId)?.email || 'this user';
-    const confirmed = confirm(
-      `Are you sure you want to ${action} ${userEmail} to ${newRole}?`
-    );
+  const handleConfirmRoleChange = async () => {
+    if (!userToChangeRole) return;
 
-    if (!confirmed) return;
+    setUpdatingUser(userToChangeRole.uid);
+    setRoleChangeDialogOpen(false);
 
-    setUpdatingUser(userId);
+    const action = userToChangeRole.newRole === 'admin' ? 'promote' : 'demote';
 
     try {
-      await updateUserRole(userId, newRole);
+      await updateUserRole(userToChangeRole.uid, userToChangeRole.newRole);
       toast.success('Role Updated', {
-        description: `User has been ${action}d to ${newRole}.`,
+        description: `${userToChangeRole.email} has been ${action}d to ${userToChangeRole.newRole}.`,
       });
     } catch (err: any) {
       toast.error('Update Failed', {
@@ -65,6 +86,41 @@ export default function UserManagementPage() {
       });
     } finally {
       setUpdatingUser(null);
+      setUserToChangeRole(null);
+    }
+  };
+
+  const handleOpenDeleteDialog = (userId: string, email: string) => {
+    // Prevent user from deleting themselves
+    if (userId === currentUser?.uid) {
+      toast.error('Cannot Delete Yourself', {
+        description: 'You cannot delete your own account.',
+      });
+      return;
+    }
+
+    setUserToDelete({ uid: userId, email });
+    setDeleteConfirmDialogOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete) return;
+
+    setDeletingUser(userToDelete.uid);
+    setDeleteConfirmDialogOpen(false);
+
+    try {
+      await deleteUser(userToDelete.uid);
+      toast.success('User Deleted', {
+        description: `${userToDelete.email} has been permanently deleted.`,
+      });
+    } catch (err: any) {
+      toast.error('Deletion Failed', {
+        description: err.message || 'Failed to delete user.',
+      });
+    } finally {
+      setDeletingUser(null);
+      setUserToDelete(null);
     }
   };
 
@@ -184,7 +240,7 @@ export default function UserManagementPage() {
                       {user.role === 'admin' ? (
                         <Badge className="bg-green-600 flex items-center gap-1 w-fit">
                           <ShieldAlert className="h-3 w-3" />
-                          Administrator
+                          Admin
                         </Badge>
                       ) : (
                         <Badge className="bg-slate-600 flex items-center gap-1 w-fit">
@@ -208,36 +264,67 @@ export default function UserManagementPage() {
                     </td>
 
                     {/* Actions */}
-                    <td className="p-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleOpenManageSites(user.uid, user.email, user.sites || [])}
-                          className="border-slate-700 bg-slate-900 text-blue-400 hover:bg-slate-700 hover:text-blue-300 cursor-pointer"
-                          title="Manage Site Access"
-                        >
-                          <Settings className="h-3 w-3 mr-2" />
-                          Manage Sites
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleToggleRole(user.uid, user.role)}
-                          disabled={updatingUser === user.uid}
-                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                        >
-                          {updatingUser === user.uid ? (
-                            <>
-                              <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                              Updating...
-                            </>
-                          ) : user.role === 'admin' ? (
-                            'Demote to User'
-                          ) : (
-                            'Promote to Admin'
-                          )}
-                        </Button>
+                    <td className="p-4">
+                      <div className="flex items-center justify-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-slate-800 border-slate-700">
+                            <DropdownMenuItem
+                              onClick={() => handleOpenManageSites(user.uid, user.email, user.sites || [])}
+                              className="text-slate-200 hover:bg-slate-700 cursor-pointer focus:bg-slate-700 focus:text-white"
+                            >
+                              <Settings className="h-4 w-4 mr-2" />
+                              Manage Sites
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
+                              disabled={updatingUser === user.uid || user.uid === currentUser?.uid && user.role === 'admin'}
+                              className="text-slate-200 hover:bg-slate-700 cursor-pointer focus:bg-slate-700 focus:text-white"
+                            >
+                              {updatingUser === user.uid ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Updating...
+                                </>
+                              ) : user.role === 'admin' ? (
+                                <>
+                                  <UserMinus className="h-4 w-4 mr-2" />
+                                  Demote to User
+                                </>
+                              ) : (
+                                <>
+                                  <UserCog className="h-4 w-4 mr-2" />
+                                  Promote to Admin
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="bg-slate-700" />
+                            <DropdownMenuItem
+                              onClick={() => handleOpenDeleteDialog(user.uid, user.email)}
+                              disabled={deletingUser === user.uid || user.uid === currentUser?.uid}
+                              className="text-red-400 hover:bg-red-950/30 hover:text-red-300 cursor-pointer focus:bg-red-950/30 focus:text-red-300"
+                            >
+                              {deletingUser === user.uid ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Deleting...
+                                </>
+                              ) : (
+                                <>
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete User
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>
@@ -252,7 +339,7 @@ export default function UserManagementPage() {
       {!loading && !error && users.length > 0 && (
         <div className="mt-6 bg-blue-900/30 border border-blue-700 rounded-lg p-4">
           <p className="text-blue-300 text-sm">
-            <strong>Note:</strong> Administrators have full access to the admin panel and can
+            <strong>Note:</strong> Admins have full access to the admin panel and can
             manage users, upload installer versions, and configure system settings. Regular users
             can only access the dashboard and their assigned sites.
           </p>
@@ -271,6 +358,94 @@ export default function UserManagementPage() {
           onRemoveSite={removeSiteFromUser}
         />
       )}
+
+      {/* Role Change Confirmation Dialog */}
+      <Dialog open={roleChangeDialogOpen} onOpenChange={setRoleChangeDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              {userToChangeRole?.newRole === 'admin' ? (
+                <UserCog className="h-5 w-5 text-blue-400" />
+              ) : (
+                <UserMinus className="h-5 w-5 text-slate-400" />
+              )}
+              {userToChangeRole?.newRole === 'admin' ? 'Promote to Admin' : 'Demote to User'}
+            </DialogTitle>
+            <DialogDescription className="text-slate-300">
+              Are you sure you want to {userToChangeRole?.newRole === 'admin' ? 'promote' : 'demote'}{' '}
+              <strong className="text-white">{userToChangeRole?.email}</strong> to {userToChangeRole?.newRole}?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-blue-950/30 border border-blue-900/50 rounded-lg p-4 my-4">
+            <p className="text-blue-300 text-sm">
+              {userToChangeRole?.newRole === 'admin'
+                ? 'Admins have full access to the admin panel and can manage users, upload installer versions, and configure system settings.'
+                : 'Regular users can only access the dashboard and their assigned sites.'}
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setRoleChangeDialogOpen(false)}
+              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmRoleChange}
+              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            >
+              {userToChangeRole?.newRole === 'admin' ? (
+                <>
+                  <UserCog className="h-4 w-4 mr-2" />
+                  Promote to Admin
+                </>
+              ) : (
+                <>
+                  <UserMinus className="h-4 w-4 mr-2" />
+                  Demote to User
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmDialogOpen} onOpenChange={setDeleteConfirmDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-400" />
+              Delete User
+            </DialogTitle>
+            <DialogDescription className="text-slate-300">
+              Are you sure you want to delete <strong className="text-white">{userToDelete?.email}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 my-4">
+            <p className="text-red-300 text-sm">
+              This action cannot be undone. All user data will be permanently removed.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmDialogOpen(false)}
+              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmDelete}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

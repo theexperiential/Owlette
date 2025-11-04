@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSites } from '@/hooks/useFirestore';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface ManageUserSitesDialogProps {
   open: boolean;
@@ -27,7 +28,8 @@ export function ManageUserSitesDialog({
   onAssignSite,
   onRemoveSite,
 }: ManageUserSitesDialogProps) {
-  const { sites, loading: sitesLoading } = useSites();
+  const { isAdmin, userSites: adminSites } = useAuth();
+  const { sites, loading: sitesLoading } = useSites(adminSites, isAdmin);
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
 

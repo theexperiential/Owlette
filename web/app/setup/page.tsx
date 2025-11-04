@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, addDoc, Timestamp, getDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, Timestamp, getDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -51,23 +51,75 @@ export default function SetupPage() {
       }
 
       try {
-        // Fetch all sites (Phase 1: trust-based - all authenticated users can see all sites)
-        const sitesRef = collection(db, 'sites');
-        const sitesSnapshot = await getDocs(sitesRef);
+        // First, ensure user document exists
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
 
-        const fetchedSites: Site[] = [];
-        sitesSnapshot.forEach((doc) => {
-          fetchedSites.push({
-            id: doc.id,
-            ...doc.data() as Omit<Site, 'id'>
+        // If user document doesn't exist, create it
+        if (!userDoc.exists()) {
+          await setDoc(userDocRef, {
+            email: user.email,
+            role: 'user',
+            sites: [],
+            createdAt: Timestamp.now(),
           });
-        });
 
-        setSites(fetchedSites);
+          // No sites available for new user
+          setSites([]);
+          setLoading(false);
+          return;
+        }
 
-        // Auto-select first site if only one exists
-        if (fetchedSites.length === 1) {
-          setSelectedSiteId(fetchedSites[0].id);
+        const userData = userDoc.data();
+        const userSites = userData.sites || [];
+        const isAdmin = userData.role === 'admin';
+
+        // If user is admin, fetch all sites
+        if (isAdmin) {
+          const sitesRef = collection(db, 'sites');
+          const sitesSnapshot = await getDocs(sitesRef);
+
+          const fetchedSites: Site[] = [];
+          sitesSnapshot.forEach((doc) => {
+            fetchedSites.push({
+              id: doc.id,
+              ...doc.data() as Omit<Site, 'id'>
+            });
+          });
+
+          setSites(fetchedSites);
+
+          // Auto-select first site if only one exists
+          if (fetchedSites.length === 1) {
+            setSelectedSiteId(fetchedSites[0].id);
+          }
+        } else if (userSites.length > 0) {
+          // Fetch only sites the user has access to
+          const fetchedSites: Site[] = [];
+
+          for (const siteId of userSites) {
+            try {
+              const siteDoc = await getDoc(doc(db, 'sites', siteId));
+              if (siteDoc.exists()) {
+                fetchedSites.push({
+                  id: siteDoc.id,
+                  ...siteDoc.data() as Omit<Site, 'id'>
+                });
+              }
+            } catch (err) {
+              console.warn(`Failed to fetch site ${siteId}:`, err);
+            }
+          }
+
+          setSites(fetchedSites);
+
+          // Auto-select first site if only one exists
+          if (fetchedSites.length === 1) {
+            setSelectedSiteId(fetchedSites[0].id);
+          }
+        } else {
+          // User has no sites, show empty state
+          setSites([]);
         }
       } catch (error: any) {
         console.error('Error fetching sites:', error);
@@ -118,13 +170,33 @@ export default function SetupPage() {
         return;
       }
 
-      // Create new site
-      await addDoc(collection(db, 'sites'), {
+      // Create new site with the generated ID
+      const newSiteRef = doc(db, 'sites', siteId);
+      await setDoc(newSiteRef, {
         name: newSiteName.trim(),
         createdAt: Timestamp.now(),
         owner: user.uid,
         ownerEmail: user.email,
       });
+
+      // Add site ID to user's sites array
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (userDoc.exists()) {
+        const currentSites = userDoc.data().sites || [];
+        await updateDoc(userDocRef, {
+          sites: [...currentSites, siteId]
+        });
+      } else {
+        // Create user document if it doesn't exist
+        await setDoc(userDocRef, {
+          email: user.email,
+          role: 'user',
+          sites: [siteId],
+          createdAt: Timestamp.now(),
+        });
+      }
 
       // Use the generated siteId
       const newSite: Site = {

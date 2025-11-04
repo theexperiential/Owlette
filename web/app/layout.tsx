@@ -70,7 +70,7 @@ export default function RootLayout({
           <AuthProvider>
             {children}
             <Footer />
-            <Toaster />
+            <Toaster theme="dark" />
           </AuthProvider>
         </ErrorBoundary>
       </body>
