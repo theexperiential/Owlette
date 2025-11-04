@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 /**
  * DownloadButton Component
  *
- * Public download button for the agent installer.
+ * Public download button for the Owlette Agent installer.
  * Displays in the dashboard header for all authenticated users.
  *
  * Features:

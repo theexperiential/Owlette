@@ -394,7 +394,7 @@ export default function DashboardPage() {
                 <TooltipContent side="bottom" className="max-w-xs">
                   <p className="font-semibold mb-1">Your Site ID</p>
                   <p className="text-xs text-slate-300">
-                    This site ID will be automatically configured when you run the installer
+                    This site ID will be automatically configured when you run the Owlette Agent installer
                     and complete the OAuth authorization in your browser
                   </p>
                   <p className="text-xs text-slate-400 mt-2">

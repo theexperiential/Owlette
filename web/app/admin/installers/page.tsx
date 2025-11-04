@@ -13,7 +13,7 @@ import { formatFileSize } from '@/lib/storageUtils';
 /**
  * Installer Versions Admin Page
  *
- * Admin-only page for managing agent installer versions.
+ * Admin-only page for managing Owlette Agent installer versions.
  * Allows admins to:
  * - View all versions
  * - Upload new versions
@@ -118,7 +118,7 @@ export default function InstallerVersionsPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Installer Versions</h1>
-          <p className="text-slate-400">Manage agent installer versions and downloads</p>
+          <p className="text-slate-400">Manage Owlette Agent installer versions and downloads</p>
         </div>
         <Button
           onClick={() => setUploadDialogOpen(true)}
