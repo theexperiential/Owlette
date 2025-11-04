@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { useUserManagement } from '@/hooks/useUserManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Users, Shield, ShieldAlert, Loader2 } from 'lucide-react';
+import { Users, Shield, ShieldAlert, Loader2, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
 
 /**
  * User Management Page
@@ -18,11 +19,18 @@ import { useAuth } from '@/contexts/AuthContext';
  * - Demote admins to user
  */
 export default function UserManagementPage() {
-  const { users, loading, error, updateUserRole, getUserCounts } = useUserManagement();
+  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser } = useUserManagement();
   const { user: currentUser } = useAuth();
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
+  const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; sites: string[] } | null>(null);
 
   const counts = getUserCounts();
+
+  const handleOpenManageSites = (userId: string, email: string, sites: string[]) => {
+    setSelectedUser({ uid: userId, email, sites });
+    setManageSitesDialogOpen(true);
+  };
 
   const handleToggleRole = async (userId: string, currentRole: 'user' | 'admin') => {
     // Prevent user from demoting themselves
@@ -201,24 +209,36 @@ export default function UserManagementPage() {
 
                     {/* Actions */}
                     <td className="p-4 text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleToggleRole(user.uid, user.role)}
-                        disabled={updatingUser === user.uid}
-                        className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                      >
-                        {updatingUser === user.uid ? (
-                          <>
-                            <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                            Updating...
-                          </>
-                        ) : user.role === 'admin' ? (
-                          'Demote to User'
-                        ) : (
-                          'Promote to Admin'
-                        )}
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleOpenManageSites(user.uid, user.email, user.sites || [])}
+                          className="border-slate-700 bg-slate-900 text-blue-400 hover:bg-slate-700 hover:text-blue-300 cursor-pointer"
+                          title="Manage Site Access"
+                        >
+                          <Settings className="h-3 w-3 mr-2" />
+                          Manage Sites
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleToggleRole(user.uid, user.role)}
+                          disabled={updatingUser === user.uid}
+                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                        >
+                          {updatingUser === user.uid ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                              Updating...
+                            </>
+                          ) : user.role === 'admin' ? (
+                            'Demote to User'
+                          ) : (
+                            'Promote to Admin'
+                          )}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -237,6 +257,19 @@ export default function UserManagementPage() {
             can only access the dashboard and their assigned sites.
           </p>
         </div>
+      )}
+
+      {/* Manage Sites Dialog */}
+      {selectedUser && (
+        <ManageUserSitesDialog
+          open={manageSitesDialogOpen}
+          onOpenChange={setManageSitesDialogOpen}
+          userId={selectedUser.uid}
+          userEmail={selectedUser.email}
+          userSites={selectedUser.sites}
+          onAssignSite={assignSiteToUser}
+          onRemoveSite={removeSiteFromUser}
+        />
       )}
     </div>
   );

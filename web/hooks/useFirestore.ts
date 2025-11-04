@@ -95,14 +95,32 @@ export function useSites() {
     }
   }, []);
 
-  const createSite = async (siteId: string, name: string) => {
+  const createSite = async (siteId: string, name: string, userId: string) => {
     if (!db) throw new Error('Firebase not configured');
 
+    // Create site document with owner field
     const siteRef = doc(db, 'sites', siteId);
     await setDoc(siteRef, {
       name,
       createdAt: Date.now(),
+      owner: userId,
     });
+
+    // Add site to user's sites array
+    const userRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userRef);
+
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const currentSites = userData.sites || [];
+
+      // Only add if not already in array
+      if (!currentSites.includes(siteId)) {
+        await setDoc(userRef, {
+          sites: [...currentSites, siteId]
+        }, { merge: true });
+      }
+    }
   };
 
   const renameSite = async (siteId: string, newName: string) => {

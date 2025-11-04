@@ -6,11 +6,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface CreateSiteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSite: (siteId: string, siteName: string) => Promise<void>;
+  onCreateSite: (siteId: string, siteName: string, userId: string) => Promise<void>;
 }
 
 export function CreateSiteDialog({
@@ -18,6 +19,7 @@ export function CreateSiteDialog({
   onOpenChange,
   onCreateSite,
 }: CreateSiteDialogProps) {
+  const { user } = useAuth();
   const [newSiteName, setNewSiteName] = useState('');
   const [newSiteId, setNewSiteId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -28,9 +30,14 @@ export function CreateSiteDialog({
       return;
     }
 
+    if (!user) {
+      toast.error('You must be logged in to create a site');
+      return;
+    }
+
     setIsCreating(true);
     try {
-      await onCreateSite(newSiteId, newSiteName);
+      await onCreateSite(newSiteId, newSiteName, user.uid);
       toast.success(`Site "${newSiteName}" created successfully!`);
       setNewSiteId('');
       setNewSiteName('');

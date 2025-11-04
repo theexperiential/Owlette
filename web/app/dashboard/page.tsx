@@ -281,15 +281,15 @@ export default function DashboardPage() {
 
   // Initialize default_site if no sites exist
   useEffect(() => {
-    if (!sitesLoading && sites.length === 0 && !currentSiteId) {
+    if (!sitesLoading && sites.length === 0 && !currentSiteId && user) {
       // Create default_site document
-      createSite('default_site', 'Default Site').then(() => {
+      createSite('default_site', 'Default Site', user.uid).then(() => {
         setCurrentSiteId('default_site');
       }).catch((err) => {
         console.error('Failed to create default site:', err);
       });
     }
-  }, [sites, sitesLoading, currentSiteId, createSite]);
+  }, [sites, sitesLoading, currentSiteId, user, createSite]);
 
   // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {

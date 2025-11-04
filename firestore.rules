@@ -1,23 +1,24 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.1.0 - OAuth Custom Token Authentication
-// Last Updated: 2025-11-03
+// Version: 2.2.0 - Multi-User Site Access Control
+// Last Updated: 2025-01-31
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
-// - All authenticated users can access sites (trust-based)
+// - Multi-user site access: Users can only access sites in their assigned sites array
+// - Admins can access ALL sites regardless of assignment
 // - Agents use custom tokens (OAuth) with site-scoped permissions
 // - Agents can ONLY access their assigned site and machine (strict isolation)
-// - Admins can manage users and upload installer versions
+// - Admins can manage users, assign sites, and upload installer versions
 // - Unauthenticated users can read installer_metadata (for public downloads)
 //
 // Key Features:
 // - OAuth Authentication: Agents authenticate via custom tokens (no service accounts)
 // - Scoped Permissions: Agents limited to their site_id + machine_id (from token claims)
-// - Admin Panel: User management, installer version management
+// - Admin Panel: User management, site assignment, installer version management
 // - Public Downloads: Anyone can download agent installers
-// - Site Access: All authenticated users can manage their sites
+// - Site Access: Users can only access sites they're assigned to (admins see all)
 // - Command System: Bidirectional communication with agents
 //
 // Custom Token Claims (for agents):
@@ -75,10 +76,13 @@ service cloud.firestore {
     }
 
     // Check if user has access to a site
-    // Current: Trust all authenticated users
-    // Future: Check user.sites array contains siteId
+    // Admins can access all sites
+    // Regular users can only access sites in their assigned sites array
     function canAccessSite(siteId) {
-      return isAuthenticated();
+      return isAuthenticated() && (
+        isAdmin() ||
+        siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites
+      );
     }
 
     // Validate that required fields are present in write operations
