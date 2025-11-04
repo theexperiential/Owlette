@@ -33,7 +33,7 @@ class OwletteConfigApp:
         self.master.title(f"Owlette Configuration: {hostname}")
         # Set window icon
         try:
-            icon_path = shared_utils.get_path('../../icons/normal.ico')
+            icon_path = shared_utils.get_path('../icons/normal.ico')
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
@@ -149,18 +149,29 @@ class OwletteConfigApp:
             try:
                 # Lazy import Firebase in background thread
                 from firebase_client import FirebaseClient
+                from auth_manager import AuthManager
 
                 if self.config.get('firebase', {}).get('enabled', False):
                     site_id = self.config.get('firebase', {}).get('site_id', 'default_site')
-                    credentials_path = shared_utils.get_data_path('config/firebase-credentials.json')
+                    project_id = self.config.get('firebase', {}).get('project_id') or "owlette-dev-3838a"
+                    api_base = self.config.get('firebase', {}).get('api_base') or "https://owlette.app/api"
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
-                    self.firebase_client = FirebaseClient(
-                        credentials_path=credentials_path,
-                        site_id=site_id,
-                        config_cache_path=cache_path
-                    )
-                    logging.info("GUI Firebase client initialized")
+                    # Initialize OAuth authentication manager
+                    auth_manager = AuthManager(api_base=api_base)
+
+                    # Check if authenticated
+                    if auth_manager.is_authenticated():
+                        self.firebase_client = FirebaseClient(
+                            auth_manager=auth_manager,
+                            project_id=project_id,
+                            site_id=site_id,
+                            config_cache_path=cache_path
+                        )
+                        logging.info("GUI Firebase client initialized with OAuth")
+                    else:
+                        logging.warning("GUI not authenticated - no OAuth tokens found")
+                        self.firebase_client = None
 
                     # Update UI on main thread
                     self.master.after(0, self.update_firebase_status)
@@ -279,19 +290,22 @@ class OwletteConfigApp:
 
         # Create hostname and site ID labels in same row, right-aligned
         hostname = socket.gethostname()
-        site_id = self.config.get('firebase', {}).get('site_id', 'Not Set')
+        site_id = self.config.get('firebase', {}).get('site_id', '')
+
+        # Show "Unassigned" if no site_id
+        site_display = site_id if site_id else "Unassigned"
 
         # Container frame for hostname and site ID (right-aligned)
         self.machine_info_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR)
         self.machine_info_frame.grid(row=0, column=6, columnspan=2, sticky='e', padx=(10, 20), pady=(20, 0))
 
-        # Hostname label (bold) - pack on the right side
-        self.hostname_label = ctk.CTkLabel(self.machine_info_frame, text=hostname, fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"))
+        # Hostname label with "Machine:" prefix
+        self.hostname_label = ctk.CTkLabel(self.machine_info_frame, text=f"Machine: {hostname}", fg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 12, "bold"))
         self.hostname_label.pack(side='right')
 
         # Site ID label (same size, lighter color) - pack on the right side (appears to left of hostname)
-        self.site_id_label = ctk.CTkLabel(self.machine_info_frame, text=f"Site: {site_id}", fg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
-        self.site_id_label.pack(side='right', padx=(0, 8))
+        self.site_id_label = ctk.CTkLabel(self.machine_info_frame, text=f"Site: {site_display}", fg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
+        self.site_id_label.pack(side='right', padx=(0, 15))
 
         # Create a toggle switch for process
         self.autolaunch_label = ctk.CTkLabel(self.master, text="Autolaunch:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -1008,22 +1022,26 @@ class OwletteConfigApp:
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
         site_id = self.config.get('firebase', {}).get('site_id', '')
 
+        # Update site display label
+        site_display = site_id if site_id else "Unassigned"
+        self.site_id_label.configure(text=f"Site: {site_display}")
+
         # Check if OAuth tokens exist (new authentication method)
         token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
         tokens_exist = os.path.exists(token_path)
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
-            self.firebase_status_label.configure(text="Firebase: Removed from Site", text_color="#f87171")  # Red
+            self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
             self.leave_site_button.configure(state="disabled")
         elif firebase_enabled and tokens_exist:
-            self.firebase_status_label.configure(text="Firebase: Connected (OAuth)", text_color="#4ade80")  # Green
+            self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
             self.leave_site_button.configure(state="normal")
         elif firebase_enabled and not tokens_exist:
-            self.firebase_status_label.configure(text="Firebase: Missing OAuth Tokens", text_color="#fbbf24")  # Yellow/Warning
+            self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
             self.leave_site_button.configure(state="disabled")
         else:
-            self.firebase_status_label.configure(text="Firebase: Disabled", text_color="#6b7280")  # Gray
+            self.firebase_status_label.configure(text="Disabled", text_color="#6b7280")  # Gray
             self.leave_site_button.configure(state="disabled")
 
     def on_leave_site_click(self):
@@ -1049,8 +1067,45 @@ class OwletteConfigApp:
 
         if response.get() == "Leave Site":
             try:
-                # CRITICAL: DELETE machine document from Firestore BEFORE disabling Firebase
-                # This removes the machine from the web dashboard
+                # Disable Firebase and clear site_id FIRST
+                # This ensures the service won't recreate the document after we delete it
+                if 'firebase' not in self.config:
+                    self.config['firebase'] = {}
+
+                self.config['firebase']['enabled'] = False
+                self.config['firebase']['site_id'] = ''
+
+                # Save config immediately
+                shared_utils.save_config(self.config)
+                logging.info("Firebase disabled and site_id cleared in config")
+
+                # Delete the cached Firebase config
+                # This prevents service from using stale cached config
+                try:
+                    cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
+                    if os.path.exists(cache_path):
+                        os.remove(cache_path)
+                        logging.info("Deleted cached Firebase config")
+                except Exception as e:
+                    logging.warning(f"Failed to delete cached config (non-critical): {e}")
+
+                # CRITICAL: STOP the service BEFORE deleting the machine document
+                # This prevents the service from recreating the document while we delete it
+                nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+                if os.path.exists(nssm_path):
+                    try:
+                        logging.info("Stopping service to prevent document recreation...")
+                        subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                                     check=False,
+                                     capture_output=True,
+                                     timeout=10)
+                        time.sleep(3)  # Give service time to fully stop
+                        logging.info("Service stopped successfully")
+                    except Exception as e:
+                        logging.warning(f"Failed to stop service (will attempt delete anyway): {e}")
+
+                # NOW delete the machine document from Firestore
+                # Service is stopped, so it won't recreate the document
                 if self.firebase_client and self.firebase_client.connected:
                     try:
                         machine_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
@@ -1058,23 +1113,12 @@ class OwletteConfigApp:
 
                         # Delete the entire machine document
                         machine_ref.delete()
-                        logging.info("Machine document deleted from Firestore before leaving site")
+                        logging.info("Machine document permanently deleted from Firestore")
                         time.sleep(0.5)  # Give network time to complete the deletion
                     except Exception as e:
                         logging.warning(f"Failed to delete machine from Firestore (non-critical): {e}")
 
-                # Disable Firebase and clear site_id
-                if 'firebase' not in self.config:
-                    self.config['firebase'] = {}
-
-                self.config['firebase']['enabled'] = False
-                self.config['firebase']['site_id'] = ''
-
-                # Save config
-                shared_utils.save_config(self.config)
-                logging.info("Left site successfully - Firebase disabled and site_id cleared")
-
-                # Stop Firebase client if running
+                # Stop GUI's Firebase client
                 if self.firebase_client:
                     try:
                         self.firebase_client.stop()
@@ -1082,14 +1126,29 @@ class OwletteConfigApp:
                     except Exception as e:
                         logging.error(f"Error stopping Firebase client: {e}")
 
-                # Update status
+                # Update status in GUI
                 self.update_firebase_status()
+
+                # Start the service again (with Firebase disabled)
+                if os.path.exists(nssm_path):
+                    try:
+                        logging.info("Starting service with Firebase disabled...")
+                        subprocess.run([nssm_path, 'start', 'OwletteService'],
+                                     check=False,
+                                     capture_output=True,
+                                     timeout=10)
+                        time.sleep(2)  # Give service time to start
+                        logging.info("Service restarted successfully")
+                    except Exception as e:
+                        logging.warning(f"Failed to restart service (non-critical): {e}")
+                else:
+                    logging.warning(f"NSSM not found at {nssm_path}, service was not restarted")
 
                 # Show simple success message
                 CTkMessagebox(
                     master=self.master,
                     title="Left Site Successfully",
-                    message="This machine has been removed from the site and is no longer monitored.",
+                    message="This machine has been removed from the site and is no longer monitored.\n\nThe Owlette service has been restarted.",
                     icon="check",
                     width=600
                 )
