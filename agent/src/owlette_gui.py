@@ -1049,23 +1049,19 @@ class OwletteConfigApp:
 
         if response.get() == "Leave Site":
             try:
-                # CRITICAL: Mark machine offline BEFORE disabling Firebase
-                # This ensures the web dashboard shows the machine as offline
+                # CRITICAL: DELETE machine document from Firestore BEFORE disabling Firebase
+                # This removes the machine from the web dashboard
                 if self.firebase_client and self.firebase_client.connected:
                     try:
-                        # Use the same offline marking logic as firebase_client.stop()
-                        from firestore_rest_client import SERVER_TIMESTAMP
-                        presence_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
+                        machine_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
                             .collection('machines').document(self.firebase_client.machine_id)
 
-                        presence_ref.update({
-                            'online': False,
-                            'lastHeartbeat': SERVER_TIMESTAMP
-                        })
-                        logging.info("Machine marked OFFLINE in Firestore before leaving site")
-                        time.sleep(0.5)  # Give network time to complete the write
+                        # Delete the entire machine document
+                        machine_ref.delete()
+                        logging.info("Machine document deleted from Firestore before leaving site")
+                        time.sleep(0.5)  # Give network time to complete the deletion
                     except Exception as e:
-                        logging.warning(f"Failed to mark machine offline (non-critical): {e}")
+                        logging.warning(f"Failed to delete machine from Firestore (non-critical): {e}")
 
                 # Disable Firebase and clear site_id
                 if 'firebase' not in self.config:
@@ -1089,21 +1085,14 @@ class OwletteConfigApp:
                 # Update status
                 self.update_firebase_status()
 
-                # Show success message and ask about restart
-                restart_response = CTkMessagebox(
+                # Show simple success message
+                CTkMessagebox(
                     master=self.master,
                     title="Left Site Successfully",
-                    message="This machine has been removed from the site.\n\n"
-                           "The Owlette service should be restarted for changes to take full effect.\n\n"
-                           "Would you like to restart the service now?",
+                    message="This machine has been removed from the site and is no longer monitored.",
                     icon="check",
-                    option_1="Not Now",
-                    option_2="Restart Service",
-                    width=550
+                    width=600
                 )
-
-                if restart_response.get() == "Restart Service":
-                    self.restart_service()
 
             except Exception as e:
                 logging.error(f"Error leaving site: {e}")
