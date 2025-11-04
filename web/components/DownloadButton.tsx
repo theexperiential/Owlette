@@ -61,7 +61,7 @@ export default function DownloadButton() {
             size="sm"
             onClick={handleDownload}
             disabled={isLoading || !downloadUrl}
-            className="flex items-center gap-2 hover:bg-slate-800 cursor-pointer text-white"
+            className="flex items-center gap-2 hover:bg-slate-800 hover:text-white cursor-pointer text-white"
           >
             {isLoading ? (
               <>

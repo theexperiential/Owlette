@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useInstallerManagement } from '@/hooks/useInstallerManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Package, Plus, Loader2, Download, Trash2, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
@@ -32,8 +33,12 @@ export default function InstallerVersionsPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
   const [settingLatest, setSettingLatest] = useState<string | null>(null);
+  const [setLatestDialogOpen, setSetLatestDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [versionToSetLatest, setVersionToSetLatest] = useState<string>('');
+  const [versionToDelete, setVersionToDelete] = useState<string>('');
 
-  const handleSetAsLatest = async (version: string) => {
+  const handleSetAsLatest = (version: string) => {
     if (latestVersion?.version === version) {
       toast.info('Already Latest', {
         description: 'This version is already set as latest.',
@@ -41,15 +46,18 @@ export default function InstallerVersionsPage() {
       return;
     }
 
-    const confirmed = confirm(`Set version ${version} as the latest version?`);
-    if (!confirmed) return;
+    setVersionToSetLatest(version);
+    setSetLatestDialogOpen(true);
+  };
 
-    setSettingLatest(version);
+  const confirmSetAsLatest = async () => {
+    setSettingLatest(versionToSetLatest);
+    setSetLatestDialogOpen(false);
 
     try {
-      await setAsLatest(version);
+      await setAsLatest(versionToSetLatest);
       toast.success('Latest Version Updated', {
-        description: `Version ${version} is now the latest.`,
+        description: `Version ${versionToSetLatest} is now the latest.`,
       });
     } catch (err: any) {
       toast.error('Update Failed', {
@@ -57,10 +65,11 @@ export default function InstallerVersionsPage() {
       });
     } finally {
       setSettingLatest(null);
+      setVersionToSetLatest('');
     }
   };
 
-  const handleDelete = async (version: string) => {
+  const handleDelete = (version: string) => {
     if (latestVersion?.version === version) {
       toast.error('Cannot Delete', {
         description: 'Cannot delete the current latest version. Set a different version as latest first.',
@@ -68,17 +77,18 @@ export default function InstallerVersionsPage() {
       return;
     }
 
-    const confirmed = confirm(
-      `Are you sure you want to delete version ${version}? This cannot be undone.`
-    );
-    if (!confirmed) return;
+    setVersionToDelete(version);
+    setDeleteDialogOpen(true);
+  };
 
-    setDeletingVersion(version);
+  const confirmDelete = async () => {
+    setDeletingVersion(versionToDelete);
+    setDeleteDialogOpen(false);
 
     try {
-      await deleteVersion(version);
+      await deleteVersion(versionToDelete);
       toast.success('Version Deleted', {
-        description: `Version ${version} has been deleted.`,
+        description: `Version ${versionToDelete} has been deleted.`,
       });
     } catch (err: any) {
       toast.error('Delete Failed', {
@@ -86,6 +96,7 @@ export default function InstallerVersionsPage() {
       });
     } finally {
       setDeletingVersion(null);
+      setVersionToDelete('');
     }
   };
 
@@ -308,6 +319,60 @@ export default function InstallerVersionsPage() {
         onOpenChange={setUploadDialogOpen}
         onUpload={uploadVersion}
       />
+
+      {/* Set as Latest Confirmation Dialog */}
+      <Dialog open={setLatestDialogOpen} onOpenChange={setSetLatestDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Set as Latest Version</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Set version {versionToSetLatest} as the latest version?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSetLatestDialogOpen(false)}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmSetAsLatest}
+              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+            >
+              OK
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Version</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Are you sure you want to delete version {versionToDelete}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(false)}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

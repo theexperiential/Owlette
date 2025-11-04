@@ -853,7 +853,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     <span>Download {version && `v${version}`}</span>
@@ -878,7 +878,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     <span>Copy Link</span>
