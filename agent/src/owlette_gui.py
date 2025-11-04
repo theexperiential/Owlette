@@ -152,8 +152,8 @@ class OwletteConfigApp:
 
                 if self.config.get('firebase', {}).get('enabled', False):
                     site_id = self.config.get('firebase', {}).get('site_id', 'default_site')
-                    credentials_path = shared_utils.get_path('../config/firebase-credentials.json')
-                    cache_path = shared_utils.get_path('../config/firebase_cache.json')
+                    credentials_path = shared_utils.get_data_path('config/firebase-credentials.json')
+                    cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
                     self.firebase_client = FirebaseClient(
                         credentials_path=credentials_path,
@@ -1043,11 +1043,30 @@ class OwletteConfigApp:
                    "To re-join a site, you will need to run the Owlette installer again.",
             icon="warning",
             option_1="Cancel",
-            option_2="Leave Site"
+            option_2="Leave Site",
+            width=550
         )
 
         if response.get() == "Leave Site":
             try:
+                # CRITICAL: Mark machine offline BEFORE disabling Firebase
+                # This ensures the web dashboard shows the machine as offline
+                if self.firebase_client and self.firebase_client.connected:
+                    try:
+                        # Use the same offline marking logic as firebase_client.stop()
+                        from firestore_rest_client import SERVER_TIMESTAMP
+                        presence_ref = self.firebase_client.db.collection('sites').document(self.site_id)\
+                            .collection('machines').document(self.firebase_client.machine_id)
+
+                        presence_ref.update({
+                            'online': False,
+                            'lastHeartbeat': SERVER_TIMESTAMP
+                        })
+                        logging.info("Machine marked OFFLINE in Firestore before leaving site")
+                        time.sleep(0.5)  # Give network time to complete the write
+                    except Exception as e:
+                        logging.warning(f"Failed to mark machine offline (non-critical): {e}")
+
                 # Disable Firebase and clear site_id
                 if 'firebase' not in self.config:
                     self.config['firebase'] = {}
@@ -1079,7 +1098,8 @@ class OwletteConfigApp:
                            "Would you like to restart the service now?",
                     icon="check",
                     option_1="Not Now",
-                    option_2="Restart Service"
+                    option_2="Restart Service",
+                    width=550
                 )
 
                 if restart_response.get() == "Restart Service":

@@ -131,12 +131,11 @@ echo [8/9] Creating installer package...
 :: Create directory structure
 mkdir build\installer_package\python 2>nul
 mkdir build\installer_package\agent\src 2>nul
-mkdir build\installer_package\agent\config 2>nul
-mkdir build\installer_package\agent\logs 2>nul
-mkdir build\installer_package\agent\tmp 2>nul
 mkdir build\installer_package\agent\icons 2>nul
 mkdir build\installer_package\tools 2>nul
 mkdir build\installer_package\scripts 2>nul
+
+:: Note: config, logs, cache, tmp directories are now created in ProgramData by the installer
 
 :: Copy Python runtime
 echo Copying Python runtime...
@@ -146,9 +145,7 @@ xcopy /E /I /Y build\python\* build\installer_package\python\ >nul
 echo Copying agent source code...
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
 
-:: Copy config template
-echo Copying config template...
-copy /Y config.template.json build\installer_package\agent\config\ >nul
+:: Note: Config template not needed - configure_site.py creates config in ProgramData during installation
 
 :: Copy NSSM
 echo Copying NSSM...

@@ -421,31 +421,36 @@ def leave_site(icon, item):
 
     if result == IDYES:
         try:
-            # Disable Firebase and clear site_id
-            if 'firebase' not in config:
-                config['firebase'] = {}
-
-            config['firebase']['enabled'] = False
-            config['firebase']['site_id'] = ''
-
-            # Save config
-            shared_utils.save_config(config)
-            logging.info("Left site successfully - Firebase disabled and site_id cleared")
-
-            # Show success notification
+            # Show notification immediately
             icon.notify(
-                title="✓ Left Site Successfully",
-                message="This machine has been removed from the site.\nRestarting the service..."
+                title="🔄 Leaving Site...",
+                message="Stopping service and marking machine offline..."
             )
 
-            # Restart service
+            # CRITICAL: Restart service FIRST while Firebase is still enabled
+            # This allows the service to mark itself offline during shutdown
             try:
                 import win32serviceutil
                 service_name = 'OwletteService'
 
-                # Stop and start service
+                # Stop service (Firebase is still enabled, so it will mark offline)
+                logging.info("Stopping service to mark machine offline...")
                 win32serviceutil.StopService(service_name)
+                logging.info("Service stopped - machine should now be offline")
                 time.sleep(2)
+
+                # Now that service is stopped and marked offline, disable Firebase in config
+                if 'firebase' not in config:
+                    config['firebase'] = {}
+
+                config['firebase']['enabled'] = False
+                config['firebase']['site_id'] = ''
+
+                # Save config
+                shared_utils.save_config(config)
+                logging.info("Left site successfully - Firebase disabled and site_id cleared")
+
+                # Start service with Firebase disabled
                 win32serviceutil.StartService(service_name)
 
                 logging.info("Service restarted successfully after leaving site")

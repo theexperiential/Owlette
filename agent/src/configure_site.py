@@ -41,9 +41,11 @@ CALLBACK_PORT = 8765
 DEFAULT_URL = "https://owlette.app/setup"
 TIMEOUT_SECONDS = 300  # 5 minutes
 
-# Determine config path relative to script location
-SCRIPT_DIR = Path(__file__).parent
-CONFIG_PATH = SCRIPT_DIR.parent / "config" / "config.json"
+# Import shared_utils to get ProgramData path
+import shared_utils
+
+# Use ProgramData for config (proper Windows location)
+CONFIG_PATH = Path(shared_utils.get_data_path('config/config.json'))
 
 # Global state
 received_config = None

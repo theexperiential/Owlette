@@ -43,7 +43,7 @@ python owlette_service.py install | start | stop | remove
 """
 
 # Constants
-LOG_FILE_PATH = shared_utils.get_path('../logs/service.log')
+LOG_FILE_PATH = shared_utils.get_data_path('logs/service.log')
 MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 10
 TIME_TO_INIT = 60
@@ -120,7 +120,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     site_id = shared_utils.read_config(['firebase', 'site_id'])
                     project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
                     api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
-                    cache_path = shared_utils.get_path('../config/firebase_cache.json')
+                    cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
                     logging.info(f"Firebase config - site: {site_id}, project: {project_id}")
 
@@ -316,13 +316,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Logging
         logging.error(reason)
 
-        # Slack
-        if shared_utils.read_config(['slack', 'enabled']):
-            self.send_notification('slack', process_name, reason)
-        
-        # Email
-        if shared_utils.read_config(['gmail', 'enabled']):
-            self.send_notification('gmail', process_name, reason)
+        # Note: Gmail and Slack notifications removed - use Firebase for centralized monitoring
     
     # Terminate the tray icon process if it exists
     def terminate_tray_icon(self):
@@ -335,26 +329,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error("Access denied while trying to terminate the process.")
             except Exception as e:
                 logging.error(f"An unexpected error occurred while terminating the process: {e}")
-
-    # Send gmail/slack notification
-    def send_notification(self, notification_type, process_name, reason):
-        try:
-            if notification_type == 'gmail':
-                script_path = shared_utils.get_path('owlette_gmail.py')
-            elif notification_type == 'slack':
-                script_path = shared_utils.get_path('owlette_slack.py')
-            else:
-                logging.error(f"Unknown notification type: {notification_type}")
-                return
-
-            self.launch_python_script_as_user(
-                script_path,
-                f'--process_name "{process_name}" --reason "{reason}"'
-            )
-            logging.info(f"{notification_type.capitalize()} notification sent for process {process_name}")
-        except Exception as e:
-            logging.error(f"Could not send {notification_type} notification for process {process_name}. Error: {e}")
-
 
     # Start a python script as a user
     def launch_python_script_as_user(self, script_name, args=None):

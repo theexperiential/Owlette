@@ -39,23 +39,20 @@ if %errorLevel% neq 0 (
 )
 
 :: ============================================================================
-:: Step 2: Create config file if it doesn't exist
+:: Step 2: Create ProgramData directories for config and logs
 :: ============================================================================
-echo [1/4] Creating configuration...
-if not exist "%INSTALL_DIR%\agent\config\config.json" (
-    echo Creating config.json from template...
-    copy "%INSTALL_DIR%\agent\config\config.template.json" "%INSTALL_DIR%\agent\config\config.json"
-) else (
-    echo Config file already exists, skipping...
-)
+echo [1/4] Creating ProgramData directories...
+set "DATA_DIR=%ProgramData%\Owlette"
 
-:: Create logs and tmp directories
-if not exist "%INSTALL_DIR%\agent\logs" (
-    mkdir "%INSTALL_DIR%\agent\logs"
-)
-if not exist "%INSTALL_DIR%\agent\tmp" (
-    mkdir "%INSTALL_DIR%\agent\tmp"
-)
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+if not exist "%DATA_DIR%\config" mkdir "%DATA_DIR%\config"
+if not exist "%DATA_DIR%\logs" mkdir "%DATA_DIR%\logs"
+if not exist "%DATA_DIR%\cache" mkdir "%DATA_DIR%\cache"
+if not exist "%DATA_DIR%\tmp" mkdir "%DATA_DIR%\tmp"
+
+echo ProgramData directories created at: %DATA_DIR%
+
+:: Note: Config file will be created by configure_site.py during first run or OAuth setup
 
 :: ============================================================================
 :: Step 3: Stop and remove existing service (if any)
@@ -96,8 +93,8 @@ echo Configuring service...
 echo Configuring service to run as current user...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName ".\%USERNAME%"
 
-"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStdout "%INSTALL_DIR%\agent\logs\service_stdout.log"
-"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStderr "%INSTALL_DIR%\agent\logs\service_stderr.log"
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStdout "%DATA_DIR%\logs\service_stdout.log"
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStderr "%DATA_DIR%\logs\service_stderr.log"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRotateFiles 1
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRotateOnline 1
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRotateSeconds 86400
@@ -114,7 +111,7 @@ echo [4/4] Starting service...
 
 if %errorLevel% neq 0 (
     echo ERROR: Failed to start service
-    echo Check logs at: %INSTALL_DIR%\agent\logs\
+    echo Check logs at: %DATA_DIR%\logs\
     if "%SILENT_MODE%"=="0" pause
     exit /b 1
 )
@@ -130,7 +127,8 @@ echo ========================================
 echo.
 echo Service: OwletteService
 echo Status: Running
-echo Logs: %INSTALL_DIR%\agent\logs\
+echo Config: %DATA_DIR%\config\
+echo Logs: %DATA_DIR%\logs\
 echo.
 echo You can manage the service from:
 echo   - Services.msc (Windows Services)

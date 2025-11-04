@@ -97,12 +97,20 @@ Source: "build\installer_package\scripts\*"; DestDir: "{app}\scripts"; Flags: ig
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
+[Dirs]
+; Create ProgramData directories (proper location for Windows service data)
+Name: "{commonappdata}\Owlette"; Permissions: users-modify
+Name: "{commonappdata}\Owlette\config"; Permissions: users-modify
+Name: "{commonappdata}\Owlette\logs"; Permissions: users-modify
+Name: "{commonappdata}\Owlette\cache"; Permissions: users-modify
+Name: "{commonappdata}\Owlette\tmp"; Permissions: users-modify
+
 [Icons]
-; Start Menu shortcuts
+; Start Menu shortcuts (now pointing to ProgramData for user data)
 Name: "{group}\Owlette Configuration"; Filename: "{app}\scripts\launch_gui.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
 Name: "{group}\Owlette Tray Icon"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
-Name: "{group}\View Logs"; Filename: "{app}\agent\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
-Name: "{group}\Edit Configuration"; Filename: "{app}\agent\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
+Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
+Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Startup shortcut (always installed - important for monitoring UX)
@@ -151,13 +159,18 @@ procedure BackupConfigIfExists;
 var
   ConfigPath: String;
 begin
-  ConfigPath := ExpandConstant('{app}\agent\config\config.json');
+  // Check ProgramData location (proper location for config)
+  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
+
+  // Fallback: Check old location if ProgramData doesn't exist
+  if not FileExists(ConfigPath) then
+    ConfigPath := ExpandConstant('{app}\agent\config\config.json');
 
   if FileExists(ConfigPath) then
   begin
     ConfigBackupPath := ExpandConstant('{tmp}\config.json.backup');
     FileCopy(ConfigPath, ConfigBackupPath, False);
-    Log('Backed up config to: ' + ConfigBackupPath);
+    Log('Backed up config from: ' + ConfigPath);
   end;
 end;
 
@@ -190,15 +203,54 @@ begin
     // Restore config after installation
     RestoreConfigIfBackedUp;
     Log('Owlette installation completed successfully');
+    Log('User data stored in: ' + ExpandConstant('{commonappdata}\Owlette'));
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: String;
+  InstallDir: String;
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
     // Log uninstallation
     Log('Uninstalling Owlette...');
+  end
+  else if CurUninstallStep = usPostUninstall then
+  begin
+    // Clean up installation directory including runtime-generated files (.pyc, __pycache__)
+    InstallDir := ExpandConstant('{app}');
+    if DirExists(InstallDir) then
+    begin
+      Log('Removing installation directory and runtime files: ' + InstallDir);
+      if DelTree(InstallDir, True, True, True) then
+        Log('Installation directory removed successfully')
+      else
+        Log('Warning: Some files in installation directory could not be removed');
+    end;
+
+    // Ask user if they want to remove configuration and logs from ProgramData
+    DataDir := ExpandConstant('{commonappdata}\Owlette');
+    if DirExists(DataDir) then
+    begin
+      if MsgBox('Do you want to remove all Owlette configuration files and logs?' + #13#10#13#10 +
+                'This includes:' + #13#10 +
+                '  • Configuration (config.json)' + #13#10 +
+                '  • Log files' + #13#10 +
+                '  • Cache files' + #13#10#13#10 +
+                'Choose "No" to keep your settings for future installations.',
+                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      begin
+        if DelTree(DataDir, True, True, True) then
+          Log('Removed user data from: ' + DataDir)
+        else
+          Log('Failed to remove user data from: ' + DataDir);
+      end
+      else
+        Log('User data preserved at: ' + DataDir);
+    end;
   end;
 end;
 
@@ -260,20 +312,11 @@ begin
     end;
   end;
 
-  // Only warn about running processes if we didn't just uninstall
+  // Silently close any running Owlette processes if we didn't just uninstall
   // (uninstall already stopped the service and closed processes)
   if not DidUninstallExisting then
   begin
-    if MsgBox('The installer will close any running Owlette GUI or tray icon windows.' + #13#10#13#10 +
-              'The Windows service will be restarted automatically after installation.' + #13#10#13#10 +
-              'Click OK to continue.',
-              mbInformation, MB_OKCANCEL) = IDCANCEL then
-    begin
-      Result := False;
-      Exit;
-    end;
-
-    // Try to close GUI and tray icon processes
+    // Try to close GUI and tray icon processes silently
     Exec('taskkill', '/F /IM pythonw.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq OWLETTE*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
