@@ -207,7 +207,6 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
         # Import auth_manager here to avoid import errors if not installed
-        sys.path.insert(0, str(SCRIPT_DIR))
         from auth_manager import AuthManager, AuthenticationError
 
         # Determine API base URL from setup URL
@@ -228,7 +227,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         print("Exchanging registration code for OAuth tokens...")
 
         # Write debug info to file for troubleshooting (APPEND, don't overwrite)
-        debug_log = CONFIG_PATH.parent / "oauth_debug.log"
+        debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
         with open(debug_log, 'a') as f:
             f.write(f"\nOAuth Exchange Debug\n")
             f.write(f"====================\n")
@@ -347,8 +346,8 @@ def main():
     web_app_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
 
     # Write command line args to debug log FIRST
-    debug_log = CONFIG_PATH.parent / "oauth_debug.log"
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
+    Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
     with open(debug_log, 'w') as f:
         f.write(f"Command Line Debug\n")
         f.write(f"==================\n")
