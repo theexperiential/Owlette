@@ -739,6 +739,20 @@ def get_system_metrics(skip_gpu=False):
     Args:
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
+    # Read config from disk
+    config = read_json_from_file(CONFIG_PATH)
+    return get_system_metrics_with_config(config, skip_gpu)
+
+
+def get_system_metrics_with_config(config, skip_gpu=False):
+    """
+    Get system metrics with clear units for Firebase.
+    Accepts config as parameter to avoid file read race conditions.
+
+    Args:
+        config: Configuration dict (to avoid re-reading from disk)
+        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
+    """
     try:
         # CPU - model name and percentage
         cpu_name = get_cpu_name()
@@ -776,8 +790,7 @@ def get_system_metrics(skip_gpu=False):
         # Processes - combine config and runtime state
         processes_data = {}
         try:
-            # Read process configuration
-            config = read_json_from_file(CONFIG_PATH)
+            # Use config passed as parameter (avoids race condition from re-reading disk)
             # Read runtime state
             runtime_state = read_json_from_file(RESULT_FILE_PATH)
 

@@ -24,6 +24,7 @@ import psutil
 import time
 import json
 import datetime
+import atexit
 
 # Firebase integration
 FIREBASE_IMPORT_ERROR = None
@@ -766,9 +767,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
             # Push metrics immediately so web dashboard updates instantly
+            # CRITICAL: Pass the new config directly to avoid race condition from re-reading disk
             if self.firebase_client:
                 try:
-                    metrics = shared_utils.get_system_metrics()
+                    metrics = shared_utils.get_system_metrics_with_config(new_config)
                     self.firebase_client._upload_metrics(metrics)
                     logging.info("Metrics pushed immediately after config update")
                 except Exception as e:
@@ -1219,6 +1221,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Start Firebase background threads
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
+
+                # Register atexit handler to ensure machine is marked offline even if killed abruptly
+                def emergency_offline_handler():
+                    """Emergency handler to mark machine offline if service is killed without proper shutdown"""
+                    try:
+                        if self.firebase_client and self.firebase_client.connected:
+                            logging.warning("EMERGENCY CLEANUP: Marking machine offline")
+                            self.firebase_client._update_presence(False)
+                            logging.info("Emergency offline update sent")
+                    except:
+                        pass  # Fail silently - we're shutting down anyway
+
+                atexit.register(emergency_offline_handler)
+                logging.info("Emergency offline handler registered")
 
                 # Upload local config to Firebase on first run
                 local_config = shared_utils.read_config()

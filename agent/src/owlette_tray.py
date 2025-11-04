@@ -130,11 +130,11 @@ def determine_status():
 
     # Format Firebase message
     if firebase_status == 'error':
-        firebase_msg = 'Firebase: Connection Issues'
+        firebase_msg = 'Disconnected'
     elif firebase_status == 'disabled':
-        firebase_msg = 'Firebase: Disabled'
+        firebase_msg = 'Disabled'
     else:
-        firebase_msg = 'Firebase: Connected'
+        firebase_msg = 'Connected'
 
     # Determine overall status
     if not service_running:
@@ -272,8 +272,17 @@ def exit_action(icon, item):
                 # Close the window
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
 
-        # Stop the service
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} stop", None, 0)
+        # Stop the Windows service using NSSM
+        nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+        if os.path.exists(nssm_path):
+            # Use subprocess instead of ShellExecuteW for better error handling
+            subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                         check=False,
+                         capture_output=True,
+                         timeout=10)
+            logging.info("Service stopped via tray icon Exit")
+        else:
+            logging.error(f"NSSM not found at {nssm_path}")
     except Exception as e:
         logging.error(f"Failed to stop service: {e}")
     icon.stop()
