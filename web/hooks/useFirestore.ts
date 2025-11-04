@@ -110,7 +110,7 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
       const siteDataMap = new Map<string, Site>();
 
       userSites.forEach((siteId) => {
-        const siteDocRef = doc(db, 'sites', siteId);
+        const siteDocRef = doc(db!, 'sites', siteId);
         const unsubscribe = onSnapshot(
           siteDocRef,
           (docSnap) => {
