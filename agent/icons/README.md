@@ -25,11 +25,12 @@ icons/
 
 All icons follow the HAL 9000 "Always Watching" design:
 
-- **Outer circle**: Dark brown `RGB(66, 47, 40)` - matches Windows 11 system tray icons
-- **Center dot** (pupil): Status-dependent color
-  - Dark brown: Normal status (everything OK)
-  - Orange: Warning (Firebase connection issues)
-  - Red: Error (service stopped/crashed)
+- **Grey circular fill**: `RGB(60, 60, 60)` - Background circle
+- **Outer circle**: Pure white `RGB(255, 255, 255)` with thicker stroke (width 4px)
+- **Center dot** (pupil): Status-dependent color (small size)
+  - Pure white `RGB(255, 255, 255)`: Normal status (everything OK, connected)
+  - Orange `RGB(255, 153, 0)`: Warning (Firebase connection issues)
+  - Red `RGB(232, 65, 24)`: Error (service stopped/crashed)
 
 ### Regenerating Icons
 
@@ -41,14 +42,15 @@ python create_theme_icons.py
 ```
 
 This script will:
-1. Create PNG icons for tray (64x64, dark brown circle)
+1. Create PNG icons for tray (64x64, white circle with thicker stroke)
 2. Generate multi-resolution ICO file for Inno Setup installer
 
 ### Color Palette
 
-- **Dark Brown**: `RGB(66, 47, 40)` - Outer circle, matches Windows 11 system tray
-- **Orange** (warning): `RGB(255, 153, 0)` - Warning status indicator
-- **Red** (error): `RGB(232, 65, 24)` - Error status indicator
+- **Dark Grey**: `RGB(60, 60, 60)` - Background circular fill
+- **Pure White**: `RGB(255, 255, 255)` - Outer circle stroke and normal/connected status center dot
+- **Orange** (warning): `RGB(255, 153, 0)` - Warning status center dot
+- **Red** (error): `RGB(232, 65, 24)` - Error status center dot
 
 ### Build Integration
 

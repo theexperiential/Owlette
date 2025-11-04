@@ -161,15 +161,19 @@ export function useInstallerManagement() {
         );
 
         // Create metadata document
-        const versionData: Omit<InstallerVersion, 'id'> = {
+        const versionData: Partial<Omit<InstallerVersion, 'id'>> = {
           version,
           download_url: downloadUrl,
           file_size: fileSize,
           release_date: Timestamp.now(),
           checksum_sha256: checksum,
-          release_notes: releaseNotes,
           uploaded_by: user.email || user.uid,
         };
+
+        // Only add release_notes if it's not undefined
+        if (releaseNotes !== undefined) {
+          versionData.release_notes = releaseNotes;
+        }
 
         // Save to versions collection
         const versionRef = doc(db, 'installer_metadata', 'data', 'versions', version);
@@ -208,15 +212,21 @@ export function useInstallerManagement() {
 
         // Update the /latest document
         const latestRef = doc(db, 'installer_metadata', 'latest');
-        await setDoc(latestRef, {
+        const latestData: any = {
           version: versionData.version,
           download_url: versionData.download_url,
           file_size: versionData.file_size,
           release_date: versionData.release_date,
           checksum_sha256: versionData.checksum_sha256,
-          release_notes: versionData.release_notes,
           uploaded_by: versionData.uploaded_by,
-        });
+        };
+
+        // Only include release_notes if it exists
+        if (versionData.release_notes !== undefined) {
+          latestData.release_notes = versionData.release_notes;
+        }
+
+        await setDoc(latestRef, latestData);
       } catch (err) {
         console.error('Error setting latest version:', err);
         throw new Error(handleError(err));

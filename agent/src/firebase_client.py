@@ -19,6 +19,7 @@ import json
 import os
 import logging
 import socket
+import hashlib
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
 
@@ -71,6 +72,9 @@ class FirebaseClient:
 
         # Cached config for offline mode
         self.cached_config: Optional[Dict] = None
+
+        # Track last uploaded config to prevent processing our own writes
+        self._last_uploaded_config_hash: Optional[str] = None
 
         # Logging
         self.logger = logging.getLogger("OwletteFirebase")
@@ -126,10 +130,12 @@ class FirebaseClient:
             except Exception as e:
                 self.logger.error(f"Failed to send initial heartbeat/metrics: {e}")
 
-        # Start heartbeat thread (30 second interval)
-        self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-        self.heartbeat_thread.start()
-        self.logger.info("Heartbeat thread started")
+        # DISABLED: Heartbeat now included in metrics upload (every 60s)
+        # No need for separate 30s heartbeat thread - reduces snapshot events
+        # self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        # self.heartbeat_thread.start()
+        # self.logger.info("Heartbeat thread started")
+        self.logger.info("Heartbeat thread DISABLED - heartbeat data included in metrics")
 
         # Start metrics thread (60 second interval)
         self.metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
@@ -272,7 +278,15 @@ class FirebaseClient:
                     return
 
                 if config_data:
-                    self.logger.info("Config change detected in Firestore")
+                    # Calculate hash of incoming config
+                    incoming_hash = hashlib.md5(json.dumps(config_data, sort_keys=True).encode()).hexdigest()
+
+                    # Skip if this is our own write (prevents feedback loop)
+                    if incoming_hash == self._last_uploaded_config_hash:
+                        self.logger.debug(f"Skipping self-originated config change (hash: {incoming_hash[:8]}...)")
+                        return
+
+                    self.logger.info(f"Config change detected in Firestore (hash: {incoming_hash[:8]}...)")
 
                     # Cache the new config
                     self._save_cached_config(config_data)
@@ -373,17 +387,27 @@ class FirebaseClient:
         metrics_ref = self.db.collection('sites').document(self.site_id)\
             .collection('machines').document(self.machine_id)
 
-        # Use update instead of set with merge to properly replace the processes field
-        # This ensures deleted processes are actually removed from Firestore
+        # Use set with merge=True for atomic updates (prevents partial snapshot flicker in web app)
+        # CRITICAL: Include online/lastHeartbeat WITH metrics to prevent intermediate snapshots
+        # If these are separate writes, web app sees metrics:undefined between updates
         try:
-            metrics_ref.update({
-                'metrics.cpu': metrics.get('cpu', {}),
-                'metrics.memory': metrics.get('memory', {}),
-                'metrics.disk': metrics.get('disk', {}),
-                'metrics.gpu': metrics.get('gpu', {}),
-                'metrics.timestamp': SERVER_TIMESTAMP,
-                'metrics.processes': metrics.get('processes', {})  # This replaces entire processes object
-            })
+            processes_data = metrics.get('processes', {})
+            self.logger.info(f"DEBUG: Uploading metrics with {len(processes_data)} processes: {list(processes_data.keys())}")
+
+            metrics_ref.set({
+                'online': True,
+                'lastHeartbeat': SERVER_TIMESTAMP,
+                'machineId': self.machine_id,
+                'siteId': self.site_id,
+                'metrics': {
+                    'cpu': metrics.get('cpu', {}),
+                    'memory': metrics.get('memory', {}),
+                    'disk': metrics.get('disk', {}),
+                    'gpu': metrics.get('gpu', {}),
+                    'timestamp': SERVER_TIMESTAMP,
+                    'processes': processes_data  # This replaces entire processes object
+                }
+            }, merge=True)
         except Exception as e:
             # Check if this is due to machine removal from web dashboard
             if self._handle_removal_detection(e):
@@ -392,6 +416,10 @@ class FirebaseClient:
             # If document doesn't exist (but not removed), create it with set
             try:
                 metrics_ref.set({
+                    'online': True,
+                    'lastHeartbeat': SERVER_TIMESTAMP,
+                    'machineId': self.machine_id,
+                    'siteId': self.site_id,
                     'metrics': {
                         'cpu': metrics.get('cpu', {}),
                         'memory': metrics.get('memory', {}),
@@ -644,7 +672,12 @@ class FirebaseClient:
                 .collection('machines').document(self.machine_id)
 
             config_ref.set(config, merge=True)
-            self.logger.info("Config uploaded to Firestore successfully")
+
+            # Calculate and store hash to prevent processing our own write
+            config_hash = hashlib.md5(json.dumps(config, sort_keys=True).encode()).hexdigest()
+            self._last_uploaded_config_hash = config_hash
+
+            self.logger.info(f"Config uploaded to Firestore successfully (hash: {config_hash[:8]}...)")
 
             # Also cache it locally
             self._save_cached_config(config)

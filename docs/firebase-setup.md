@@ -112,6 +112,7 @@ We'll use the following structure in Firestore:
 sites/
   {siteId}/
     name: string
+    owner: string (userId)
     createdAt: timestamp
     machines/
       {machineId}/
@@ -141,7 +142,78 @@ config/
       {machineId}/
         version: string
         processes: array
+
+users/
+  {userId}/
+    email: string
+    role: string ('user' | 'admin')
+    sites: array (string[])
+    createdAt: timestamp
+    displayName: string (optional)
 ```
+
+---
+
+## Multi-User Site Access Control
+
+Owlette supports multi-user access with secure site isolation:
+
+### Access Model
+
+**Site Creators:**
+- When a user creates a site, they're automatically assigned as the owner
+- The site is immediately added to their `users/{userId}/sites` array
+- They have full access to all features for that site
+
+**Regular Users:**
+- Can only access sites in their `sites` array
+- Cannot see or access other users' sites
+- Must be explicitly assigned by an admin to access additional sites
+
+**Administrators:**
+- Can access ALL sites regardless of assignment
+- Can assign/unassign sites to any user
+- Have full admin panel access
+
+**Agents (Machines):**
+- Use OAuth custom tokens with `site_id` claim
+- Can ONLY access their assigned site and machine
+- Strict isolation prevents cross-site or cross-machine access
+
+### Security Enforcement
+
+The Firestore security rules enforce access control at the database level:
+
+```javascript
+function canAccessSite(siteId) {
+  return isAuthenticated() && (
+    isAdmin() ||
+    siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites
+  );
+}
+```
+
+**Key Security Features:**
+- Server-side enforcement (unhackable from client)
+- All site reads/writes check user permissions
+- Agents isolated by custom token claims
+- Admins bypass checks for debugging
+
+### Admin Site Management
+
+Administrators can manage user site access via the Admin Panel:
+
+1. Navigate to **Admin Panel → User Management**
+2. Click **"Manage Sites"** for any user
+3. View assigned sites and available sites
+4. Click **"Assign"** to grant access to a site
+5. Click **"Remove"** (X icon) to revoke access
+
+**Best Practices:**
+- Assign sites based on organizational structure (locations, departments)
+- Regular users should only have access to sites they actively manage
+- Create multiple admins for redundancy
+- Use descriptive site names and IDs (e.g., `nyc_office`, `la_warehouse`)
 
 ---
 

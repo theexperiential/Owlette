@@ -9,6 +9,8 @@ import {
   updateDoc,
   orderBy,
   Timestamp,
+  arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
@@ -126,11 +128,63 @@ export function useUserManagement() {
     };
   }, [users]);
 
+  /**
+   * Assign a site to a user
+   *
+   * @param userId - The user's UID
+   * @param siteId - The site ID to assign
+   */
+  const assignSiteToUser = useCallback(
+    async (userId: string, siteId: string): Promise<void> => {
+      if (!db) {
+        throw new Error('Firebase is not configured');
+      }
+
+      try {
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, {
+          sites: arrayUnion(siteId),
+        });
+      } catch (err) {
+        console.error('Error assigning site to user:', err);
+        throw new Error(handleError(err));
+      }
+    },
+    []
+  );
+
+  /**
+   * Remove a site from a user
+   *
+   * @param userId - The user's UID
+   * @param siteId - The site ID to remove
+   */
+  const removeSiteFromUser = useCallback(
+    async (userId: string, siteId: string): Promise<void> => {
+      if (!db) {
+        throw new Error('Firebase is not configured');
+      }
+
+      try {
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, {
+          sites: arrayRemove(siteId),
+        });
+      } catch (err) {
+        console.error('Error removing site from user:', err);
+        throw new Error(handleError(err));
+      }
+    },
+    []
+  );
+
   return {
     users,
     loading,
     error,
     updateUserRole,
     getUserCounts,
+    assignSiteToUser,
+    removeSiteFromUser,
   };
 }

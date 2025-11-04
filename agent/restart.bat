@@ -36,6 +36,6 @@ echo ================================================================
 echo Service restart complete!
 echo ================================================================
 echo.
-echo Check logs\service.log for any errors
+echo Check logs at: C:\ProgramData\Owlette\logs\service.log
 echo.
 pause

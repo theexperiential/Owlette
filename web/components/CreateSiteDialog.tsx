@@ -6,11 +6,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface CreateSiteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSite: (siteId: string, siteName: string) => Promise<void>;
+  onCreateSite: (siteId: string, siteName: string, userId: string) => Promise<void>;
 }
 
 export function CreateSiteDialog({
@@ -18,6 +19,7 @@ export function CreateSiteDialog({
   onOpenChange,
   onCreateSite,
 }: CreateSiteDialogProps) {
+  const { user } = useAuth();
   const [newSiteName, setNewSiteName] = useState('');
   const [newSiteId, setNewSiteId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -28,9 +30,14 @@ export function CreateSiteDialog({
       return;
     }
 
+    if (!user) {
+      toast.error('You must be logged in to create a site');
+      return;
+    }
+
     setIsCreating(true);
     try {
-      await onCreateSite(newSiteId, newSiteName);
+      await onCreateSite(newSiteId, newSiteName, user.uid);
       toast.success(`Site "${newSiteName}" created successfully!`);
       setNewSiteId('');
       setNewSiteName('');
@@ -48,20 +55,31 @@ export function CreateSiteDialog({
         <DialogHeader>
           <DialogTitle className="text-white">Create New Site</DialogTitle>
           <DialogDescription className="text-slate-400">
-            Add a new site to organize your machines
+            Sites organize your machines by location, purpose, or project. For example, create separate sites for different offices, studios, or installations.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
+          {/* Helpful examples */}
+          <div className="rounded-lg bg-blue-900/20 border border-blue-700/50 p-3">
+            <p className="text-xs text-blue-300 mb-1 font-semibold">Example Site IDs:</p>
+            <p className="text-xs text-slate-400">
+              <span className="font-mono text-blue-400">home_studio</span> •
+              <span className="font-mono text-blue-400"> nyc_office</span> •
+              <span className="font-mono text-blue-400"> production_floor</span> •
+              <span className="font-mono text-blue-400"> client_site_a</span>
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="site-id" className="text-white">Site ID</Label>
             <Input
               id="site-id"
-              placeholder="e.g., nyc_office"
+              placeholder="e.g., my_first_site"
               value={newSiteId}
               onChange={(e) => setNewSiteId(e.target.value.toLowerCase().replace(/\s+/g, '_'))}
               className="border-slate-700 bg-slate-900 text-white"
             />
-            <p className="text-xs text-slate-500">Lowercase, use underscores instead of spaces</p>
+            <p className="text-xs text-slate-500">Unique identifier - lowercase, use underscores instead of spaces</p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="site-name" className="text-white">Site Name</Label>

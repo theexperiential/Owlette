@@ -140,7 +140,8 @@ class AuthManager:
 
             # Write to debug log for troubleshooting
             from pathlib import Path
-            debug_log = Path(__file__).parent.parent / "config" / "oauth_debug.log"
+            import shared_utils
+            debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
             with open(debug_log, 'a') as f:
                 f.write(f"Calling URL: {url}\n")
 

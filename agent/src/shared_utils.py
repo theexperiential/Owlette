@@ -61,6 +61,12 @@ def get_cpu_name():
         return "Unknown CPU"
 
 def get_path(filename=None):
+    """
+    Get path relative to the currently executing script (installation directory).
+    Use this for accessing icons, scripts, and executables.
+
+    For application data (config, logs, cache), use get_data_path() instead.
+    """
     # Get the directory of the currently executing script
     path = os.path.dirname(os.path.realpath(__file__))
 
@@ -70,8 +76,64 @@ def get_path(filename=None):
 
     # Normalize the path
     path = os.path.normpath(path)
-    
+
     return path
+
+def get_data_path(filename=None):
+    """
+    Get path in ProgramData for Owlette application data.
+    This is the proper location for Windows services to store runtime data.
+
+    Args:
+        filename: Optional relative path within ProgramData\Owlette\
+
+    Returns:
+        Absolute path to ProgramData\Owlette\ or specified file within it
+
+    Examples:
+        get_data_path() -> C:\ProgramData\Owlette
+        get_data_path('config/config.json') -> C:\ProgramData\Owlette\config\config.json
+    """
+    # Get ProgramData directory (typically C:\ProgramData)
+    program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+
+    # Build Owlette data directory
+    owlette_data = os.path.join(program_data, 'Owlette')
+
+    # Build full path if filename provided
+    if filename is not None:
+        path = os.path.join(owlette_data, filename)
+    else:
+        path = owlette_data
+
+    # Normalize the path
+    path = os.path.normpath(path)
+
+    return path
+
+def ensure_data_directories():
+    """
+    Ensure all required ProgramData directories exist.
+    Creates directories if they don't exist.
+
+    Returns:
+        bool: True if all directories exist or were created successfully
+    """
+    directories = [
+        get_data_path(),
+        get_data_path('config'),
+        get_data_path('logs'),
+        get_data_path('cache'),
+        get_data_path('tmp')
+    ]
+
+    try:
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
+        return True
+    except Exception as e:
+        logging.error(f"Failed to create data directories: {e}")
+        return False
 
 def is_script_running(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
@@ -82,9 +144,9 @@ def is_script_running(script_name):
                 return True
     return False
 
-# PATHS
-CONFIG_PATH = get_path('../config/config.json')
-RESULT_FILE_PATH = get_path('../tmp/app_states.json')
+# PATHS - Now using ProgramData for proper Windows service data storage
+CONFIG_PATH = get_data_path('config/config.json')
+RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
 
 # LOGGING
 # Get log level from config
@@ -129,7 +191,7 @@ def cleanup_old_logs(max_age_days=90):
     """
     try:
         import time
-        log_dir = get_path('../logs')
+        log_dir = get_data_path('logs')
 
         if not os.path.exists(log_dir):
             return 0
@@ -173,7 +235,10 @@ def cleanup_old_logs(max_age_days=90):
 
 # Initialize logging with a rotating file handler
 def initialize_logging(log_file_name, level=logging.INFO):
-    log_file_path = get_path(f'../logs/{log_file_name}.log')
+    # Ensure data directories exist before logging
+    ensure_data_directories()
+
+    log_file_path = get_data_path(f'logs/{log_file_name}.log')
 
     # DON'T clear the log file - let RotatingFileHandler manage it
     # This preserves historical logs for debugging crashes and issues
@@ -496,13 +561,6 @@ def generate_config_file(existing_config=None):
                 "enabled": False,
                 "ship_errors_only": True
             }
-        },
-        "gmail": {
-            "enabled": False,
-            "to": []
-        },
-        "slack": {
-            "enabled": False
         }
     }
     
@@ -681,6 +739,20 @@ def get_system_metrics(skip_gpu=False):
     Args:
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
+    # Read config from disk
+    config = read_json_from_file(CONFIG_PATH)
+    return get_system_metrics_with_config(config, skip_gpu)
+
+
+def get_system_metrics_with_config(config, skip_gpu=False):
+    """
+    Get system metrics with clear units for Firebase.
+    Accepts config as parameter to avoid file read race conditions.
+
+    Args:
+        config: Configuration dict (to avoid re-reading from disk)
+        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
+    """
     try:
         # CPU - model name and percentage
         cpu_name = get_cpu_name()
@@ -718,8 +790,7 @@ def get_system_metrics(skip_gpu=False):
         # Processes - combine config and runtime state
         processes_data = {}
         try:
-            # Read process configuration
-            config = read_json_from_file(CONFIG_PATH)
+            # Use config passed as parameter (avoids race condition from re-reading disk)
             # Read runtime state
             runtime_state = read_json_from_file(RESULT_FILE_PATH)
 

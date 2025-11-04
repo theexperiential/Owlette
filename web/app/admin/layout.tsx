@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -13,9 +14,11 @@ import { Button } from '@/components/ui/button';
  * - Admin permission check (RequireAdmin component)
  * - Navigation sidebar for admin sections
  * - Consistent styling
+ * - Mobile responsive with hamburger menu
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
     {
@@ -35,8 +38,33 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <RequireAdmin>
       <div className="flex min-h-screen bg-slate-900">
+        {/* Mobile Menu Button */}
+        <div className="md:hidden fixed top-4 left-4 z-50">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 cursor-pointer"
+          >
+            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </Button>
+        </div>
+
+        {/* Mobile Overlay */}
+        {mobileMenuOpen && (
+          <div
+            className="md:hidden fixed inset-0 bg-black/50 z-30"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+        )}
+
         {/* Sidebar Navigation */}
-        <aside className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col">
+        <aside className={`
+          w-64 bg-slate-800 border-r border-slate-700 flex flex-col
+          fixed md:static inset-y-0 left-0 z-40
+          transform transition-transform duration-200 ease-in-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}>
           {/* Header */}
           <div className="p-6 border-b border-slate-700">
             <div className="flex items-center gap-3 mb-4">
@@ -69,7 +97,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               const Icon = item.icon;
 
               return (
-                <Link key={item.href} href={item.href}>
+                <Link key={item.href} href={item.href} onClick={() => setMobileMenuOpen(false)}>
                   <div
                     className={`
                       flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
@@ -106,7 +134,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto pt-16 md:pt-0">
           {children}
         </main>
       </div>

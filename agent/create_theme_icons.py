@@ -22,14 +22,24 @@ def create_hal_icon(circle_color, dot_color, size=64, output_path='icon.png'):
     # Calculate dimensions
     center = size // 2
     outer_radius = size // 2 - 2  # Leave small margin
-    inner_radius = size // 4  # Center dot
+    inner_radius = size // 8  # Center dot (much smaller)
 
-    # Draw outer circle (ring)
+    # Grey fill color for the background circle
+    grey_fill = (60, 60, 60)  # Dark grey
+
+    # Draw grey filled circle (background)
+    draw.ellipse(
+        [(center - outer_radius, center - outer_radius),
+         (center + outer_radius, center + outer_radius)],
+        fill=grey_fill + (255,)  # Add alpha
+    )
+
+    # Draw outer circle (ring) with thicker stroke on top of grey fill
     draw.ellipse(
         [(center - outer_radius, center - outer_radius),
          (center + outer_radius, center + outer_radius)],
         outline=circle_color + (255,),  # Add alpha
-        width=3
+        width=4  # Increased from 3 to 4 for thicker stroke
     )
 
     # Draw center dot (pupil)
@@ -65,45 +75,33 @@ def create_ico_file(png_path, ico_path):
 
 def main():
     # Define colors
-    DARK_BROWN = (66, 47, 40)      # Dark brown for light theme (matches Windows 11 icons)
-    WHITE = (255, 255, 255)         # White for dark theme
+    WHITE = (255, 255, 255)         # Pure white for connected status outer circle
     ORANGE = (255, 153, 0)          # Warning color
     RED = (232, 65, 24)             # Error color
 
-    # Create icon directories
+    # Create icon directory
     base_dir = os.path.dirname(__file__)
-    light_dir = os.path.join(base_dir, 'icons', 'light')
-    dark_dir = os.path.join(base_dir, 'icons', 'dark')
+    icons_dir = os.path.join(base_dir, 'icons')
 
-    os.makedirs(light_dir, exist_ok=True)
-    os.makedirs(dark_dir, exist_ok=True)
+    os.makedirs(icons_dir, exist_ok=True)
 
-    print("Generating theme-aware tray icons...")
+    print("Generating universal tray icons...")
     print()
 
-    # Icons for LIGHT theme (dark brown icons)
-    print("Creating icons for LIGHT theme (dark brown):")
-    create_hal_icon(DARK_BROWN, DARK_BROWN, output_path=os.path.join(light_dir, 'normal.png'))
-    create_hal_icon(DARK_BROWN, ORANGE, output_path=os.path.join(light_dir, 'warning.png'))
-    create_hal_icon(DARK_BROWN, RED, output_path=os.path.join(light_dir, 'error.png'))
+    # Universal icons (white outer circle with white center for normal, colored for errors)
+    print("Creating universal icons:")
+    create_hal_icon(WHITE, WHITE, output_path=os.path.join(icons_dir, 'normal.png'))
+    create_hal_icon(WHITE, ORANGE, output_path=os.path.join(icons_dir, 'warning.png'))
+    create_hal_icon(WHITE, RED, output_path=os.path.join(icons_dir, 'error.png'))
     print()
 
-    # Icons for DARK theme (white icons)
-    print("Creating icons for DARK theme (white):")
-    create_hal_icon(WHITE, WHITE, output_path=os.path.join(dark_dir, 'normal.png'))
-    create_hal_icon(WHITE, ORANGE, output_path=os.path.join(dark_dir, 'warning.png'))
-    create_hal_icon(WHITE, RED, output_path=os.path.join(dark_dir, 'error.png'))
+    print(f"Done! Icons created in: {icons_dir}")
     print()
 
-    print("Done! Icons created in:")
-    print(f"  - {light_dir}")
-    print(f"  - {dark_dir}")
-    print()
-
-    # Create ICO file for Inno Setup installer (use dark brown for installer)
+    # Create ICO file for Inno Setup installer
     print("Creating ICO file for installer:")
-    ico_path = os.path.join(base_dir, 'icons', 'normal.ico')
-    create_ico_file(os.path.join(light_dir, 'normal.png'), ico_path)
+    ico_path = os.path.join(icons_dir, 'normal.ico')
+    create_ico_file(os.path.join(icons_dir, 'normal.png'), ico_path)
     print()
     print(f"Installer icon: {ico_path}")
 

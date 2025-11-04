@@ -53,8 +53,8 @@ MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
+  const { user, loading, signOut, isAdmin, userSites } = useAuth();
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -279,18 +279,6 @@ export default function DashboardPage() {
     }
   }, [sites, sitesLoading, currentSiteId]);
 
-  // Initialize default_site if no sites exist
-  useEffect(() => {
-    if (!sitesLoading && sites.length === 0 && !currentSiteId) {
-      // Create default_site document
-      createSite('default_site', 'Default Site').then(() => {
-        setCurrentSiteId('default_site');
-      }).catch((err) => {
-        console.error('Failed to create default site:', err);
-      });
-    }
-  }, [sites, sitesLoading, currentSiteId, createSite]);
-
   // Save site selection to localStorage
   const handleSiteChange = (siteId: string) => {
     setCurrentSiteId(siteId);
@@ -394,7 +382,7 @@ export default function DashboardPage() {
                 <TooltipContent side="bottom" className="max-w-xs">
                   <p className="font-semibold mb-1">Your Site ID</p>
                   <p className="text-xs text-slate-300">
-                    This site ID will be automatically configured when you run the installer
+                    This site ID will be automatically configured when you run the Owlette Agent installer
                     and complete the OAuth authorization in your browser
                   </p>
                   <p className="text-xs text-slate-400 mt-2">
@@ -826,8 +814,29 @@ export default function DashboardPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
-                <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
+              {/* Step 1: Create Your First Site (only shown when no sites exist) */}
+              {sites.length === 0 && (
+                <div className="rounded-lg border-2 border-blue-600 bg-blue-900/20 p-6">
+                  <h3 className="text-lg font-bold text-white mb-2">Step 1: Create Your First Site</h3>
+                  <p className="text-sm text-slate-300 mb-4">
+                    Sites organize your machines by location or purpose (e.g., &quot;NYC Office&quot;, &quot;Home Studio&quot;, &quot;Production Floor&quot;).
+                    Create your first site to get started!
+                  </p>
+                  <Button
+                    onClick={() => setCreateDialogOpen(true)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Your First Site
+                  </Button>
+                </div>
+              )}
+
+              {/* Steps 2-5: Only shown after site is created */}
+              {sites.length > 0 && (
+                <>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+                    <h3 className="font-semibold text-white mb-3">Step 1: Download Owlette Agent</h3>
                 <p className="text-sm text-slate-400 mb-4">
                   Download and run the installer <strong className="text-white">on the machine you want to add</strong> (not necessarily this one).
                   Use the copy link option if connecting via remote desktop tools like Parsec, TeamViewer, or RDP.
@@ -853,7 +862,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     <span>Download {version && `v${version}`}</span>
@@ -878,7 +887,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     <span>Copy Link</span>
@@ -903,6 +912,8 @@ export default function DashboardPage() {
                   The installer completes automatically and that machine will appear above within seconds
                 </p>
               </div>
+                </>
+              )}
             </CardContent>
           </Card>
         )}

@@ -55,6 +55,8 @@ Perfect for managing TouchDesigner installations, digital signage, kiosks, media
 - **Real-Time Sync** - Bidirectional Firebase/Firestore synchronization
 - **Multi-Machine Management** - Control multiple Windows machines from one interface
 - **Multi-Site Support** - Organize machines across different locations/installations
+- **Multi-User Access** - Secure user accounts with role-based permissions
+- **Site Access Control** - Admins assign site access; users see only their assigned sites
 - **Remote Software Deployment** - Install applications silently across multiple machines
 - **Project File Distribution** - Sync project files (ZIPs, .toe files) across your fleet
 - **Live Metrics Dashboard** - Real-time CPU, memory, disk, and GPU monitoring

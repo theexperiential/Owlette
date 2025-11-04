@@ -19,12 +19,35 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Owlette - Always Watching",
-  description: "Remote fleet management and deployment monitoring - Always Watching your systems",
+  description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
   icons: {
     icon: '/owlette-icon.png',
     shortcut: '/owlette-icon.png',
     apple: '/owlette-icon.png',
   },
+  openGraph: {
+    title: "Owlette - Always Watching",
+    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
+    url: "https://owlette.app",
+    siteName: "Owlette",
+    images: [
+      {
+        url: '/owlette-icon.png',
+        width: 1024,
+        height: 1024,
+        alt: 'Owlette - Always Watching',
+      },
+    ],
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: "Owlette - Always Watching",
+    description: "Cloud-connected Windows process management system for TouchDesigner, digital signage, and media servers. Remote monitoring, deployment, and control across your entire fleet.",
+    images: ['/owlette-icon.png'],
+  },
+  metadataBase: new URL('https://owlette.app'),
 };
 
 export default function RootLayout({

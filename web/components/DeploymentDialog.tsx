@@ -107,7 +107,7 @@ export default function DeploymentDialog({
     setDeploymentName('TouchDesigner Deployment');
     setInstallerName('TouchDesigner.2025.31550.exe');
     setInstallerUrl('https://download.derivative.ca/TouchDesignerWebInstaller.2025.31550.exe');
-    setSilentFlags('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="C:\\Program Files\\Derivative\\TouchDesigner.2025.31550" /TDDesktopIcon=false /Codemeter /LOG="C:\\TouchDesigner_Install.log"');
+    setSilentFlags('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="C:\\Program Files\\Derivative\\TouchDesigner.2025.31550" /TDDesktopIcon=false /Codemeter /LOG="C:\\ProgramData\\Owlette\\logs\\TouchDesigner_Install.log"');
     setVerifyPath('C:\\Program Files\\Derivative\\TouchDesigner.2025.31550\\bin\\TouchDesigner.exe');
     toast.success('TouchDesigner preset loaded with all configuration.');
   };

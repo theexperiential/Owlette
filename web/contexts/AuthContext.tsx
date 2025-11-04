@@ -24,6 +24,7 @@ interface AuthContextType {
   loading: boolean;
   role: UserRole;
   isAdmin: boolean;
+  userSites: string[]; // Sites the user has access to
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
@@ -36,6 +37,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   role: 'user',
   isAdmin: false,
+  userSites: [],
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
@@ -55,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole>('user');
+  const [userSites, setUserSites] = useState<string[]>([]);
 
   useEffect(() => {
     if (!auth || !db) {
@@ -77,16 +80,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (userDoc.exists()) {
               const userData = userDoc.data();
+              console.log('✅ User document exists, role:', userData.role);
+              console.log('📋 User sites array:', userData.sites);
+              console.log('🔑 User ID:', user.uid);
               setRole(userData.role || 'user');
+              setUserSites(userData.sites || []);
             } else {
               // Create user document if it doesn't exist (new user)
-              await setDoc(userDocRef, {
-                email: user.email,
-                role: 'user',
-                sites: [],
-                createdAt: new Date(),
-              });
-              setRole('user');
+              console.log('⚠️ User document missing, creating now...');
+              try {
+                await setDoc(userDocRef, {
+                  email: user.email,
+                  role: 'user',
+                  sites: [],
+                  createdAt: new Date(),
+                });
+                console.log('✅ User document created by listener');
+                setRole('user');
+              } catch (firestoreError: any) {
+                console.error('❌ Listener failed to create document:', firestoreError);
+                console.error('Error code:', firestoreError.code);
+                setRole('user'); // Default anyway
+              }
             }
           } catch (error) {
             console.error('Error fetching user role:', error);
@@ -99,6 +114,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // User is logged out - clear session cookie and reset role
         clearSessionCookie();
         setRole('user');
+        setUserSites([]);
       }
 
       setLoading(false);
@@ -129,7 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = async (email: string, password: string, firstName?: string, lastName?: string) => {
     try {
-      if (!auth) {
+      if (!auth || !db) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
         toast.error('Authentication Error', {
           description: 'Firebase is not configured properly. Please contact support.',
@@ -143,6 +159,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (firstName || lastName) {
         const displayName = [firstName, lastName].filter(Boolean).join(' ');
         await updateProfile(userCredential.user, { displayName });
+      }
+
+      // Immediately create user document in Firestore
+      const userDocRef = doc(db, 'users', userCredential.user.uid);
+      try {
+        await setDoc(userDocRef, {
+          email: userCredential.user.email,
+          role: 'user',
+          sites: [],
+          createdAt: new Date(),
+          displayName: [firstName, lastName].filter(Boolean).join(' ') || '',
+        });
+        console.log('✅ User document created in Firestore:', userCredential.user.uid);
+      } catch (firestoreError: any) {
+        console.error('❌ Failed to create user document:', firestoreError);
+        console.error('Error code:', firestoreError.code);
+        console.error('Error message:', firestoreError.message);
+        // Don't throw - let the user continue even if Firestore fails
+        // The onAuthStateChanged listener will retry
       }
 
       toast.success('Account Created', {
@@ -248,6 +283,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     role,
     isAdmin: role === 'admin',
+    userSites,
     signIn,
     signUp,
     signInWithGoogle,

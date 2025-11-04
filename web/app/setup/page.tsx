@@ -224,7 +224,7 @@ export default function SetupPage() {
           <div className="space-y-1 text-center">
             <CardTitle className="text-2xl font-bold text-white">Owlette Agent Setup</CardTitle>
             <CardDescription className="text-slate-400">
-              Configure your Owlette agent by selecting a site or creating a new one.
+              Configure your Owlette Agent by selecting a site or creating a new one.
             </CardDescription>
           </div>
         </CardHeader>

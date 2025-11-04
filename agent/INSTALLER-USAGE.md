@@ -66,7 +66,7 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
    - Prepares for service installation
 
 3. **File Extraction**
-   - Copies Python runtime, agent code, tools, and configurations to `C:\Owlette`
+   - Copies Python runtime, Owlette Agent code, tools, and configurations to `C:\Owlette`
 
 4. **Site Configuration (OAuth)**
    - Opens browser to specified environment (dev/prod)

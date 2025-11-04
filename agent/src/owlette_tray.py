@@ -130,11 +130,11 @@ def determine_status():
 
     # Format Firebase message
     if firebase_status == 'error':
-        firebase_msg = 'Firebase: Connection Issues'
+        firebase_msg = 'Disconnected'
     elif firebase_status == 'disabled':
-        firebase_msg = 'Firebase: Disabled'
+        firebase_msg = 'Disabled'
     else:
-        firebase_msg = 'Firebase: Connected'
+        firebase_msg = 'Connected'
 
     # Determine overall status
     if not service_running:
@@ -272,8 +272,17 @@ def exit_action(icon, item):
                 # Close the window
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
 
-        # Stop the service
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c python {shared_utils.get_path('owlette_service.py')} stop", None, 0)
+        # Stop the Windows service using NSSM
+        nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+        if os.path.exists(nssm_path):
+            # Use subprocess instead of ShellExecuteW for better error handling
+            subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                         check=False,
+                         capture_output=True,
+                         timeout=10)
+            logging.info("Service stopped via tray icon Exit")
+        else:
+            logging.error(f"NSSM not found at {nssm_path}")
     except Exception as e:
         logging.error(f"Failed to stop service: {e}")
     icon.stop()
@@ -421,31 +430,36 @@ def leave_site(icon, item):
 
     if result == IDYES:
         try:
-            # Disable Firebase and clear site_id
-            if 'firebase' not in config:
-                config['firebase'] = {}
-
-            config['firebase']['enabled'] = False
-            config['firebase']['site_id'] = ''
-
-            # Save config
-            shared_utils.save_config(config)
-            logging.info("Left site successfully - Firebase disabled and site_id cleared")
-
-            # Show success notification
+            # Show notification immediately
             icon.notify(
-                title="✓ Left Site Successfully",
-                message="This machine has been removed from the site.\nRestarting the service..."
+                title="🔄 Leaving Site...",
+                message="Stopping service and marking machine offline..."
             )
 
-            # Restart service
+            # CRITICAL: Restart service FIRST while Firebase is still enabled
+            # This allows the service to mark itself offline during shutdown
             try:
                 import win32serviceutil
                 service_name = 'OwletteService'
 
-                # Stop and start service
+                # Stop service (Firebase is still enabled, so it will mark offline)
+                logging.info("Stopping service to mark machine offline...")
                 win32serviceutil.StopService(service_name)
+                logging.info("Service stopped - machine should now be offline")
                 time.sleep(2)
+
+                # Now that service is stopped and marked offline, disable Firebase in config
+                if 'firebase' not in config:
+                    config['firebase'] = {}
+
+                config['firebase']['enabled'] = False
+                config['firebase']['site_id'] = ''
+
+                # Save config
+                shared_utils.save_config(config)
+                logging.info("Left site successfully - Firebase disabled and site_id cleared")
+
+                # Start service with Firebase disabled
                 win32serviceutil.StartService(service_name)
 
                 logging.info("Service restarted successfully after leaving site")

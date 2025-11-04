@@ -18,7 +18,7 @@ The project distribution feature allows you to:
 
 ## Prerequisites
 
-- Owlette agent already installed and running as a Windows service
+- Owlette Agent already installed and running as a Windows service
 - Administrator access to the machine
 - Internet connectivity for downloading project files
 - File hosting service (Dropbox, Google Drive, personal server, etc.)
