@@ -11,7 +11,7 @@ import {
   signInWithPopup,
   updateProfile,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
 import { handleError } from '@/lib/errorHandler';
@@ -65,62 +65,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    let userDocUnsubscribe: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUser(user);
+
+      // Clean up previous user document listener
+      if (userDocUnsubscribe) {
+        userDocUnsubscribe();
+        userDocUnsubscribe = null;
+      }
 
       if (user) {
         // User is logged in - set session cookie
         setSessionCookie(user.uid);
 
-        // Fetch user role from Firestore
+        // Listen to user document for real-time updates
         if (db) {
-          try {
-            const userDocRef = doc(db, 'users', user.uid);
-            const userDoc = await getDoc(userDocRef);
+          const userDocRef = doc(db, 'users', user.uid);
 
-            if (userDoc.exists()) {
-              const userData = userDoc.data();
-              console.log('✅ User document exists, role:', userData.role);
-              console.log('📋 User sites array:', userData.sites);
-              console.log('🔑 User ID:', user.uid);
-              setRole(userData.role || 'user');
-              setUserSites(userData.sites || []);
-            } else {
-              // Create user document if it doesn't exist (new user)
-              console.log('⚠️ User document missing, creating now...');
-              try {
-                await setDoc(userDocRef, {
-                  email: user.email,
-                  role: 'user',
-                  sites: [],
-                  createdAt: new Date(),
-                });
-                console.log('✅ User document created by listener');
-                setRole('user');
-              } catch (firestoreError: any) {
-                console.error('❌ Listener failed to create document:', firestoreError);
-                console.error('Error code:', firestoreError.code);
-                setRole('user'); // Default anyway
+          // Set up real-time listener for user document
+          userDocUnsubscribe = onSnapshot(
+            userDocRef,
+            async (docSnap) => {
+              if (docSnap.exists()) {
+                const userData = docSnap.data();
+                console.log('✅ User document updated, role:', userData.role);
+                console.log('📋 User sites array:', userData.sites);
+                setRole(userData.role || 'user');
+                setUserSites(userData.sites || []);
+                setLoading(false);
+              } else {
+                // Create user document if it doesn't exist (new user)
+                console.log('⚠️ User document missing, creating now...');
+                try {
+                  await setDoc(userDocRef, {
+                    email: user.email,
+                    role: 'user',
+                    sites: [],
+                    createdAt: new Date(),
+                  });
+                  console.log('✅ User document created by listener');
+                  // Don't set loading to false yet - wait for the listener to fire again
+                } catch (firestoreError: any) {
+                  console.error('❌ Listener failed to create document:', firestoreError);
+                  console.error('Error code:', firestoreError.code);
+                  setRole('user');
+                  setUserSites([]);
+                  setLoading(false);
+                }
               }
+            },
+            (error) => {
+              console.error('Error listening to user document:', error);
+              setRole('user');
+              setUserSites([]);
+              setLoading(false);
             }
-          } catch (error) {
-            console.error('Error fetching user role:', error);
-            setRole('user'); // Default to 'user' on error
-          }
+          );
         } else {
-          setRole('user'); // Default if db not configured
+          setRole('user');
+          setUserSites([]);
+          setLoading(false);
         }
       } else {
         // User is logged out - clear session cookie and reset role
         clearSessionCookie();
         setRole('user');
         setUserSites([]);
+        setLoading(false);
       }
-
-      setLoading(false);
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      if (userDocUnsubscribe) {
+        userDocUnsubscribe();
+      }
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
