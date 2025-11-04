@@ -80,7 +80,7 @@ service cloud.firestore {
     // Regular users can only access sites in their assigned sites array
     function canAccessSite(siteId) {
       return isAuthenticated() && (
-        isAdmin() ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
         siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites
       );
     }
@@ -213,7 +213,18 @@ service cloud.firestore {
       // Users can read their own document
       // Admins can read and write all user documents (for role management)
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAdmin(); // Only admins can create/update/delete users
+
+      // Users can create their own document (on first login)
+      allow create: if request.auth.uid == userId;
+
+      // Users can update their own sites array (when creating sites)
+      // But cannot change their role or other sensitive fields
+      allow update: if request.auth.uid == userId &&
+                       request.resource.data.role == resource.data.role &&
+                       request.resource.data.email == resource.data.email;
+
+      // Only admins can delete users or update other users
+      allow write: if isAdmin();
     }
 
     // ============================================

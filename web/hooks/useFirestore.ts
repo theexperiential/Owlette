@@ -46,7 +46,7 @@ export interface Site {
   createdAt: number;
 }
 
-export function useSites() {
+export function useSites(userSites?: string[], isAdmin?: boolean) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,42 +58,99 @@ export function useSites() {
       return;
     }
 
+    // If user data not loaded yet, wait
+    if (userSites === undefined || isAdmin === undefined) {
+      setLoading(true);
+      return;
+    }
+
+    // If user has no sites, return empty immediately
+    if (!isAdmin && userSites.length === 0) {
+      console.log('⚠️ User has no sites assigned');
+      setSites([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const sitesRef = collection(db, 'sites');
-
-      const unsubscribe = onSnapshot(
-        sitesRef,
-        (snapshot) => {
-          const siteData: Site[] = [];
-
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            siteData.push({
-              id: doc.id,
-              name: data.name || doc.id,
-              createdAt: data.createdAt || Date.now(),
+      // ADMINS: Query all sites
+      if (isAdmin) {
+        const sitesRef = collection(db, 'sites');
+        const unsubscribe = onSnapshot(
+          sitesRef,
+          (snapshot) => {
+            const siteData: Site[] = [];
+            snapshot.forEach((doc) => {
+              const data = doc.data();
+              siteData.push({
+                id: doc.id,
+                name: data.name || doc.id,
+                createdAt: data.createdAt || Date.now(),
+              });
             });
-          });
+            siteData.sort((a, b) => a.name.localeCompare(b.name));
+            console.log('👑 Admin - loaded all sites:', siteData.map(s => s.id));
+            setSites(siteData);
+            setLoading(false);
+          },
+          (err) => {
+            console.error('Error fetching sites:', err);
+            setError(err.message);
+            setLoading(false);
+          }
+        );
+        return () => unsubscribe();
+      }
 
-          // Sort by name
-          siteData.sort((a, b) => a.name.localeCompare(b.name));
+      // NON-ADMINS: Query specific site documents by ID
+      console.log('🔒 Non-admin user - fetching sites:', userSites);
 
-          setSites(siteData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching sites:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+      // Create listeners for each site document
+      const unsubscribes: (() => void)[] = [];
+      const siteDataMap = new Map<string, Site>();
 
-      return () => unsubscribe();
+      userSites.forEach((siteId) => {
+        const siteDocRef = doc(db, 'sites', siteId);
+        const unsubscribe = onSnapshot(
+          siteDocRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              siteDataMap.set(siteId, {
+                id: siteId,
+                name: data.name || siteId,
+                createdAt: data.createdAt || Date.now(),
+              });
+            } else {
+              // Site document doesn't exist - remove from map
+              siteDataMap.delete(siteId);
+              console.warn(`⚠️ Site "${siteId}" not found in Firestore`);
+            }
+
+            // Update state with current map
+            const siteArray = Array.from(siteDataMap.values());
+            siteArray.sort((a, b) => a.name.localeCompare(b.name));
+            console.log('🏢 User sites loaded:', siteArray.map(s => s.id));
+            setSites(siteArray);
+            setLoading(false);
+          },
+          (err) => {
+            console.error(`Error fetching site ${siteId}:`, err);
+            setLoading(false);
+          }
+        );
+        unsubscribes.push(unsubscribe);
+      });
+
+      return () => {
+        unsubscribes.forEach(unsub => unsub());
+      };
     } catch (err: any) {
+      console.error('Error in useSites:', err);
       setError(err.message);
       setLoading(false);
     }
-  }, []);
+  }, [userSites, isAdmin]);
 
   const createSite = async (siteId: string, name: string, userId: string) => {
     if (!db) throw new Error('Firebase not configured');
@@ -120,6 +177,14 @@ export function useSites() {
           sites: [...currentSites, siteId]
         }, { merge: true });
       }
+    } else {
+      // Create user document if it doesn't exist (edge case: user document creation failed)
+      await setDoc(userRef, {
+        email: '', // Will be populated by AuthContext later
+        role: 'user',
+        sites: [siteId],
+        createdAt: new Date(),
+      });
     }
   };
 

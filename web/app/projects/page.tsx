@@ -17,8 +17,8 @@ import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { toast } from 'sonner';
 
 export default function ProjectsPage() {
-  const { user, loading: authLoading, signOut } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites();
+  const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
   const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
