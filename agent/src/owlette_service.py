@@ -895,7 +895,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.info("Verifying installer checksum...")
                         checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
                         if not checksum_valid:
-                            installer_utils.cleanup_installer(temp_installer_path)
+                            installer_utils.cleanup_installer(temp_installer_path, force=True)
                             return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
                         logging.info("[OK] Checksum verification passed")
                     else:
@@ -931,8 +931,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     return result_msg
 
                 finally:
-                    # Always cleanup the temporary installer file
-                    installer_utils.cleanup_installer(temp_installer_path)
+                    # Always cleanup the temporary installer file (with force=True to handle locked files)
+                    installer_utils.cleanup_installer(temp_installer_path, force=True)
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version

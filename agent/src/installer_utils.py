@@ -131,9 +131,42 @@ def execute_installer(
             stdout, stderr = process.communicate(timeout=timeout_seconds)
             exit_code = process.returncode
         except subprocess.TimeoutExpired:
-            process.kill()
+            # Kill the process tree (parent + all children)
+            try:
+                import psutil
+                parent = psutil.Process(process.pid)
+                children = parent.children(recursive=True)
+
+                # Kill children first, then parent
+                for child in children:
+                    try:
+                        logging.warning(f"Killing child process: {child.name()} (PID: {child.pid})")
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+
+                parent.kill()
+                logging.warning(f"Killed installer process tree (parent PID: {process.pid}, {len(children)} children)")
+
+                # Wait for processes to fully terminate
+                gone, alive = psutil.wait_procs([parent] + children, timeout=3)
+                for proc in alive:
+                    try:
+                        proc.kill()  # Force kill if still alive
+                    except:
+                        pass
+
+            except ImportError:
+                # Fallback if psutil not available
+                process.kill()
+                logging.warning("psutil not available, using basic process.kill()")
+            except Exception as kill_error:
+                logging.error(f"Error killing process tree: {kill_error}")
+                process.kill()  # Fallback to basic kill
+
             if active_processes and installer_name in active_processes:
                 del active_processes[installer_name]
+
             error_msg = f"Installer execution timeout (exceeded {timeout_seconds} seconds)"
             logging.error(error_msg)
             return False, -1, error_msg
@@ -232,22 +265,76 @@ def get_temp_installer_path(installer_name: str) -> str:
     return os.path.join(owlette_temp, installer_name)
 
 
-def cleanup_installer(installer_path: str) -> bool:
+def cleanup_installer(installer_path: str, force: bool = False) -> bool:
     """
     Remove a temporary installer file after installation.
 
     Args:
         installer_path: Path to the installer file
+        force: If True, attempt to kill processes using the file before deletion
 
     Returns:
         True if cleanup succeeded, False otherwise
     """
     try:
-        if os.path.exists(installer_path):
+        if not os.path.exists(installer_path):
+            return False
+
+        # Try simple deletion first
+        try:
             os.remove(installer_path)
             logging.info(f"Cleaned up installer: {installer_path}")
             return True
-        return False
+        except PermissionError as e:
+            if not force:
+                logging.warning(f"Failed to cleanup installer {installer_path}: {e}")
+                return False
+
+            # Force mode: Find and kill processes using this file
+            logging.warning(f"File is locked: {installer_path}, attempting force cleanup...")
+
+            try:
+                import psutil
+
+                # Get the installer filename
+                installer_name = os.path.basename(installer_path)
+                killed_processes = []
+
+                # Find all processes with this name or using this file
+                for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                    try:
+                        proc_name = proc.info['name']
+                        proc_exe = proc.info['exe']
+
+                        # Check if process name or exe matches
+                        if (proc_name and installer_name.lower() in proc_name.lower()) or \
+                           (proc_exe and installer_path.lower() in proc_exe.lower()):
+                            logging.warning(f"Killing process using installer: {proc_name} (PID: {proc.info['pid']})")
+                            proc.kill()
+                            killed_processes.append(proc.info['pid'])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+
+                if killed_processes:
+                    # Wait a moment for processes to die
+                    import time
+                    time.sleep(1)
+
+                    # Retry deletion
+                    os.remove(installer_path)
+                    logging.info(f"Force cleanup succeeded: {installer_path} (killed {len(killed_processes)} process(es))")
+                    return True
+                else:
+                    logging.warning(f"No processes found using {installer_path}, but file is still locked")
+                    return False
+
+            except ImportError:
+                logging.error("psutil not available for force cleanup")
+                return False
+            except Exception as force_error:
+                logging.error(f"Force cleanup failed: {force_error}")
+                return False
+
     except Exception as e:
         logging.warning(f"Failed to cleanup installer {installer_path}: {e}")
         return False
