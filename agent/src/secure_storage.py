@@ -99,7 +99,7 @@ class SecureStorage:
 
     def _save_data(self, data: dict) -> bool:
         """Encrypt and save token data to file."""
-        debug_log = self.config_dir / "oauth_debug.log"
+        debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
         try:
             # Ensure config directory exists
             self.config_dir.mkdir(parents=True, exist_ok=True)
