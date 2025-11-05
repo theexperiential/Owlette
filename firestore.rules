@@ -242,6 +242,25 @@ service cloud.firestore {
     }
 
     // ============================================
+    // System Presets Collection
+    // ============================================
+
+    match /system_presets/{presetId} {
+      // Global software deployment presets (Owlette Agent, TouchDesigner, etc.)
+      // READ: All authenticated users can see presets
+      // WRITE: Only admins can create/update/delete presets
+      allow read: if isAuthenticated();
+
+      // Create requires all essential fields
+      allow create: if isAdmin() &&
+                       hasRequiredFields(['name', 'software_name', 'category',
+                                         'installer_name', 'silent_flags', 'order', 'createdAt']);
+
+      // Update and delete: admin only
+      allow update, delete: if isAdmin();
+    }
+
+    // ============================================
     // OAuth Token Collections (Server-Side Only)
     // ============================================
 
