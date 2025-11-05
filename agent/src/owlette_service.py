@@ -928,6 +928,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         result_msg = f"Installation completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
+
+                    # Trigger immediate software inventory sync after installation completes
+                    try:
+                        if firebase_client and firebase_client.is_connected():
+                            logging.info("Triggering software inventory sync after installation")
+                            firebase_client._sync_software_inventory(force=True)
+                    except Exception as sync_error:
+                        logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
+                        # Don't fail the installation if sync fails
+
                     return result_msg
 
                 finally:
@@ -1140,6 +1150,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         result_msg = f"Uninstall completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
+
+                    # Trigger immediate software inventory sync after uninstall completes
+                    try:
+                        if firebase_client and firebase_client.is_connected():
+                            logging.info("Triggering software inventory sync after uninstall")
+                            firebase_client._sync_software_inventory(force=True)
+                    except Exception as sync_error:
+                        logging.warning(f"Failed to sync software inventory after uninstall: {sync_error}")
+                        # Don't fail the uninstall if sync fails
+
                     return result_msg
 
                 except Exception as e:
@@ -1171,6 +1191,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 else:
                     logging.warning(f"Cancellation failed: {message}")
                     return f"Cancellation failed: {message}"
+
+            elif cmd_type == 'refresh_software_inventory':
+                # Force immediate refresh of software inventory
+                logging.info("Refreshing software inventory on demand")
+                try:
+                    if firebase_client and firebase_client.is_connected():
+                        firebase_client._sync_software_inventory(force=True)
+                        return "Software inventory refreshed successfully"
+                    else:
+                        return "Error: Not connected to Firebase"
+                except Exception as e:
+                    error_msg = f"Failed to refresh software inventory: {str(e)}"
+                    logging.error(error_msg)
+                    return error_msg
 
             elif cmd_type == 'distribute_project':
                 # Distribute project files (ZIP) with extraction

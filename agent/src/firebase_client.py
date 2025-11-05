@@ -76,6 +76,9 @@ class FirebaseClient:
         # Track last uploaded config to prevent processing our own writes
         self._last_uploaded_config_hash: Optional[str] = None
 
+        # Track last synced software inventory hash to prevent unnecessary writes
+        self._last_software_inventory_hash: Optional[str] = None
+
         # Logging
         self.logger = logging.getLogger("OwletteFirebase")
 
@@ -898,12 +901,36 @@ class FirebaseClient:
             # Sleep for 5 minutes (300 seconds)
             time.sleep(300)
 
-    def _sync_software_inventory(self):
+    def _calculate_software_hash(self, software_list):
+        """
+        Calculate a hash of the software list to detect changes.
+
+        Args:
+            software_list: List of software dictionaries
+
+        Returns:
+            MD5 hash string of the software list
+        """
+        # Sort by name and version for consistent hashing
+        sorted_software = sorted(software_list, key=lambda s: (s.get('name', ''), s.get('version', '')))
+
+        # Create a simple string representation (name + version)
+        software_str = '|'.join([
+            f"{s.get('name', '')}:{s.get('version', '')}"
+            for s in sorted_software
+        ])
+
+        return hashlib.md5(software_str.encode('utf-8')).hexdigest()
+
+    def _sync_software_inventory(self, force=False):
         """
         Sync installed software to Firestore.
 
         Queries Windows registry for installed software and uploads to:
         sites/{site_id}/machines/{machine_id}/installed_software
+
+        Args:
+            force: If True, sync even if software hasn't changed (for on-demand refresh)
         """
         if not self.connected or not self.db:
             return
@@ -914,6 +941,14 @@ class FirebaseClient:
 
             if not installed_software:
                 self.logger.debug("No installed software detected")
+                return
+
+            # Calculate hash of current software list
+            current_hash = self._calculate_software_hash(installed_software)
+
+            # Check if software changed since last sync
+            if not force and current_hash == self._last_software_inventory_hash:
+                self.logger.debug("Software inventory unchanged, skipping sync")
                 return
 
             # Reference to installed_software subcollection
@@ -967,6 +1002,8 @@ class FirebaseClient:
                     batch.commit()
 
                 self.logger.info(f"Synced {len(installed_software)} software packages to Firestore (batch write)")
+                # Update hash after successful sync
+                self._last_software_inventory_hash = current_hash
 
             except Exception as batch_error:
                 # Batch write failed (often 403 due to REST API + custom token limitations)
@@ -995,6 +1032,9 @@ class FirebaseClient:
                         self.logger.warning(f"Failed to write {software.get('name', 'unknown')}: {write_error}")
 
                 self.logger.info(f"Synced {success_count}/{len(installed_software)} software packages (individual writes)")
+                # Update hash after successful sync
+                if success_count > 0:
+                    self._last_software_inventory_hash = current_hash
 
         except Exception as e:
             self.logger.error(f"Failed to sync software inventory: {e}")
