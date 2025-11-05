@@ -41,7 +41,7 @@ export function PageHeader({
   return (
     <header className="border-b border-slate-800 bg-slate-900">
       <div className="mx-auto flex h-14 sm:h-16 max-w-7xl items-center justify-between px-2 sm:px-4 gap-1 sm:gap-2 md:gap-4">
-        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0 flex-1 overflow-hidden">
+        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0 flex-1">
           {/* App Logo and Name */}
           <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
             <Image src="/owlette-icon.png" alt="Owlette" width={20} height={20} className="sm:w-8 sm:h-8" />
