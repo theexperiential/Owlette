@@ -39,7 +39,7 @@
 ; ============================================================================
 
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"
@@ -256,25 +256,35 @@ begin
     end;
 
     // Ask user if they want to remove configuration and logs from ProgramData
+    // In silent mode, always preserve data (for upgrades)
     DataDir := ExpandConstant('{commonappdata}\Owlette');
     if DirExists(DataDir) then
     begin
-      if MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
-                'This includes:' + #13#10 +
-                '  • Configuration (config.json)' + #13#10 +
-                '  • Authentication tokens' + #13#10 +
-                '  • Log files' + #13#10 +
-                '  • Cache files' + #13#10#13#10 +
-                'Choose "No" to keep your settings for future installations.',
-                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      // Silent uninstall (triggered by upgrade) → preserve data automatically
+      // Interactive uninstall → ask user
+      if not UninstallSilent() and
+         (MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
+                 'This includes:' + #13#10 +
+                 '  • Configuration (config.json)' + #13#10 +
+                 '  • Authentication tokens' + #13#10 +
+                 '  • Log files' + #13#10 +
+                 '  • Cache files' + #13#10#13#10 +
+                 'Choose "No" to keep your settings for future installations.',
+                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
       begin
+        Log('User chose to remove all data');
         if DelTree(DataDir, True, True, True) then
           Log('Removed user data from: ' + DataDir)
         else
           Log('Failed to remove user data from: ' + DataDir);
       end
       else
-        Log('User data preserved at: ' + DataDir);
+      begin
+        if UninstallSilent() then
+          Log('Silent uninstall - preserving user data for upgrade')
+        else
+          Log('User chose to preserve data');
+      end;
     end;
   end;
 end;
@@ -354,11 +364,16 @@ begin
   // (uninstall already stopped the service and closed processes)
   if not DidUninstallExisting then
   begin
+    Log('Closing any running Owlette processes (fresh install path)');
     // Try to close GUI and tray icon processes silently
     Exec('taskkill', '/F /IM pythonw.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq OWLETTE*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
     // Wait a moment for processes to close
     Sleep(2000);
+  end
+  else
+  begin
+    Log('Skipping process cleanup (already handled by uninstaller during upgrade)');
   end;
 end;
