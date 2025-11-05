@@ -223,6 +223,37 @@ export function useMachines(siteId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Client-side heartbeat timeout checker
+  // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
+  // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
+  useEffect(() => {
+    if (machines.length === 0) return;
+
+    const interval = setInterval(() => {
+      setMachines(prevMachines => {
+        const now = Math.floor(Date.now() / 1000);
+        let hasChanges = false;
+
+        const updated = prevMachines.map(machine => {
+          const heartbeatAge = now - machine.lastHeartbeat;
+          const shouldBeOnline = (machine.online === true) && (heartbeatAge < 90);
+
+          // If calculated online state differs from current state, update it
+          if (machine.online !== shouldBeOnline) {
+            hasChanges = true;
+            return { ...machine, online: shouldBeOnline };
+          }
+          return machine;
+        });
+
+        // Only trigger re-render if something actually changed
+        return hasChanges ? updated : prevMachines;
+      });
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [machines.length]); // Re-create interval when machine count changes
+
   useEffect(() => {
     if (!db || !siteId) {
       setLoading(false);
