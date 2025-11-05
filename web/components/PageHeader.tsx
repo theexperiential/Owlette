@@ -90,7 +90,7 @@ export function PageHeader({
           {/* Navigation Menu - Breadcrumb style */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-7 sm:h-8 md:h-10 px-1.5 sm:px-2 md:px-3 border-slate-700 bg-slate-800 text-[10px] sm:text-xs md:text-sm text-white hover:text-white hover:bg-slate-800 cursor-pointer flex-shrink-0">
+              <Button variant="outline" className="h-7 sm:h-8 md:h-10 px-1.5 sm:px-2 md:px-3 border-slate-700 bg-slate-800 text-xs sm:text-xs md:text-sm text-white hover:text-white hover:bg-slate-800 cursor-pointer flex-shrink-0">
                 <span className="hidden md:inline">{currentPage}</span>
                 <span className="md:hidden truncate max-w-[60px] sm:max-w-[80px]">{currentPage === 'Dashboard' ? 'Dash' : currentPage === 'Deploy Software' ? 'Deploy' : 'Proj'}</span>
                 <ChevronDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 ml-0.5 sm:ml-1 flex-shrink-0" />
