@@ -74,7 +74,7 @@ if %errorLevel% equ 0 (
 echo [3/4] Installing Owlette service...
 
 :: Install service with application and script (no spaces in C:\Owlette path)
-"%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\pythonw.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
+"%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\python.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
 
 if %errorLevel% neq 0 (
     echo ERROR: Failed to install service
@@ -88,6 +88,7 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DisplayName "Owlette Service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
 :: CRITICAL: Run service as logged-in user so OAuth tokens in Windows Credential Manager are accessible
 echo Configuring service to run as current user...

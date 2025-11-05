@@ -7,11 +7,26 @@ import os
 import datetime
 import logging
 import time
+import signal
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import shared_utils
+
+# Global reference to service instance for signal handler
+_service_instance = None
+
+def signal_handler(signum, frame):
+    """Handle Ctrl+C and other termination signals from NSSM"""
+    global _service_instance
+    logging.info(f"Received signal {signum} - initiating graceful shutdown...")
+    if _service_instance and hasattr(_service_instance, 'is_alive'):
+        _service_instance.is_alive = False
+        logging.info("is_alive set to False - main loop will exit")
+    else:
+        logging.warning("service_instance not available for graceful shutdown")
+        sys.exit(0)
 
 # Initialize Firebase and Auth imports
 FIREBASE_AVAILABLE = False
@@ -107,16 +122,31 @@ if __name__ == '__main__':
             logging.info("Service initialization complete")
 
     try:
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Termination request
+        signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
+        logging.info("Signal handlers registered for graceful shutdown")
+
         # Create mock service with required attributes
         mock_service = MockService()
 
         # Borrow the main() method from OwletteService
         # We need to bind it to our mock service instance
-        service_instance = object.__new__(OwletteService)
-        service_instance.__dict__.update(mock_service.__dict__)
+        _service_instance = object.__new__(OwletteService)
+        _service_instance.__dict__.update(mock_service.__dict__)
 
         logging.info("Starting main service loop...")
-        service_instance.main()
+        _service_instance.main()
+
+        # Cleanup before exiting
+        logging.info("Main loop exited - performing cleanup...")
+        if _service_instance.firebase_client:
+            try:
+                _service_instance.firebase_client.stop()
+                logging.info("Firebase client stopped")
+            except Exception as e:
+                logging.error(f"Error stopping Firebase client: {e}")
 
         # Exit cleanly with code 0 when service stops normally
         # This tells NSSM not to restart (configured as AppExit 0 Exit)

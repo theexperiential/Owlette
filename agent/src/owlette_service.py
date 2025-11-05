@@ -25,6 +25,7 @@ import time
 import json
 import datetime
 import atexit
+import subprocess
 
 # Firebase integration
 FIREBASE_IMPORT_ERROR = None
@@ -159,9 +160,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if self.firebase_client:
             try:
                 self.firebase_client.stop()
-                logging.info("✓ Firebase client stopped and machine set to offline")
+                logging.info("[OK] Firebase client stopped and machine set to offline")
             except Exception as e:
-                logging.error(f"✗ Error stopping Firebase client: {e}")
+                logging.error(f"[ERROR] Error stopping Firebase client: {e}")
 
         # Close any open Owlette windows (GUI, prompts, etc.)
         self.close_owlette_windows()
@@ -264,7 +265,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                                 'pid': pid
                                             }
                                             recovered_count += 1
-                                            logging.info(f"✓ Recovered process '{process.get('name')}' with PID {pid}")
+                                            logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
                                         else:
                                             logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
                                     else:
@@ -299,10 +300,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Write cleaned state back to file (removes dead PIDs)
             if dead_pid_count > 0:
                 shared_utils.write_json_to_file(cleaned_states, shared_utils.RESULT_FILE_PATH)
-                logging.info(f"✓ Cleaned up {dead_pid_count} dead PID(s) from state file")
+                logging.info(f"[OK] Cleaned up {dead_pid_count} dead PID(s) from state file")
 
             if recovered_count > 0:
-                logging.info(f"✓ Successfully recovered {recovered_count} running process(es) from previous session")
+                logging.info(f"[OK] Successfully recovered {recovered_count} running process(es) from previous session")
             else:
                 logging.info("No running processes to recover from previous session")
 
@@ -460,10 +461,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             try:
                 metrics = shared_utils.get_system_metrics()
                 self.firebase_client._upload_metrics(metrics)
-                logging.info(f"✓ Process status synced to Firebase: PID {pid} -> LAUNCHING")
+                logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> LAUNCHING")
             except Exception as e:
                 # Don't crash if Firebase sync fails - it will sync on next interval
-                logging.error(f"✗ Failed to sync process status to Firebase: {e}")
+                logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
                 logging.exception("Full traceback:")
 
         return pid
@@ -670,7 +671,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if stale_ids:
                 for pid in stale_ids:
                     del self.last_started[pid]
-                logging.info(f"✓ Cleaned up {len(stale_ids)} stale entries from last_started tracking")
+                logging.info(f"[OK] Cleaned up {len(stale_ids)} stale entries from last_started tracking")
 
             # Clean up relaunch_attempts dictionary (uses process names, need to map)
             current_process_names = {p.get('name') for p in config.get('processes', []) if p.get('name')}
@@ -678,7 +679,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if stale_names:
                 for name in stale_names:
                     del self.relaunch_attempts[name]
-                logging.info(f"✓ Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
+                logging.info(f"[OK] Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
 
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
@@ -730,7 +731,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 psutil.Process(pid).terminate()
                                 # Update status and sync to Firebase immediately
                                 shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
-                                logging.info(f"✓ Terminated removed process: {removed_proc.get('name')} (PID {pid})")
+                                logging.info(f"[OK] Terminated removed process: {removed_proc.get('name')} (PID {pid})")
                             except Exception as e:
                                 logging.error(f"Failed to terminate removed process PID {pid}: {e}")
 
@@ -757,7 +758,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                         psutil.Process(pid).terminate()
                                         # Update status and sync to Firebase immediately
                                         shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
-                                        logging.info(f"✓ Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
+                                        logging.info(f"[OK] Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
                                     except Exception as e:
                                         logging.error(f"Failed to terminate PID {pid}: {e}")
                         elif new_autolaunch and not old_autolaunch:
@@ -896,9 +897,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         if not checksum_valid:
                             installer_utils.cleanup_installer(temp_installer_path)
                             return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
-                        logging.info("✓ Checksum verification passed")
+                        logging.info("[OK] Checksum verification passed")
                     else:
-                        logging.warning("⚠ No checksum provided - skipping verification (security risk)")
+                        logging.warning("[WARNING] No checksum provided - skipping verification (security risk)")
 
                     # Update status: installing
                     if self.firebase_client:
@@ -1116,7 +1117,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         for verify_path in verify_paths:
                             if verify_path:
                                 # Check if path still exists (should NOT exist after uninstall)
-                                import os
                                 path_exists = os.path.exists(verify_path)
                                 verification_results.append({
                                     'path': verify_path,
@@ -1329,51 +1329,92 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
-        while self.is_alive:
-            # Start the tray icon script as a process (if it isn't running)
-            tray_script = 'owlette_tray.py'
-            if not shared_utils.is_script_running(tray_script):
-                self.launch_python_script_as_user(tray_script)
+        try:
+            while self.is_alive:
+                # Check for shutdown flag from tray icon
+                shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
+                if os.path.exists(shutdown_flag):
+                    logging.info("Shutdown flag detected - initiating graceful shutdown")
+                    try:
+                        os.remove(shutdown_flag)
+                    except:
+                        pass
+                    self.is_alive = False
+                    break
 
-            # Get the current time
-            self.current_time = datetime.datetime.now()
+                # Start the tray icon script as a process (if it isn't running)
+                tray_script = 'owlette_tray.py'
+                if not shared_utils.is_script_running(tray_script):
+                    self.launch_python_script_as_user(tray_script)
 
-            # Load in latest results from the output file
-            content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
-            if content:
-                self.results = content
+                # Get the current time
+                self.current_time = datetime.datetime.now()
 
-            # Load in all processes in config json
-            processes = shared_utils.read_config(['processes'])
-            for process in processes:
-                if process.get('autolaunch', False): # Default to False if not found
-                    self.handle_process(process)
+                # Load in latest results from the output file
+                content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                if content:
+                    self.results = content
 
-            if self.first_start:
-                logging.info('Owlette initialized')
+                # Load in all processes in config json
+                processes = shared_utils.read_config(['processes'])
+                for process in processes:
+                    if process.get('autolaunch', False): # Default to False if not found
+                        self.handle_process(process)
 
-            self.first_start = False
+                if self.first_start:
+                    logging.info('Owlette initialized')
 
-            # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
-            cleanup_counter += 1
-            if cleanup_counter >= 30:
-                self.cleanup_stale_tracking_data()
-                cleanup_counter = 0
+                self.first_start = False
 
-            # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
-            log_cleanup_counter += 1
-            if log_cleanup_counter >= 8640:
+                # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
+                cleanup_counter += 1
+                if cleanup_counter >= 30:
+                    self.cleanup_stale_tracking_data()
+                    cleanup_counter = 0
+
+                # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
+                log_cleanup_counter += 1
+                if log_cleanup_counter >= 8640:
+                    try:
+                        max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
+                        deleted_count = shared_utils.cleanup_old_logs(max_age_days)
+                        if deleted_count > 0:
+                            logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                    except Exception as e:
+                        logging.error(f"Log cleanup failed: {e}")
+                    log_cleanup_counter = 0
+
+                # Sleep for 10 seconds
+                time.sleep(SLEEP_INTERVAL)
+        finally:
+            # CRITICAL: Cleanup when loop exits (graceful shutdown or signal handler)
+            # This ensures machine is marked offline even when running in NSSM mode
+            logging.info("Main loop exiting - performing cleanup...")
+
+            # Mark machine offline in Firestore
+            if self.firebase_client:
                 try:
-                    max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
-                    deleted_count = shared_utils.cleanup_old_logs(max_age_days)
-                    if deleted_count > 0:
-                        logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                    logging.info("Calling firebase_client.stop() to mark machine offline...")
+                    self.firebase_client.stop()
+                    logging.info("[OK] Cleanup complete - machine marked offline")
                 except Exception as e:
-                    logging.error(f"Log cleanup failed: {e}")
-                log_cleanup_counter = 0
+                    logging.error(f"[ERROR] Error during cleanup: {e}")
 
-            # Sleep for 10 seconds
-            time.sleep(SLEEP_INTERVAL)
+            # Close any open Owlette windows
+            try:
+                self.close_owlette_windows()
+                logging.info("[OK] Owlette windows closed")
+            except Exception as e:
+                logging.error(f"Error closing windows: {e}")
+
+            # Terminate tray icon
+            try:
+                self.terminate_tray_icon()
+                logging.info("[OK] Tray icon terminated")
+            except Exception as e:
+                logging.error(f"Error terminating tray icon: {e}")
+
+            logging.info("Service cleanup complete - exiting")
 
 if __name__ == '__main__':
     # Check if running under NSSM (no command-line arguments)
