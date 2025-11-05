@@ -364,13 +364,23 @@ export function useDeployments(siteId: string) {
       status: 'pending',
     }));
 
-    // Create deployment document
-    await setDoc(deploymentRef, {
-      ...deployment,
+    // Create deployment document (filter out undefined values)
+    const deploymentData: any = {
+      name: deployment.name,
+      installer_name: deployment.installer_name,
+      installer_url: deployment.installer_url,
+      silent_flags: deployment.silent_flags,
       targets,
       createdAt: Date.now(),
       status: 'pending',
-    });
+    };
+
+    // Only include verify_path if it's provided
+    if (deployment.verify_path) {
+      deploymentData.verify_path = deployment.verify_path;
+    }
+
+    await setDoc(deploymentRef, deploymentData);
 
     // Send install command to each machine in parallel
     const commandPromises = machineIds.map(async (machineId) => {
@@ -380,17 +390,23 @@ export function useDeployments(siteId: string) {
       const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
       const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
+      const commandData: any = {
+        type: 'install_software',
+        installer_url: deployment.installer_url,
+        installer_name: deployment.installer_name,
+        silent_flags: deployment.silent_flags,
+        deployment_id: deploymentId,
+        timestamp: Date.now(),
+        status: 'pending',
+      };
+
+      // Only include verify_path if it's provided
+      if (deployment.verify_path) {
+        commandData.verify_path = deployment.verify_path;
+      }
+
       await setDoc(commandRef, {
-        [commandId]: {
-          type: 'install_software',
-          installer_url: deployment.installer_url,
-          installer_name: deployment.installer_name,
-          silent_flags: deployment.silent_flags,
-          verify_path: deployment.verify_path,
-          deployment_id: deploymentId,
-          timestamp: Date.now(),
-          status: 'pending',
-        }
+        [commandId]: commandData
       }, { merge: true });
     });
 
