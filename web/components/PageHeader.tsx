@@ -41,87 +41,90 @@ export function PageHeader({
   return (
     <header className="border-b border-slate-800 bg-slate-900">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {/* App Logo and Name */}
           <div className="flex items-center gap-3">
             <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
             <h1 className="text-xl font-bold text-white">Owlette</h1>
-
-            {/* Breadcrumb separator */}
-            <ChevronRight className="h-4 w-4 text-slate-600" />
-
-            {/* Navigation Menu - Breadcrumb style */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer">
-                  <span className="text-lg">{currentPage}</span>
-                  <ChevronDown className="h-4 w-4 ml-1" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800 w-80">
-                <DropdownMenuItem
-                  onClick={() => router.push('/dashboard')}
-                  className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
-                >
-                  <span className="font-semibold text-base">Dashboard</span>
-                  <span className="text-sm text-slate-400 font-normal">
-                    Monitor machines, view status, and manage processes across your sites
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push('/deployments')}
-                  className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
-                >
-                  <span className="font-semibold text-base">Deploy Software</span>
-                  <span className="text-sm text-slate-400 font-normal">
-                    Install and update Owlette agents on remote machines
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => router.push('/projects')}
-                  className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
-                >
-                  <span className="font-semibold text-base">Distribute Projects</span>
-                  <span className="text-sm text-slate-400 font-normal">
-                    Share TouchDesigner projects and files to managed machines
-                  </span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
 
           {/* Site Selector */}
           {sites.length > 0 && currentSiteId && onSiteChange && (
-            <div className="flex items-center gap-2">
+            <>
               <ChevronRight className="h-4 w-4 text-slate-600" />
-              <Select value={currentSiteId} onValueChange={onSiteChange}>
-                <SelectTrigger className="w-[200px] border-slate-700 bg-slate-800 text-white cursor-pointer">
-                  <SelectValue placeholder="Select site" />
-                </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-800">
-                  {sites.map((site) => (
-                    <SelectItem
-                      key={site.id}
-                      value={site.id}
-                      className="text-white focus:bg-slate-700 focus:text-white"
-                    >
-                      {site.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-stretch border border-slate-700 bg-slate-800 rounded-md overflow-hidden">
+                <Select value={currentSiteId} onValueChange={onSiteChange}>
+                  <SelectTrigger className="w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer">
+                    <SelectValue placeholder="Select site" />
+                  </SelectTrigger>
+                  <SelectContent className="border-slate-700 bg-slate-800">
+                    {sites.map((site) => (
+                      <SelectItem
+                        key={site.id}
+                        value={site.id}
+                        className="text-white focus:bg-slate-700 focus:text-white"
+                      >
+                        {site.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-              {onManageSites && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onManageSites}
-                  className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
+                {onManageSites && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onManageSites}
+                    className="h-auto px-2 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer border-l border-slate-700"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </>
           )}
+
+          {/* Breadcrumb separator */}
+          <ChevronRight className="h-4 w-4 text-slate-600" />
+
+          {/* Navigation Menu - Breadcrumb style */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="h-10 px-3 border-slate-700 bg-slate-800 text-sm text-white hover:text-white hover:bg-slate-800 cursor-pointer">
+                <span>{currentPage}</span>
+                <ChevronDown className="h-4 w-4 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800 w-80">
+              <DropdownMenuItem
+                onClick={() => router.push('/dashboard')}
+                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+              >
+                <span className="font-semibold text-base">Dashboard</span>
+                <span className="text-sm text-slate-400 font-normal">
+                  Monitor machines, view status, and manage processes across your sites
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => router.push('/deployments')}
+                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+              >
+                <span className="font-semibold text-base">Deploy Software</span>
+                <span className="text-sm text-slate-400 font-normal">
+                  Install software across multiple machines simultaneously
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => router.push('/projects')}
+                className="text-white focus:bg-slate-700 focus:text-white cursor-pointer py-4 px-4 flex flex-col items-start gap-1"
+              >
+                <span className="font-semibold text-base">Distribute Projects</span>
+                <span className="text-sm text-slate-400 font-normal">
+                  Share TouchDesigner projects and files to managed machines
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div className="flex items-center gap-4">
