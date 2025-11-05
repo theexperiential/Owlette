@@ -146,15 +146,19 @@ export function useUninstall() {
         const existingCommands = commandDoc.exists() ? commandDoc.data() : {};
 
         // Add new uninstall command
-        const newCommand = {
+        const newCommand: any = {
           type: 'uninstall_software',
           software_name: softwareDetails.name,
           uninstall_command: softwareDetails.uninstall_command,
           installer_type: softwareDetails.installer_type,
           verify_paths: softwareDetails.install_location ? [softwareDetails.install_location] : [],
           timestamp: timestamp,
-          deployment_id: deploymentId, // Track which deployment this uninstall is for
         };
+
+        // Only include deployment_id if provided (when uninstalling from deployment view)
+        if (deploymentId) {
+          newCommand.deployment_id = deploymentId;
+        }
 
         console.log(`[useUninstall] Writing command to Firestore:`, newCommand);
 
