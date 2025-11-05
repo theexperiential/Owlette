@@ -355,6 +355,8 @@ export function useDeployments(siteId: string) {
   ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
+    console.log('[createDeployment] Starting deployment creation...', { siteId, machineIds });
+
     const deploymentId = `deploy-${Date.now()}`;
     const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
 
@@ -380,9 +382,12 @@ export function useDeployments(siteId: string) {
       deploymentData.verify_path = deployment.verify_path;
     }
 
+    console.log('[createDeployment] Creating deployment document...', { deploymentId, deploymentData });
     await setDoc(deploymentRef, deploymentData);
+    console.log('[createDeployment] Deployment document created successfully');
 
     // Send install command to each machine in parallel
+    console.log('[createDeployment] Writing commands to machines...');
     const commandPromises = machineIds.map(async (machineId) => {
       // Use underscores to avoid Firestore field path parsing issues with hyphens
       const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
@@ -405,18 +410,23 @@ export function useDeployments(siteId: string) {
         commandData.verify_path = deployment.verify_path;
       }
 
+      console.log('[createDeployment] Writing command to machine:', { machineId, commandId, commandPath: `sites/${siteId}/machines/${machineId}/commands/pending` });
       await setDoc(commandRef, {
         [commandId]: commandData
       }, { merge: true });
+      console.log('[createDeployment] Command written successfully for machine:', machineId);
     });
 
     // Wait for all commands to be sent
     await Promise.all(commandPromises);
+    console.log('[createDeployment] All commands written successfully');
 
     // Update deployment status to in_progress
+    console.log('[createDeployment] Updating deployment status to in_progress...');
     await setDoc(deploymentRef, {
       status: 'in_progress',
     }, { merge: true });
+    console.log('[createDeployment] Deployment status updated successfully');
 
     return deploymentId;
   };

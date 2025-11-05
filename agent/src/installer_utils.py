@@ -9,6 +9,7 @@ import tempfile
 import requests
 import psutil
 import hashlib
+import time
 from typing import Optional, Callable, Dict
 
 
@@ -27,15 +28,31 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
     try:
         logging.info(f"Starting download from {url}")
 
+        # Create destination directory if it doesn't exist
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+        # Pre-download cleanup: handle existing files
+        if os.path.exists(dest_path):
+            logging.info(f"File already exists at {dest_path}, attempting cleanup...")
+            try:
+                os.remove(dest_path)
+                logging.info("Existing file removed successfully")
+            except PermissionError as e:
+                # File is locked by another process - generate unique filename
+                timestamp = int(time.time())
+                base_name, ext = os.path.splitext(dest_path)
+                dest_path = f"{base_name}_{timestamp}{ext}"
+                logging.warning(f"Could not remove existing file (in use), using unique filename: {dest_path}")
+            except Exception as e:
+                logging.error(f"Error removing existing file: {e}")
+                return False
+
         # Stream the download to avoid loading entire file into memory
         response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()
 
         total_size = int(response.headers.get('content-length', 0))
         downloaded_size = 0
-
-        # Create destination directory if it doesn't exist
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
         with open(dest_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
