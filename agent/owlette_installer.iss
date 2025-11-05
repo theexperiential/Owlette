@@ -122,7 +122,10 @@ Name: "{userstartup}\Owlette Tray"; Filename: "{app}\scripts\launch_tray.bat"; I
 ; Usage: Owlette-Installer-v2.0.0.exe              (uses owlette.app, default)
 ;        Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
 ;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app for testing)
-Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated
+;
+; IMPORTANT: Skip configuration in silent mode if config already exists (for self-updates)
+; This prevents the installer from hanging while waiting for browser OAuth that won't happen
+Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated; Check: ShouldConfigureSite
 
 ; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
 Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Install Owlette service"; StatusMsg: "Installing Owlette service..."; Flags: runhidden waituntilterminated
@@ -153,6 +156,27 @@ begin
     Result := 'https://owlette.app/setup';  // Default to production
 
   Log('Server environment: ' + ServerParam + ' -> ' + Result);
+end;
+
+function ShouldConfigureSite(): Boolean;
+var
+  ConfigPath: String;
+begin
+  // Check if config already exists (self-update scenario)
+  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
+
+  // If running in silent mode AND config exists, skip configuration
+  // (machine is already set up - this is a self-update)
+  if WizardSilent() and FileExists(ConfigPath) then
+  begin
+    Log('Silent mode + config exists - skipping OAuth (self-update)');
+    Result := False;
+  end
+  else
+  begin
+    Log('Will run OAuth configuration (fresh install or interactive)');
+    Result := True;
+  end;
 end;
 
 procedure BackupConfigIfExists;

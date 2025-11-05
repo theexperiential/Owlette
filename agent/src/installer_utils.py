@@ -13,7 +13,7 @@ import time
 from typing import Optional, Callable, Dict
 
 
-def download_file(url: str, dest_path: str, progress_callback: Optional[Callable[[int], None]] = None) -> bool:
+def download_file(url: str, dest_path: str, progress_callback: Optional[Callable[[int], None]] = None) -> tuple[bool, str]:
     """
     Download a file from a URL with progress tracking.
 
@@ -23,7 +23,9 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
         progress_callback: Optional callback function that receives progress percentage (0-100)
 
     Returns:
-        True if download succeeded, False otherwise
+        Tuple of (success, actual_path):
+        - success: True if download succeeded, False otherwise
+        - actual_path: The actual path where the file was saved (may differ from dest_path if file was in use)
     """
     try:
         logging.info(f"Starting download from {url}")
@@ -45,7 +47,7 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
                 logging.warning(f"Could not remove existing file (in use), using unique filename: {dest_path}")
             except Exception as e:
                 logging.error(f"Error removing existing file: {e}")
-                return False
+                return False, ""
 
         # Stream the download to avoid loading entire file into memory
         response = requests.get(url, stream=True, timeout=30)
@@ -66,14 +68,14 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
                         progress_callback(progress)
 
         logging.info(f"Download completed: {dest_path} ({downloaded_size} bytes)")
-        return True
+        return True, dest_path
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Download failed: {e}")
-        return False
+        return False, ""
     except Exception as e:
         logging.error(f"Unexpected error during download: {e}")
-        return False
+        return False, ""
 
 
 def execute_installer(

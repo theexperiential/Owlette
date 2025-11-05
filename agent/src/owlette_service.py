@@ -885,10 +885,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Download the installer
                     logging.info(f"Downloading installer to: {temp_installer_path}")
-                    download_success = installer_utils.download_file(installer_url, temp_installer_path)
+                    download_success, actual_installer_path = installer_utils.download_file(installer_url, temp_installer_path)
 
                     if not download_success:
                         return f"Error: Failed to download installer from {installer_url}"
+
+                    # Use the actual path where the file was saved (may differ if file was in use)
+                    temp_installer_path = actual_installer_path
 
                     # Verify checksum if provided (SECURITY: recommended for remote installations)
                     if expected_sha256:
@@ -905,18 +908,71 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Execute the installer (pass active_installations for cancellation support)
-                    logging.info("Executing installer with silent flags")
-                    success, exit_code, error_msg = installer_utils.execute_installer(
-                        temp_installer_path,
-                        silent_flags,
-                        installer_name,
-                        self.active_installations,
-                        timeout_seconds
-                    )
+                    # SELF-UPDATE DETECTION: Check if this is an Owlette self-update
+                    is_self_update = 'owlette' in installer_name.lower()
 
-                    if not success:
-                        return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
+                    if is_self_update:
+                        # This is a self-update - we need to shut down to allow file replacement
+                        logging.warning("=" * 60)
+                        logging.warning("SELF-UPDATE DETECTED: Owlette is updating itself")
+                        logging.warning(f"Installer: {installer_name}")
+                        logging.warning("Strategy: Launch installer detached, then stop service")
+                        logging.warning("=" * 60)
+
+                        # Launch installer in detached mode (won't wait for it to complete)
+                        import subprocess
+                        command = f'"{temp_installer_path}"'
+                        if silent_flags:
+                            command += f" {silent_flags}"
+
+                        logging.info(f"Launching detached installer: {command}")
+
+                        # DETACHED_PROCESS (0x00000008) + CREATE_NEW_PROCESS_GROUP (0x00000200)
+                        DETACHED_PROCESS = 0x00000008
+                        CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+                        try:
+                            subprocess.Popen(
+                                command,
+                                shell=True,
+                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                                close_fds=True
+                            )
+                            logging.info("Installer launched successfully in detached mode")
+
+                            # Schedule service shutdown after brief delay (let installer start)
+                            import threading
+                            def delayed_shutdown():
+                                import time
+                                time.sleep(3)  # Give installer time to fully start
+                                logging.warning("Self-update shutdown commencing in 3 seconds...")
+                                time.sleep(3)
+                                logging.warning("Stopping service to allow self-update to complete...")
+                                self.stop()
+
+                            shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=False)
+                            shutdown_thread.start()
+
+                            return "Self-update initiated: Service will stop to allow installation, then installer will restart service"
+
+                        except Exception as e:
+                            error_msg = f"Failed to launch self-update installer: {e}"
+                            logging.error(error_msg)
+                            return f"Error: {error_msg}"
+
+                    else:
+                        # Normal installation (not self-update) - wait for completion
+                        logging.info("Executing installer with silent flags")
+                        success, exit_code, error_msg = installer_utils.execute_installer(
+                            temp_installer_path,
+                            silent_flags,
+                            installer_name,
+                            self.active_installations,
+                            timeout_seconds
+                        )
+
+                        if not success:
+                            return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
 
                     # Optional: Verify installation
                     if verify_path:
