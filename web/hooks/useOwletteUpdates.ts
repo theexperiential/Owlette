@@ -67,14 +67,15 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
 
     return machines.map(machine => {
       const currentVersion = machine.agent_version || null;
-      const needsUpdate = isOutdated(currentVersion, latestVersion);
+      const normalizedLatestVersion = latestVersion || null;
+      const needsUpdate = isOutdated(currentVersion, normalizedLatestVersion);
 
       return {
         machine,
         needsUpdate,
         currentVersion,
-        latestVersion,
-        updateAvailable: needsUpdate && !!latestVersion
+        latestVersion: normalizedLatestVersion,
+        updateAvailable: needsUpdate && !!normalizedLatestVersion
       };
     });
   }, [machines, latestVersion]);
@@ -103,21 +104,22 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
 
     // If not found, calculate on the fly
     const currentVersion = machine.agent_version || null;
-    const needsUpdate = isOutdated(currentVersion, latestVersion);
+    const normalizedLatestVersion = latestVersion || null;
+    const needsUpdate = isOutdated(currentVersion, normalizedLatestVersion);
 
     return {
       machine,
       needsUpdate,
       currentVersion,
-      latestVersion,
-      updateAvailable: needsUpdate && !!latestVersion
+      latestVersion: normalizedLatestVersion,
+      updateAvailable: needsUpdate && !!normalizedLatestVersion
     };
   };
 
   return {
     outdatedMachines,
     machineUpdateStatuses,
-    latestVersion,
+    latestVersion: latestVersion || null,
     totalMachinesNeedingUpdate,
     isLoading: versionLoading,
     error: versionError,

@@ -29,7 +29,7 @@ import registry_utils
 
 # Import new OAuth-based modules (replace firebase_admin)
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
-from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP
+from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_FIELD
 
 
 class FirebaseClient:
@@ -219,6 +219,17 @@ class FirebaseClient:
         while self.running:
             try:
                 if self.connected:
+                    # CRITICAL: Ensure token is valid before upload
+                    # This triggers automatic refresh if token expires in < 5 minutes
+                    try:
+                        self.auth_manager.get_valid_token()
+                    except Exception as e:
+                        self.logger.error(f"Token validation/refresh failed: {e}")
+                        self.connected = False
+                        self._try_reconnect()
+                        time.sleep(60)
+                        continue
+
                     metrics = shared_utils.get_system_metrics()
                     self._upload_metrics(metrics)
                     self.logger.debug(f"Metrics uploaded: CPU={metrics.get('cpu')}%")
@@ -397,6 +408,7 @@ class FirebaseClient:
             metrics_ref.set({
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
+                'agent_version': shared_utils.APP_VERSION,  # Report agent version for update detection
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
                 'metrics': {
@@ -418,6 +430,7 @@ class FirebaseClient:
                 metrics_ref.set({
                     'online': True,
                     'lastHeartbeat': SERVER_TIMESTAMP,
+                    'agent_version': shared_utils.APP_VERSION,  # Report agent version for update detection
                     'machineId': self.machine_id,
                     'siteId': self.site_id,
                     'metrics': {
@@ -517,7 +530,7 @@ class FirebaseClient:
                 .collection('commands').document('pending')
 
             pending_ref.update({
-                cmd_id: firestore.DELETE_FIELD
+                cmd_id: DELETE_FIELD
             })
 
             # Add to completed
@@ -557,7 +570,7 @@ class FirebaseClient:
                 .collection('commands').document('pending')
 
             pending_ref.update({
-                cmd_id: firestore.DELETE_FIELD
+                cmd_id: DELETE_FIELD
             })
 
             # Add to completed with error
@@ -597,7 +610,7 @@ class FirebaseClient:
                 .collection('commands').document('pending')
 
             pending_ref.update({
-                cmd_id: firestore.DELETE_FIELD
+                cmd_id: DELETE_FIELD
             })
 
             # Add to completed with cancelled status

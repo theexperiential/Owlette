@@ -118,8 +118,14 @@ if __name__ == '__main__':
         logging.info("Starting main service loop...")
         service_instance.main()
 
+        # Exit cleanly with code 0 when service stops normally
+        # This tells NSSM not to restart (configured as AppExit 0 Exit)
+        logging.info("Service stopped cleanly")
+        sys.exit(0)
+
     except KeyboardInterrupt:
         logging.info("Service stopped by user (Ctrl+C)")
+        sys.exit(0)
     except Exception as e:
         logging.error(f"Service crashed: {e}", exc_info=True)
         sys.exit(1)

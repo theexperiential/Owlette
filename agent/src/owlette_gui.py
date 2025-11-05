@@ -1026,18 +1026,34 @@ class OwletteConfigApp:
         site_display = site_id if site_id else "Unassigned"
         self.site_id_label.configure(text=f"Site: {site_display}")
 
-        # Check if OAuth tokens exist (new authentication method)
-        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
-        tokens_exist = os.path.exists(token_path)
+        # Check if OAuth tokens are VALID (not just if file exists)
+        tokens_valid = False
+        if firebase_enabled:
+            try:
+                from auth_manager import AuthManager
+                api_base = self.config.get('firebase', {}).get('api_base', 'https://owlette.app/api')
+                auth = AuthManager(api_base=api_base)
+
+                # Try to get valid token - this will return None if no tokens exist or if refresh fails
+                # This is better than just checking file existence
+                try:
+                    token = auth.get_valid_token()
+                    tokens_valid = bool(token)
+                except Exception:
+                    # Token doesn't exist, expired and can't refresh, or other auth error
+                    tokens_valid = False
+            except Exception:
+                # Failed to initialize AuthManager
+                tokens_valid = False
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
             self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
             self.leave_site_button.configure(state="disabled")
-        elif firebase_enabled and tokens_exist:
+        elif firebase_enabled and tokens_valid:
             self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
             self.leave_site_button.configure(state="normal")
-        elif firebase_enabled and not tokens_exist:
+        elif firebase_enabled and not tokens_valid:
             self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
             self.leave_site_button.configure(state="disabled")
         else:
@@ -1091,7 +1107,8 @@ class OwletteConfigApp:
 
                 # CRITICAL: STOP the service BEFORE deleting the machine document
                 # This prevents the service from recreating the document while we delete it
-                nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+                # NSSM is at C:\Owlette\tools\nssm.exe (three directories up from this file)
+                nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
                 if os.path.exists(nssm_path):
                     try:
                         logging.info("Stopping service to prevent document recreation...")

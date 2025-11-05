@@ -50,6 +50,14 @@ FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
 
+# Special sentinel value for deleting fields (compatible with firebase_admin SDK)
+class _DeleteFieldSentinel:
+    """Sentinel class to mark fields for deletion (matches firebase_admin.firestore.DELETE_FIELD)"""
+    def __repr__(self):
+        return "DELETE_FIELD"
+
+DELETE_FIELD = _DeleteFieldSentinel()
+
 
 class FirestoreRestClient:
     """
@@ -109,6 +117,9 @@ class FirestoreRestClient:
         """
         if value is None:
             return {'nullValue': None}
+        elif isinstance(value, _DeleteFieldSentinel):
+            # Special marker for field deletion
+            return None  # Signal to caller to handle as deletion
         elif value == SERVER_TIMESTAMP:
             # Server timestamp - use current UTC time
             # Note: True server timestamp requires Firestore transform operation
@@ -273,6 +284,7 @@ class FirestoreRestClient:
         Update specific fields in a document.
 
         Supports nested field paths like 'metrics.cpu' or 'metrics.processes'.
+        Supports DELETE_FIELD to remove fields from documents.
 
         Args:
             path: Document path
@@ -288,6 +300,13 @@ class FirestoreRestClient:
             # Convert updates to Firestore format, handling nested paths
             firestore_fields = {}
             for key, value in updates.items():
+                firestore_value = self._to_firestore_value(value)
+
+                # If _to_firestore_value returns None, it's a DELETE_FIELD sentinel
+                # Include in updateMask but not in fields (this deletes the field)
+                if firestore_value is None:
+                    continue
+
                 # Handle nested paths like 'metrics.cpu'
                 if '.' in key:
                     # For nested updates, we need to construct the nested structure
@@ -300,10 +319,10 @@ class FirestoreRestClient:
                         current = current[part]['mapValue']['fields']
 
                     # Set the final value
-                    current[parts[-1]] = self._to_firestore_value(value)
+                    current[parts[-1]] = firestore_value
                 else:
                     # Top-level field
-                    firestore_fields[key] = self._to_firestore_value(value)
+                    firestore_fields[key] = firestore_value
 
             # Make PATCH request with updateMask
             params = {

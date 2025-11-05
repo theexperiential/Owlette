@@ -85,15 +85,37 @@ export async function POST(request: NextRequest) {
     // Generate unique agent user ID
     const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
 
-    // Generate OAuth 2.0 access token for Firestore REST API
-    // This uses the service account credentials to create a valid access token
-    const credential = admin.app().options.credential;
-    if (!credential) {
-      throw new Error('No service account credential available');
+    // Generate Firebase Custom Token for agent
+    const adminAuth = getAdminAuth();
+    const customToken = await adminAuth.createCustomToken(agentUid, {
+      siteId,
+      machineId,
+      version,
+    });
+
+    // Exchange custom token for ID token (required for Firestore REST API)
+    // This uses Firebase Auth REST API to convert the custom token
+    const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+    if (!firebaseApiKey) {
+      throw new Error('Firebase API key not configured');
     }
 
-    const accessTokenData = await credential.getAccessToken();
-    const accessToken = accessTokenData.access_token;
+    const authResponse = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      }
+    );
+
+    if (!authResponse.ok) {
+      const errorData = await authResponse.json();
+      throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
+    }
+
+    const authData = await authResponse.json();
+    const idToken = authData.idToken;
 
     // Generate refresh token (cryptographically secure random)
     const crypto = await import('crypto');
@@ -129,7 +151,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        accessToken,
+        accessToken: idToken,
         refreshToken,
         expiresIn: 3600, // 1 hour in seconds
         siteId,

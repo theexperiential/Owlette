@@ -103,6 +103,12 @@ echo Configuring service to run as current user...
 :: Set service dependencies (wait for network)
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DependOnService Tcpip Dnscache
 
+:: Configure restart behavior
+:: - Exit code 0 (clean exit) -> Don't restart (user intentionally stopped it)
+:: - Default (crashes/errors) -> Restart (auto-recovery)
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit Default Restart
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit 0 Exit
+
 :: ============================================================================
 :: Step 5: Start service
 :: ============================================================================

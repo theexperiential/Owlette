@@ -273,7 +273,8 @@ def exit_action(icon, item):
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
 
         # Stop the Windows service using NSSM
-        nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+        # NSSM is at C:\Owlette\tools\nssm.exe (three directories up from this file)
+        nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
         if os.path.exists(nssm_path):
             # Use subprocess instead of ShellExecuteW for better error handling
             subprocess.run([nssm_path, 'stop', 'OwletteService'],

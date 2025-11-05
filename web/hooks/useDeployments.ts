@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -211,11 +211,18 @@ export function useDeployments(siteId: string) {
 
             if (command.status === 'completed') {
               // Handle completed installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || Date.now() }
-                  : target
-              );
+              const updatedTargets = deployment.targets.map(target => {
+                if (target.machineId === machineId) {
+                  // Create new target object without progress/error fields
+                  const { progress, error, ...rest } = target;
+                  return {
+                    ...rest,
+                    status: 'completed' as const,
+                    completedAt: command.completedAt || Date.now()
+                  };
+                }
+                return target;
+              });
 
               // Calculate overall status
               const allCompleted = updatedTargets.every(t => t.status === 'completed');
@@ -230,11 +237,19 @@ export function useDeployments(siteId: string) {
               }, { merge: true });
             } else if (command.status === 'failed') {
               // Handle failed installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || Date.now() }
-                  : target
-              );
+              const updatedTargets = deployment.targets.map(target => {
+                if (target.machineId === machineId) {
+                  // Create new target object without progress field
+                  const { progress, ...rest } = target;
+                  return {
+                    ...rest,
+                    status: 'failed' as const,
+                    ...(command.error ? { error: command.error } : {}),
+                    completedAt: command.completedAt || Date.now()
+                  };
+                }
+                return target;
+              });
 
               // Calculate overall status
               const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
@@ -284,7 +299,11 @@ export function useDeployments(siteId: string) {
               // Handle intermediate states (downloading, installing)
               const updatedTargets = deployment.targets.map(target =>
                 target.machineId === machineId
-                  ? { ...target, status: command.status as 'downloading' | 'installing', progress: command.progress }
+                  ? {
+                      ...target,
+                      status: command.status as 'downloading' | 'installing',
+                      ...(command.progress !== undefined ? { progress: command.progress } : {})
+                    }
                   : target
               );
 

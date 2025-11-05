@@ -382,7 +382,7 @@ export default function DeploymentsPage() {
                                       console.error('Failed to cancel deployment:', error);
                                     }
                                   }}
-                                  className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30"
+                                  className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                                 >
                                   <X className="h-4 w-4" />
                                 </Button>

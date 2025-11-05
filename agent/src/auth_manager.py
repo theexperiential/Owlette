@@ -326,10 +326,11 @@ class AuthManager:
 
             # Refresh if token expires in less than 5 minutes
             if time_until_expiry <= TOKEN_REFRESH_BUFFER_SECONDS:
-                logger.debug(
-                    f"Token expires in {int(time_until_expiry)}s, refreshing..."
+                logger.info(
+                    f"⚠️ Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
                 )
                 self.refresh_access_token()
+                logger.info("✅ Token refresh completed successfully")
 
         # If we still don't have a token, authentication is required
         if not self._access_token:

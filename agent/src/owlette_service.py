@@ -933,6 +933,80 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Always cleanup the temporary installer file
                     installer_utils.cleanup_installer(temp_installer_path)
 
+            elif cmd_type == 'update_owlette':
+                # Self-update command: Downloads and installs new Owlette version
+                # Uses bootstrap updater pattern to replace running service
+                installer_url = cmd_data.get('installer_url')
+                deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+
+                if not installer_url:
+                    return "Error: No installer URL provided for update"
+
+                logging.info("="*60)
+                logging.info("OWLETTE SELF-UPDATE INITIATED")
+                logging.info("="*60)
+                logging.info(f"Installer URL: {installer_url}")
+                logging.info("This service will stop and restart automatically")
+
+                try:
+                    # Update status: downloading (handled by bootstrap updater)
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
+
+                    # Get path to updater script
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    updater_script = os.path.join(script_dir, 'owlette_updater.py')
+
+                    if not os.path.exists(updater_script):
+                        return f"Error: Bootstrap updater not found at {updater_script}"
+
+                    # Get Python executable path
+                    python_exe = sys.executable
+
+                    # Spawn the bootstrap updater as a detached process
+                    # It will:
+                    # 1. Stop this service
+                    # 2. Download installer
+                    # 3. Run installer (which will upgrade and restart service)
+                    # 4. Exit
+                    logging.info(f"Spawning bootstrap updater: {updater_script}")
+                    logging.info(f"Python executable: {python_exe}")
+
+                    # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
+                    DETACHED_PROCESS = 0x00000008
+                    CREATE_NO_WINDOW = 0x08000000
+
+                    process = subprocess.Popen(
+                        [python_exe, updater_script, installer_url],
+                        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL
+                    )
+
+                    logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
+                    logging.info("Service will stop in 3 seconds...")
+
+                    # Give the updater time to initialize
+                    time.sleep(3)
+
+                    # Stop this service
+                    # The updater will take over from here
+                    logging.info("Stopping service for update...")
+                    logging.info("Service will restart automatically after update")
+                    logging.info("="*60)
+
+                    # Schedule service stop (will happen after this command completes)
+                    self.SvcStop()
+
+                    return "Update initiated - service stopping for upgrade"
+
+                except Exception as e:
+                    error_msg = f"Error initiating update: {str(e)}"
+                    logging.error(error_msg)
+                    logging.exception("Update initiation failed")
+                    return error_msg
+
             elif cmd_type == 'cancel_installation':
                 # Cancel an active installation
                 installer_name = cmd_data.get('installer_name')

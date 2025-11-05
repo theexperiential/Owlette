@@ -95,14 +95,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate new OAuth 2.0 access token for Firestore REST API
-    const credential = admin.app().options.credential;
-    if (!credential) {
-      throw new Error('No service account credential available');
+    // Generate new Firebase Custom Token for agent
+    const adminAuth = getAdminAuth();
+    const customToken = await adminAuth.createCustomToken(agentUid, {
+      siteId,
+      machineId,
+      version,
+    });
+
+    // Exchange custom token for ID token (required for Firestore REST API)
+    // This uses Firebase Auth REST API to convert the custom token
+    const firebaseApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+    if (!firebaseApiKey) {
+      throw new Error('Firebase API key not configured');
     }
 
-    const accessTokenData = await credential.getAccessToken();
-    const accessToken = accessTokenData.access_token;
+    const authResponse = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      }
+    );
+
+    if (!authResponse.ok) {
+      const errorData = await authResponse.json();
+      throw new Error(`Failed to exchange custom token: ${errorData.error?.message || 'Unknown error'}`);
+    }
+
+    const authData = await authResponse.json();
+    const idToken = authData.idToken;
 
     // Update last used timestamp (for monitoring)
     await tokenRef.update({
@@ -114,7 +137,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        accessToken,
+        accessToken: idToken,
         expiresIn: 3600, // 1 hour in seconds
       },
       { status: 200 }
