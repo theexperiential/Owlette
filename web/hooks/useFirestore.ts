@@ -205,9 +205,14 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
     // Delete the site document
     // Note: Firestore doesn't automatically delete subcollections (machines)
     // In a production app, you might want to use a Cloud Function to handle this
-    // For now, we'll just delete the site document
     const siteRef = doc(db, 'sites', siteId);
     await deleteDoc(siteRef);
+
+    // TODO: Clean up user references to this site
+    // This should query all users with this siteId in their sites array
+    // and remove it using arrayRemove. For now, admins can manually
+    // clean up orphaned references via the Manage Site Access dialog.
+    logger.info(`Site ${siteId} deleted. Note: User references may need manual cleanup.`);
   };
 
   return { sites, loading, error, createSite, renameSite, deleteSite };
