@@ -225,14 +225,14 @@ class OwletteConfigApp:
         self.new_button.grid(row=8, column=0, sticky='w', padx=(20, 0), pady=(5, 5))
 
         self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.up_button.grid(row=8, column=1, sticky='w', padx=5, pady=(5, 5))
+        self.up_button.grid(row=8, column=1, sticky='', padx=5, pady=(5, 5))
 
         self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.kill_button.grid(row=8, column=2, sticky='e', padx=5, pady=(5, 5))
 
         # Button row 2: Down arrow/Delete
         self.down_button = ctk.CTkButton(self.master, text="↓", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.down_button.grid(row=9, column=1, sticky='w', padx=5, pady=(5, 15))
+        self.down_button.grid(row=9, column=1, sticky='', padx=5, pady=(5, 15))
 
         self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.remove_button.grid(row=9, column=2, sticky='e', padx=5, pady=(5, 15))
