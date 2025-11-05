@@ -25,19 +25,22 @@ class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
-        self.entry = ctk.CTkEntry(master)
-        self.entry.grid(row=0, column=0)
 
-        # Initialize basic window properties FIRST for fast appearance
+        # Initialize basic window properties
         hostname = socket.gethostname()
         self.master.title(f"Owlette Configuration: {hostname}")
+
         # Set window icon
         try:
             icon_path = shared_utils.get_path('../icons/normal.ico')
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
+
         shared_utils.center_window(master, 1280, 450)
+
+        # Set dark mode
+        ctk.set_appearance_mode("dark")
 
         # Initialize state variables
         self.prev_process_list = None
@@ -48,65 +51,16 @@ class OwletteConfigApp:
         self.config = None
         self.service_running = None
 
-        # Show loading screen immediately
-        self.show_loading_screen()
-
-        # Start async initialization
-        self.master.after(50, self._complete_initialization)
-
-    def show_loading_screen(self):
-        """Display minimal loading screen while heavy operations complete"""
-        # Set dark mode
-        ctk.set_appearance_mode("dark")
-
-        # Create loading frame
-        self.loading_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
-        self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-
-        # Owlette title
-        self.loading_title = ctk.CTkLabel(
-            self.loading_frame,
-            text="OWLETTE",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 32, "bold")
-        )
-        self.loading_title.place(relx=0.5, rely=0.35, anchor="center")
-
-        # Loading message
-        self.loading_message = ctk.CTkLabel(
-            self.loading_frame,
-            text="Loading configuration...",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 14)
-        )
-        self.loading_message.place(relx=0.5, rely=0.5, anchor="center")
-
-        # Version label
-        self.loading_version = ctk.CTkLabel(
-            self.loading_frame,
-            text=f"v{shared_utils.APP_VERSION}",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 10)
-        )
-        self.loading_version.place(relx=0.5, rely=0.9, anchor="center")
-
-    def _complete_initialization(self):
-        """Complete initialization in phases to keep UI responsive"""
-        # Phase 1: Load config (fast, keep on main thread)
-        self.loading_message.configure(text="Loading configuration...")
-        self.master.update()
+        # Load config directly
         self.config = shared_utils.load_config()
 
-        # Phase 2: Build full UI (before async operations so widgets exist)
-        self.loading_message.configure(text="Building interface...")
-        self.master.update()
-        self.loading_frame.destroy()  # Remove loading screen
+        # Build UI directly - no loading screen
         self.setup_ui()
 
-        # Phase 3: Start background threads for heavy operations
+        # Start background initialization for heavy operations
         self._start_background_initialization()
 
-        # Phase 4: Initialize UI with config data
+        # Initialize UI with config data
         self.update_process_list()
 
         # Set default values if empty
@@ -135,7 +89,6 @@ class OwletteConfigApp:
 
                 # If not running, start it
                 if not is_running:
-                    self.loading_message.configure(text="Starting service...")
                     self.start_service()
                     self.service_running = True
 
@@ -207,11 +160,8 @@ class OwletteConfigApp:
             pass  # Silently fail if not on Windows 11 or if it doesn't work
 
     def setup_ui(self):
-        # Set appearance mode and color theme
-        ctk.set_appearance_mode("dark")
-
-        # Defer Windows 11 titlebar customization to after window is shown
-        self.master.after(100, self._apply_windows11_theme)
+        # Apply Windows 11 dark theme directly
+        self._apply_windows11_theme()
 
         self.background_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
         self.background_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -263,22 +213,26 @@ class OwletteConfigApp:
             height=24,
             fg_color="#991b1b",  # Red
             hover_color="#7f1d1d",  # Darker red
-            font=("", 11)
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
         )
-        self.leave_site_button.grid(row=10, column=2, sticky='sw', padx=(10, 0), pady=(5, 10))
+        self.leave_site_button.grid(row=10, column=2, sticky='sw', padx=(5, 15), pady=(5, 10))
 
-        # Join Site button (re-authenticate to a site)
+        # Join Site button (below Delete/up arrow in left panel)
         self.join_site_button = ctk.CTkButton(
             self.master,
             text="Join Site",
             command=self.on_join_site_click,
-            width=100,
+            width=80,
             height=24,
             fg_color="#059669",  # Green (emerald-600)
             hover_color="#047857",  # Darker green (emerald-700)
-            font=("", 11)
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
         )
-        self.join_site_button.grid(row=10, column=3, sticky='sw', padx=(5, 0), pady=(5, 10))
+        self.join_site_button.grid(row=10, column=1, sticky='sw', padx=5, pady=(5, 10))
 
         # Footer label (perfectly centered in row 10)
         footer_text = "Made with ♥ in California by TEC"
@@ -1204,7 +1158,7 @@ class OwletteConfigApp:
                    "2. Select or create a site\n"
                    "3. Authorize this machine\n\n"
                    "The service will restart after authentication completes.",
-            icon="question",
+            icon=None,
             option_1="Cancel",
             option_2="Join Site",
             width=550
@@ -1226,7 +1180,7 @@ class OwletteConfigApp:
             master=self.master,
             title="Joining Site...",
             message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
-            icon="info",
+            icon=None,
             option_1="Cancel",
             width=550
         )
@@ -1280,7 +1234,7 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Joined Site Successfully",
                         message=f"This machine has been registered to site: {site_id}\n\nThe Owlette service has been restarted and is now syncing with Firebase.",
-                        icon="check",
+                        icon=None,
                         width=600
                     ))
                 else:
@@ -1290,7 +1244,7 @@ class OwletteConfigApp:
                         master=self.master,
                         title="Failed to Join Site",
                         message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
-                        icon="cancel",
+                        icon=None,
                         width=600
                     ))
 
@@ -1301,7 +1255,7 @@ class OwletteConfigApp:
                     master=self.master,
                     title="Error",
                     message=f"An unexpected error occurred:\n\n{str(e)}",
-                    icon="cancel",
+                    icon=None,
                     width=600
                 ))
 
