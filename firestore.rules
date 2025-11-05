@@ -134,6 +134,21 @@ service cloud.firestore {
                           agentCanAccessMachine(siteId, machineId);
           allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
         }
+
+        // Installed Software Inventory Subcollection
+        // Agents write software inventory data
+        // Web dashboard reads to display installed software
+        // OAuth agents can ONLY write to their own machine's inventory
+        match /installed_software/{softwareId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow write: if isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId); // Only agents can write inventory
+          allow delete: if canAccessSite(siteId) ||
+                           isServiceAccount() ||
+                           agentCanAccessMachine(siteId, machineId); // Allow cleanup
+        }
       }
 
       // ----------------------------------------
