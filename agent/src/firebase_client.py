@@ -177,14 +177,18 @@ class FirebaseClient:
                     .collection('machines').document(self.machine_id)
 
                 # Write offline status directly (bypass _update_presence for more control)
+                # CRITICAL: Use set() with merge=True instead of update() to ensure listeners fire
+                # The update() method uses PATCH with updateMask which may not trigger onSnapshot
                 import time
                 max_attempts = 3
                 for attempt in range(max_attempts):
                     try:
-                        presence_ref.update({
+                        presence_ref.set({
                             'online': False,
-                            'lastHeartbeat': SERVER_TIMESTAMP
-                        })
+                            'lastHeartbeat': SERVER_TIMESTAMP,
+                            'machineId': self.machine_id,
+                            'siteId': self.site_id
+                        }, merge=True)
                         self.logger.info(f"[OK] Machine marked OFFLINE in Firestore (attempt {attempt + 1}/{max_attempts})")
                         # Give network time to complete the write
                         time.sleep(1)

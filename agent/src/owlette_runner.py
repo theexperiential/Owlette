@@ -20,13 +20,46 @@ _service_instance = None
 def signal_handler(signum, frame):
     """Handle Ctrl+C and other termination signals from NSSM"""
     global _service_instance
-    logging.info(f"Received signal {signum} - initiating graceful shutdown...")
-    if _service_instance and hasattr(_service_instance, 'is_alive'):
-        _service_instance.is_alive = False
-        logging.info("is_alive set to False - main loop will exit")
-    else:
-        logging.warning("service_instance not available for graceful shutdown")
+
+    # Log to both logger and stderr for visibility
+    msg = f"[SIGNAL HANDLER] Received signal {signum} ({signal.Signals(signum).name if hasattr(signal, 'Signals') else 'UNKNOWN'})"
+    logging.critical(msg)
+    print(msg, file=sys.stderr, flush=True)
+
+    # Check if service instance exists
+    if _service_instance is None:
+        logging.critical("[SIGNAL HANDLER] ERROR: _service_instance is None - cannot perform graceful shutdown")
+        print("[SIGNAL HANDLER] ERROR: _service_instance is None", file=sys.stderr, flush=True)
         sys.exit(0)
+
+    # CRITICAL: Stop Firebase client IMMEDIATELY to set machine offline
+    # This ensures online=false is written to Firestore before process terminates
+    if hasattr(_service_instance, 'firebase_client'):
+        if _service_instance.firebase_client:
+            try:
+                logging.critical("[SIGNAL HANDLER] Setting machine offline in Firestore...")
+                print("[SIGNAL HANDLER] Setting machine offline...", file=sys.stderr, flush=True)
+                _service_instance.firebase_client.stop()
+                logging.critical("[SIGNAL HANDLER] Firebase client stopped - machine marked offline")
+                print("[SIGNAL HANDLER] Machine marked offline", file=sys.stderr, flush=True)
+            except Exception as e:
+                logging.critical(f"[SIGNAL HANDLER] Error stopping Firebase client: {e}")
+                print(f"[SIGNAL HANDLER] Error: {e}", file=sys.stderr, flush=True)
+        else:
+            logging.critical("[SIGNAL HANDLER] firebase_client is None - cannot mark offline")
+            print("[SIGNAL HANDLER] firebase_client is None", file=sys.stderr, flush=True)
+    else:
+        logging.critical("[SIGNAL HANDLER] _service_instance has no firebase_client attribute")
+        print("[SIGNAL HANDLER] No firebase_client attribute", file=sys.stderr, flush=True)
+
+    # Signal main loop to exit
+    if hasattr(_service_instance, 'is_alive'):
+        _service_instance.is_alive = False
+        logging.info("[SIGNAL HANDLER] is_alive set to False - main loop will exit")
+    else:
+        logging.warning("[SIGNAL HANDLER] _service_instance has no is_alive attribute")
+
+    sys.exit(0)
 
 # Initialize Firebase and Auth imports
 FIREBASE_AVAILABLE = False
@@ -122,13 +155,8 @@ if __name__ == '__main__':
             logging.info("Service initialization complete")
 
     try:
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
-        signal.signal(signal.SIGTERM, signal_handler)  # Termination request
-        signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
-        logging.info("Signal handlers registered for graceful shutdown")
-
-        # Create mock service with required attributes
+        # Create mock service with required attributes FIRST
+        # (before registering signal handlers so they can access it)
         mock_service = MockService()
 
         # Borrow the main() method from OwletteService
@@ -136,17 +164,56 @@ if __name__ == '__main__':
         _service_instance = object.__new__(OwletteService)
         _service_instance.__dict__.update(mock_service.__dict__)
 
+        # NOW register signal handlers (after _service_instance exists)
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Termination request
+        signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
+        logging.info("Signal handlers registered for graceful shutdown")
+
+        # CRITICAL: On Windows, NSSM sends console control events, not POSIX signals
+        # We need to register a Windows console control handler
+        if sys.platform == 'win32':
+            try:
+                import win32api
+                def windows_handler(ctrl_type):
+                    """Handle Windows console control events from NSSM"""
+                    ctrl_names = {
+                        0: 'CTRL_C_EVENT',
+                        1: 'CTRL_BREAK_EVENT',
+                        2: 'CTRL_CLOSE_EVENT',
+                        5: 'CTRL_LOGOFF_EVENT',
+                        6: 'CTRL_SHUTDOWN_EVENT'
+                    }
+                    ctrl_name = ctrl_names.get(ctrl_type, f'UNKNOWN({ctrl_type})')
+                    logging.critical(f"[WINDOWS HANDLER] Received {ctrl_name}")
+                    print(f"[WINDOWS HANDLER] Received {ctrl_name}", file=sys.stderr, flush=True)
+
+                    # Call the same cleanup logic
+                    signal_handler(ctrl_type, None)
+                    return True  # Indicate we handled it
+
+                win32api.SetConsoleCtrlHandler(windows_handler, True)
+                logging.info("Windows console control handler registered")
+            except ImportError:
+                logging.warning("win32api not available - Windows control handler not registered")
+            except Exception as e:
+                logging.error(f"Failed to register Windows control handler: {e}")
+
         logging.info("Starting main service loop...")
         _service_instance.main()
 
         # Cleanup before exiting
         logging.info("Main loop exited - performing cleanup...")
         if _service_instance.firebase_client:
-            try:
-                _service_instance.firebase_client.stop()
-                logging.info("Firebase client stopped")
-            except Exception as e:
-                logging.error(f"Error stopping Firebase client: {e}")
+            # Only stop if still running (signal handler may have already stopped it)
+            if hasattr(_service_instance.firebase_client, 'running') and _service_instance.firebase_client.running:
+                try:
+                    _service_instance.firebase_client.stop()
+                    logging.info("Firebase client stopped")
+                except Exception as e:
+                    logging.error(f"Error stopping Firebase client: {e}")
+            else:
+                logging.info("Firebase client already stopped (by signal handler)")
 
         # Exit cleanly with code 0 when service stops normally
         # This tells NSSM not to restart (configured as AppExit 0 Exit)

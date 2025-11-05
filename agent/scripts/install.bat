@@ -62,10 +62,40 @@ echo [2/4] Checking for existing service...
 if %errorLevel% equ 0 (
     echo Stopping existing service...
     "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-    timeout /t 2 /nobreak >nul
+
+    :: Wait up to 10 seconds for service to stop gracefully
+    :: This allows the service to cleanly set online=false in Firestore
+    echo Waiting for service to stop gracefully...
+    set WAIT_COUNT=0
+    :WAIT_LOOP
+    "%INSTALL_DIR%\tools\nssm.exe" status OwletteService | findstr /C:"SERVICE_STOPPED" >nul 2>&1
+    if !errorLevel! equ 0 goto SERVICE_STOPPED
+
+    timeout /t 1 /nobreak >nul
+    set /a WAIT_COUNT+=1
+    if !WAIT_COUNT! lss 10 goto WAIT_LOOP
+
+    :: If service didn't stop after 10 seconds, force stop
+    echo Service did not stop gracefully, forcing...
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
+    timeout /t 1 /nobreak >nul
+
+    :SERVICE_STOPPED
+    echo Service stopped successfully
+
+    :: SAFETY MARGIN: Wait additional 3 seconds after service stops
+    :: This ensures Firestore has fully processed the online=false write
+    :: and the web dashboard will show machine as offline
+    echo Waiting for Firestore sync to complete...
+    timeout /t 3 /nobreak >nul
 
     echo Removing existing service...
     "%INSTALL_DIR%\tools\nssm.exe" remove OwletteService confirm
+
+    :: SAFETY MARGIN: Wait 2 seconds after removing service
+    :: This prevents any race conditions between old/new service
+    echo Preparing to install new service...
+    timeout /t 2 /nobreak >nul
 )
 
 :: ============================================================================
