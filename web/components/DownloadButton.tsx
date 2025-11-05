@@ -61,17 +61,17 @@ export default function DownloadButton() {
             size="sm"
             onClick={handleDownload}
             disabled={isLoading || !downloadUrl}
-            className="flex items-center gap-2 hover:bg-slate-800 hover:text-white cursor-pointer text-white"
+            className="flex items-center gap-1 hover:bg-slate-800 hover:text-white cursor-pointer text-white px-1.5 sm:px-2 md:px-3 py-1 sm:py-1.5"
           >
             {isLoading ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="hidden md:inline">Loading...</span>
+                <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 animate-spin" />
+                <span className="hidden lg:inline text-xs sm:text-sm">Loading...</span>
               </>
             ) : (
               <>
-                <Download className="h-4 w-4" />
-                <span className="hidden md:inline">Download</span>
+                <Download className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+                <span className="hidden lg:inline text-xs sm:text-sm">Download</span>
               </>
             )}
           </Button>

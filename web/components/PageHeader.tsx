@@ -40,21 +40,21 @@ export function PageHeader({
 
   return (
     <header className="border-b border-slate-800 bg-slate-900">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
-        <div className="flex items-center gap-3">
+      <div className="mx-auto flex h-14 sm:h-16 max-w-7xl items-center justify-between px-2 sm:px-4 gap-1 sm:gap-2 md:gap-4">
+        <div className="flex items-center gap-1 sm:gap-2 md:gap-3 min-w-0 flex-1 overflow-hidden">
           {/* App Logo and Name */}
-          <div className="flex items-center gap-3">
-            <Image src="/owlette-icon.png" alt="Owlette" width={32} height={32} />
-            <h1 className="text-xl font-bold text-white">Owlette</h1>
+          <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
+            <Image src="/owlette-icon.png" alt="Owlette" width={20} height={20} className="sm:w-8 sm:h-8" />
+            <h1 className="text-base sm:text-xl font-bold text-white hidden md:block">Owlette</h1>
           </div>
 
           {/* Site Selector */}
           {sites.length > 0 && currentSiteId && onSiteChange && (
             <>
-              <ChevronRight className="h-4 w-4 text-slate-600" />
-              <div className="flex items-stretch border border-slate-700 bg-slate-800 rounded-md overflow-hidden">
+              <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 text-slate-600 flex-shrink-0 hidden lg:block" />
+              <div className="flex items-stretch border border-slate-700 bg-slate-800 rounded-md overflow-hidden flex-shrink-0 min-w-0">
                 <Select value={currentSiteId} onValueChange={onSiteChange}>
-                  <SelectTrigger className="w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer">
+                  <SelectTrigger className="w-[100px] sm:w-[120px] md:w-[160px] lg:w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer text-xs sm:text-xs md:text-sm">
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
                   <SelectContent className="border-slate-700 bg-slate-800">
@@ -75,9 +75,9 @@ export function PageHeader({
                     variant="ghost"
                     size="sm"
                     onClick={onManageSites}
-                    className="h-auto px-2 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer border-l border-slate-700"
+                    className="h-auto px-1 sm:px-1.5 md:px-2 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer border-l border-slate-700 flex-shrink-0"
                   >
-                    <Settings className="h-4 w-4" />
+                    <Settings className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
                   </Button>
                 )}
               </div>
@@ -85,14 +85,15 @@ export function PageHeader({
           )}
 
           {/* Breadcrumb separator */}
-          <ChevronRight className="h-4 w-4 text-slate-600" />
+          <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 text-slate-600 flex-shrink-0 hidden lg:block" />
 
           {/* Navigation Menu - Breadcrumb style */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" className="h-10 px-3 border-slate-700 bg-slate-800 text-sm text-white hover:text-white hover:bg-slate-800 cursor-pointer">
-                <span>{currentPage}</span>
-                <ChevronDown className="h-4 w-4 ml-1" />
+              <Button variant="outline" className="h-7 sm:h-8 md:h-10 px-1.5 sm:px-2 md:px-3 border-slate-700 bg-slate-800 text-[10px] sm:text-xs md:text-sm text-white hover:text-white hover:bg-slate-800 cursor-pointer flex-shrink-0">
+                <span className="hidden md:inline">{currentPage}</span>
+                <span className="md:hidden truncate max-w-[60px] sm:max-w-[80px]">{currentPage === 'Dashboard' ? 'Dash' : currentPage === 'Deploy Software' ? 'Deploy' : 'Proj'}</span>
+                <ChevronDown className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 ml-0.5 sm:ml-1 flex-shrink-0" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="border-slate-700 bg-slate-800 w-80">
@@ -127,23 +128,23 @@ export function PageHeader({
           </DropdownMenu>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
           {/* Optional action button (e.g., Download, New Deployment) */}
           {actionButton}
 
           {/* User Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="flex items-center gap-2 h-auto py-2 px-3 hover:bg-slate-800 cursor-pointer">
-                <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-blue-600 text-white text-sm font-medium">
+              <Button variant="ghost" className="flex items-center gap-0.5 sm:gap-1 md:gap-2 h-auto py-1 sm:py-1.5 md:py-2 px-1 sm:px-2 md:px-3 hover:bg-slate-800 cursor-pointer">
+                <Avatar className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8">
+                  <AvatarFallback className="bg-blue-600 text-white text-xs font-medium">
                     {user ? getUserInitials(user) : '?'}
                   </AvatarFallback>
                 </Avatar>
                 {user?.displayName && (
-                  <span className="text-sm text-white hidden md:inline">{user.displayName}</span>
+                  <span className="text-xs sm:text-sm text-white hidden lg:inline truncate max-w-[80px] xl:max-w-none">{user.displayName}</span>
                 )}
-                <ChevronDown className="h-4 w-4 text-slate-400" />
+                <ChevronDown className="h-3 w-3 text-slate-400 hidden sm:block" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56 border-slate-700 bg-slate-800">
