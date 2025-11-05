@@ -5,7 +5,6 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
-import { validateEnvironmentOrThrow } from "@/lib/validateEnv";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -62,7 +61,7 @@ export default function RootLayout({
   // validateEnvironmentOrThrow();
 
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
