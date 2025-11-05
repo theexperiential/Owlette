@@ -195,151 +195,164 @@ export function useDeployments(siteId: string) {
     machineIds.forEach(machineId => {
       const completedRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
 
-      const unsubscribe = onSnapshot(completedRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
+      const unsubscribe = onSnapshot(
+        completedRef,
+        async (snapshot) => {
+          if (!snapshot.exists()) return;
 
-        const completedCommands = snapshot.data();
+          const completedCommands = snapshot.data();
 
-        // Check each completed command for deployment_id
-        for (const [commandId, commandData] of Object.entries(completedCommands)) {
-          const command = commandData as any;
+          // Check each completed command for deployment_id
+          for (const [commandId, commandData] of Object.entries(completedCommands)) {
+            const command = commandData as any;
 
-          if (command.deployment_id) {
-            const deployment = deployments.find(d => d.id === command.deployment_id);
-            if (!deployment) continue;
+            if (command.deployment_id) {
+              const deployment = deployments.find(d => d.id === command.deployment_id);
+              if (!deployment) continue;
 
-            const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
+              const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
 
-            // Handle uninstall commands
-            if (command.type === 'uninstall_software' && command.status === 'completed') {
-              const updatedTargets = deployment.targets.map(target => {
-                if (target.machineId === machineId) {
-                  return {
-                    ...target,
-                    status: 'uninstalled' as const,
-                    uninstalledAt: command.completedAt || Date.now()
-                  };
-                }
-                return target;
-              });
-
-              // Calculate overall status - if all machines are uninstalled, mark deployment as uninstalled
-              const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
-              const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
-              const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
-
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-              }, { merge: true });
-            } else if (command.status === 'completed') {
-              // Handle completed installations
-              const updatedTargets = deployment.targets.map(target => {
-                if (target.machineId === machineId) {
-                  // Create new target object without progress/error fields
-                  const { progress, error, ...rest } = target;
-                  return {
-                    ...rest,
-                    status: 'completed' as const,
-                    completedAt: command.completedAt || Date.now()
-                  };
-                }
-                return target;
-              });
-
-              // Calculate overall status
-              const allCompleted = updatedTargets.every(t => t.status === 'completed');
-              const anyFailed = updatedTargets.some(t => t.status === 'failed');
-              const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
-
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allCompleted ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'failed') {
-              // Handle failed installations
-              const updatedTargets = deployment.targets.map(target => {
-                if (target.machineId === machineId) {
-                  // Create new target object without progress field
-                  const { progress, ...rest } = target;
-                  return {
-                    ...rest,
-                    status: 'failed' as const,
-                    ...(command.error ? { error: command.error } : {}),
-                    completedAt: command.completedAt || Date.now()
-                  };
-                }
-                return target;
-              });
-
-              // Calculate overall status
-              const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
-              const anyCompleted = updatedTargets.some(t => t.status === 'completed');
-              const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
-
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allDone ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'cancelled') {
-              // Handle cancelled installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
-                  : target
-              );
-
-              // Calculate overall status
-              // Cancelled targets don't affect the overall completion status
-              const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
-              const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
-              const anyFailed = remainingTargets.some(t => t.status === 'failed');
-              const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
-
-              let newStatus = deployment.status;
-              if (remainingTargets.length === 0) {
-                // All targets cancelled
-                newStatus = 'failed';
-              } else if (allCompleted) {
-                newStatus = 'completed';
-              } else if (anyFailed && !anyInProgress) {
-                newStatus = 'partial';
-              } else {
-                newStatus = 'in_progress';
-              }
-
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'downloading' || command.status === 'installing') {
-              // Handle intermediate states (downloading, installing)
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? {
-                      ...target,
-                      status: command.status as 'downloading' | 'installing',
-                      ...(command.progress !== undefined ? { progress: command.progress } : {})
+              try {
+                // Handle uninstall commands
+                if (command.type === 'uninstall_software' && command.status === 'completed') {
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      return {
+                        ...target,
+                        status: 'uninstalled' as const,
+                        uninstalledAt: command.completedAt || Date.now()
+                      };
                     }
-                  : target
-              );
+                    return target;
+                  });
 
-              // Update deployment with new target status
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: 'in_progress',
-              }, { merge: true });
+                  // Calculate overall status - if all machines are uninstalled, mark deployment as uninstalled
+                  const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
+                  const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
+                  const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                  }, { merge: true });
+                } else if (command.status === 'completed') {
+                  // Handle completed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress/error fields
+                      const { progress, error, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'completed' as const,
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allCompleted = updatedTargets.every(t => t.status === 'completed');
+                  const anyFailed = updatedTargets.some(t => t.status === 'failed');
+                  const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allCompleted ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+                } else if (command.status === 'failed') {
+                  // Handle failed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress field
+                      const { progress, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'failed' as const,
+                        ...(command.error ? { error: command.error } : {}),
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
+                  const anyCompleted = updatedTargets.some(t => t.status === 'completed');
+                  const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allDone ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+                } else if (command.status === 'cancelled') {
+                  // Handle cancelled installations
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
+                      : target
+                  );
+
+                  // Calculate overall status
+                  // Cancelled targets don't affect the overall completion status
+                  const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
+                  const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
+                  const anyFailed = remainingTargets.some(t => t.status === 'failed');
+                  const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
+
+                  let newStatus = deployment.status;
+                  if (remainingTargets.length === 0) {
+                    // All targets cancelled
+                    newStatus = 'failed';
+                  } else if (allCompleted) {
+                    newStatus = 'completed';
+                  } else if (anyFailed && !anyInProgress) {
+                    newStatus = 'partial';
+                  } else {
+                    newStatus = 'in_progress';
+                  }
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+                } else if (command.status === 'downloading' || command.status === 'installing') {
+                  // Handle intermediate states (downloading, installing)
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? {
+                          ...target,
+                          status: command.status as 'downloading' | 'installing',
+                          ...(command.progress !== undefined ? { progress: command.progress } : {})
+                        }
+                      : target
+                  );
+
+                  // Update deployment with new target status
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: 'in_progress',
+                  }, { merge: true });
+                }
+              } catch (error: any) {
+                // Handle Firestore write errors gracefully
+                console.error(`[useDeployments] Error updating deployment ${command.deployment_id}:`, error);
+              }
             }
           }
+        },
+        (error) => {
+          // Silently handle permission errors for machines that don't exist or are inaccessible
+          // This prevents console spam when deployments reference deleted/offline machines
+          console.debug(`[useDeployments] Listener error for machine ${machineId}:`, error.code);
         }
-      });
+      );
 
       unsubscribes.push(unsubscribe);
     });

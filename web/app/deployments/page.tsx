@@ -17,6 +17,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
@@ -32,6 +33,8 @@ export default function DeploymentsPage() {
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deploymentToDelete, setDeploymentToDelete] = useState<string | null>(null);
   const router = useRouter();
 
   const {
@@ -54,6 +57,20 @@ export default function DeploymentsPage() {
       await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to create uninstall task');
+    }
+  };
+
+  const handleDeleteDeployment = async () => {
+    if (!deploymentToDelete) return;
+
+    try {
+      await deleteDeployment(deploymentToDelete);
+      toast.success('Deployment record deleted successfully');
+    } catch (error: any) {
+      console.error('Failed to delete deployment:', error);
+      toast.error(error.message || 'Failed to delete deployment record');
+    } finally {
+      setDeploymentToDelete(null);
     }
   };
 
@@ -214,6 +231,17 @@ export default function DeploymentsPage() {
           deploymentId={uninstallDeploymentId}
         />
 
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          title="Delete Deployment Record"
+          description={`Are you sure you want to delete this deployment record?\n\nThis will permanently remove the deployment from the list. This action cannot be undone.\n\nNote: This only deletes the record - it does not uninstall software from machines.`}
+          confirmText="Delete"
+          cancelText="Cancel"
+          onConfirm={handleDeleteDeployment}
+          variant="destructive"
+        />
+
         {/* Quick Stats */}
         <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
           <Card className="border-slate-800 bg-slate-900">
@@ -332,13 +360,10 @@ export default function DeploymentsPage() {
                             Uninstall Software
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={async (e) => {
+                            onClick={(e) => {
                               e.stopPropagation();
-                              try {
-                                await deleteDeployment(deployment.id);
-                              } catch (error: any) {
-                                console.error('Failed to delete deployment:', error);
-                              }
+                              setDeploymentToDelete(deployment.id);
+                              setDeleteDialogOpen(true);
                             }}
                             className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
                           >
