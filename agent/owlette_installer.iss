@@ -312,7 +312,10 @@ begin
                'Click OK to uninstall and continue, or Cancel to exit.',
                mbConfirmation, MB_OKCANCEL) = IDOK) then
     begin
-      Log('Proceeding with uninstall (Silent mode: ' + BoolToStr(WizardSilent()) + ')');
+      if WizardSilent() then
+        Log('Proceeding with uninstall (Silent mode - auto-confirmed)')
+      else
+        Log('Proceeding with uninstall (Interactive mode - user confirmed)');
       // Extract the uninstaller path (remove /SILENT flag if present)
       UninstallExe := RemoveQuotes(UninstallString);
 
