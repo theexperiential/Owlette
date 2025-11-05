@@ -299,108 +299,116 @@ export default function DeploymentDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Template Selection */}
-          {templates.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="template" className="text-white">My Templates</Label>
-              <div className="flex gap-2">
-                <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
-                    <SelectValue placeholder="Select a template..." />
-                  </SelectTrigger>
-                  <SelectContent className="border-slate-700 bg-slate-800">
-                    <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                      None
-                    </SelectItem>
-                    {templates.map((template) => (
-                      <SelectItem
-                        key={template.id}
-                        value={template.id}
-                        className="text-white focus:bg-slate-700 focus:text-white"
-                      >
-                        {template.name}
+          {/* Template Selections - Side by Side */}
+          {(templates.length > 0 || presets.length > 0) && (
+            <div className="flex gap-4">
+              {/* Template Library - Left */}
+              {presets.length > 0 && (
+                <div className="flex-1 space-y-2">
+                  <Label htmlFor="system-preset" className="text-white">Template Library</Label>
+                  <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
+                      <SelectValue placeholder="Select a template..." />
+                    </SelectTrigger>
+                    <SelectContent className="border-slate-700 bg-slate-800">
+                      <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                        None
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedTemplate && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={handleEditTemplate}
-                      className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                      title="Edit template"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={handleDeleteTemplate}
-                      className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
-                      title="Delete template"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </>
-                )}
-              </div>
-              {editingTemplate && (
-                <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
-                  <Pencil className="h-3 w-3 text-blue-400" />
-                  <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                      {categories.map(category => {
+                        const categoryPresets = presets.filter(p => p.category === category);
+                        if (categoryPresets.length === 0) return null;
+
+                        return (
+                          <SelectGroup key={category}>
+                            <SelectLabel className="text-slate-400">{category}</SelectLabel>
+                            {categoryPresets.map(preset => (
+                              <SelectItem
+                                key={preset.id}
+                                value={preset.id}
+                                className="text-white focus:bg-slate-700 focus:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  {preset.icon && <span>{preset.icon}</span>}
+                                  <span>{preset.name}</span>
+                                  {preset.is_owlette_agent && (
+                                    <Badge variant="outline" className="ml-2 border-blue-600 text-blue-400 text-xs">
+                                      Auto
+                                    </Badge>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500">
+                    Admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
+                  </p>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Template Library */}
-          {presets.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="system-preset" className="text-white">Template Library</Label>
-              <Select value={selectedPreset} onValueChange={handlePresetSelect}>
-                <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
-                  <SelectValue placeholder="Select a template..." />
-                </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-800">
-                  <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                    None
-                  </SelectItem>
-                  {categories.map(category => {
-                    const categoryPresets = presets.filter(p => p.category === category);
-                    if (categoryPresets.length === 0) return null;
-
-                    return (
-                      <SelectGroup key={category}>
-                        <SelectLabel className="text-slate-400">{category}</SelectLabel>
-                        {categoryPresets.map(preset => (
+              {/* My Templates - Right */}
+              {templates.length > 0 && (
+                <div className="flex-1 space-y-2">
+                  <Label htmlFor="template" className="text-white">My Templates</Label>
+                  <div className="flex gap-2">
+                    <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
+                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
+                        <SelectValue placeholder="Select a template..." />
+                      </SelectTrigger>
+                      <SelectContent className="border-slate-700 bg-slate-800">
+                        <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                          None
+                        </SelectItem>
+                        {templates.map((template) => (
                           <SelectItem
-                            key={preset.id}
-                            value={preset.id}
+                            key={template.id}
+                            value={template.id}
                             className="text-white focus:bg-slate-700 focus:text-white"
                           >
-                            <span className="flex items-center gap-2">
-                              {preset.icon && <span>{preset.icon}</span>}
-                              <span>{preset.name}</span>
-                              {preset.is_owlette_agent && (
-                                <Badge variant="outline" className="ml-2 border-blue-600 text-blue-400 text-xs">
-                                  Auto
-                                </Badge>
-                              )}
-                            </span>
+                            {template.name}
                           </SelectItem>
                         ))}
-                      </SelectGroup>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                Admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
-              </p>
+                      </SelectContent>
+                    </Select>
+                    {selectedTemplate && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleEditTemplate}
+                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                          title="Edit template"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleDeleteTemplate}
+                          className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                          title="Delete template"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Your custom deployment templates
+                  </p>
+                  {editingTemplate && (
+                    <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
+                      <Pencil className="h-3 w-3 text-blue-400" />
+                      <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
