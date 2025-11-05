@@ -1,6 +1,6 @@
 'use client';
 
-import { Download, Loader2 } from 'lucide-react';
+import { Download, Loader2, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -47,6 +47,26 @@ export default function DownloadButton() {
     }
   };
 
+  const handleCopyLink = async () => {
+    if (!downloadUrl) {
+      toast.error('Copy Failed', {
+        description: 'Download URL is not available.',
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(downloadUrl);
+      toast.success('Link Copied', {
+        description: `Download link for v${version} copied to clipboard.`,
+      });
+    } catch (err) {
+      toast.error('Copy Failed', {
+        description: 'Failed to copy link to clipboard.',
+      });
+    }
+  };
+
   // Don't show button if there's an error or no version available
   if (error || (!isLoading && !version)) {
     return null;
@@ -54,39 +74,57 @@ export default function DownloadButton() {
 
   return (
     <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleDownload}
-            disabled={isLoading || !downloadUrl}
-            className="flex items-center gap-1 hover:bg-slate-800 hover:text-white cursor-pointer text-white px-1.5 sm:px-2 md:px-3 py-1 sm:py-1.5"
+      <div className="flex items-center gap-0.5 sm:gap-1">
+        {/* Download Button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDownload}
+              disabled={isLoading || !downloadUrl}
+              className="flex items-center hover:bg-slate-800 hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
+            >
+              {isLoading ? (
+                <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 animate-spin" />
+              ) : (
+                <Download className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent
+            side="bottom"
+            className="bg-slate-800 border-slate-700 text-white"
           >
             {isLoading ? (
-              <>
-                <Loader2 className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4 animate-spin" />
-                <span className="hidden lg:inline text-xs sm:text-sm">Loading...</span>
-              </>
+              <p>Loading version info...</p>
             ) : (
-              <>
-                <Download className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-                <span className="hidden lg:inline text-xs sm:text-sm">Download</span>
-              </>
+              <p>Download v{version} installer</p>
             )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent
-          side="bottom"
-          className="bg-slate-800 border-slate-700 text-white"
-        >
-          {isLoading ? (
-            <p>Loading version info...</p>
-          ) : (
-            <p>Download v{version} to add a machine</p>
-          )}
-        </TooltipContent>
-      </Tooltip>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Copy Link Button */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopyLink}
+              disabled={isLoading || !downloadUrl}
+              className="flex items-center hover:bg-slate-800 hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
+            >
+              <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent
+            side="bottom"
+            className="bg-slate-800 border-slate-700 text-white"
+          >
+            <p>Copy download link</p>
+          </TooltipContent>
+        </Tooltip>
+      </div>
     </TooltipProvider>
   );
 }

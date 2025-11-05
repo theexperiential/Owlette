@@ -5,7 +5,7 @@ import { useInstallerManagement } from '@/hooks/useInstallerManagement';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Plus, Loader2, Download, Trash2, CheckCircle } from 'lucide-react';
+import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -112,6 +112,19 @@ export default function InstallerVersionsPage() {
     });
   };
 
+  const copyDownloadLink = async (downloadUrl: string, version: string) => {
+    try {
+      await navigator.clipboard.writeText(downloadUrl);
+      toast.success('Link Copied', {
+        description: `Download link for version ${version} copied to clipboard.`,
+      });
+    } catch (err) {
+      toast.error('Copy Failed', {
+        description: 'Failed to copy link to clipboard.',
+      });
+    }
+  };
+
   return (
     <div className="p-8">
       {/* Header */}
@@ -149,14 +162,26 @@ export default function InstallerVersionsPage() {
                 {formatFileSize(latestVersion.file_size)}
               </p>
             </div>
-            <Button
-              onClick={() => window.open(latestVersion.download_url, '_blank')}
-              variant="outline"
-              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Download
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => window.open(latestVersion.download_url, '_blank')}
+                variant="outline"
+                size="icon"
+                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                title="Download installer"
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+              <Button
+                onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
+                variant="outline"
+                size="icon"
+                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                title="Copy download link"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -249,48 +274,67 @@ export default function InstallerVersionsPage() {
 
                       {/* Actions */}
                       <td className="p-4">
-                        <div className="flex items-center justify-end gap-2">
-                          {!isLatest && (
+                        <div className="flex items-center justify-between gap-2">
+                          {/* Left side: Set as Latest button (or empty space) */}
+                          <div className="min-w-[100px]">
+                            {!isLatest && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleSetAsLatest(version.version)}
+                                disabled={isSetting || isDeleting}
+                                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                              >
+                                {isSetting ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                    Setting...
+                                  </>
+                                ) : (
+                                  'Set as Latest'
+                                )}
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* Right side: Icon buttons (always aligned) */}
+                          <div className="flex items-center gap-2">
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleSetAsLatest(version.version)}
-                              disabled={isSetting || isDeleting}
-                              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                              onClick={() => window.open(version.download_url, '_blank')}
+                              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                              title="Download installer"
                             >
-                              {isSetting ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                  Setting...
-                                </>
-                              ) : (
-                                'Set as Latest'
-                              )}
+                              <Download className="h-3 w-3" />
                             </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => window.open(version.download_url, '_blank')}
-                            className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                          >
-                            <Download className="h-3 w-3" />
-                          </Button>
-                          {!isLatest && (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleDelete(version.version)}
-                              disabled={isDeleting || isSetting}
-                              className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                              onClick={() => copyDownloadLink(version.download_url, version.version)}
+                              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                              title="Copy download link"
                             >
-                              {isDeleting ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-3 w-3" />
-                              )}
+                              <Copy className="h-3 w-3" />
                             </Button>
-                          )}
+                            {!isLatest ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleDelete(version.version)}
+                                disabled={isDeleting || isSetting}
+                                className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                              >
+                                {isDeleting ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3 w-3" />
+                                )}
+                              </Button>
+                            ) : (
+                              <div className="w-[36px]" />
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
