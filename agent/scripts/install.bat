@@ -120,9 +120,10 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
-:: CRITICAL: Run service as logged-in user so OAuth tokens in Windows Credential Manager are accessible
-echo Configuring service to run as current user...
-"%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName ".\%USERNAME%"
+:: Run service as LocalSystem for elevated privileges (needed for silent installer execution)
+:: OAuth tokens are stored in C:\ProgramData\Owlette\.tokens.enc (accessible by SYSTEM)
+echo Configuring service to run as LocalSystem...
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName "LocalSystem"
 
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStdout "%DATA_DIR%\logs\service_stdout.log"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStderr "%DATA_DIR%\logs\service_stderr.log"

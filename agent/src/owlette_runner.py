@@ -135,7 +135,7 @@ if __name__ == '__main__':
                         auth_manager = AuthManager(api_base=api_base)
 
                         if not auth_manager.is_authenticated():
-                            logging.error("Agent not authenticated - no refresh token found in Windows Credential Manager")
+                            logging.error("Agent not authenticated - no refresh token found in encrypted storage")
                             logging.error("Please run the installer to complete OAuth authentication")
                             self.firebase_client = None
                         else:

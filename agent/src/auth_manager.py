@@ -4,7 +4,7 @@ Authentication Manager for Owlette Agent
 This module manages OAuth authentication for the Owlette agent, handling:
 - Registration code exchange for initial authentication
 - Access token lifecycle (caching, expiry checking, auto-refresh)
-- Secure token storage using Windows Credential Manager
+- Secure token storage using encrypted file storage
 
 The agent uses a two-token system:
 1. Access Token: Short-lived Firebase custom token (1 hour expiry) for Firestore API calls
@@ -14,7 +14,7 @@ Security Features:
 - Tokens never logged (even in debug mode)
 - Automatic refresh 5 minutes before expiry
 - Machine ID validation to prevent token theft
-- Secure storage via Windows Credential Manager (DPAPI)
+- Encrypted storage via machine-specific key (C:\\ProgramData\\Owlette\\.tokens.enc)
 
 Usage:
     auth = AuthManager(api_base="https://owlette.app/api")
@@ -57,8 +57,8 @@ class AuthManager:
     """
     Manages OAuth authentication for the Owlette agent.
 
-    Handles token exchange, refresh, and secure storage using
-    the Windows Credential Manager.
+    Handles token exchange, refresh, and secure encrypted storage
+    in C:\\ProgramData\\Owlette\\.tokens.enc (accessible by SYSTEM).
     """
 
     def __init__(

@@ -7,14 +7,14 @@ This script:
 2. Opens the user's browser to dev.owlette.app/setup (or owlette.app/setup if --url specified)
 3. Waits for callback with site_id and registration code
 4. Exchanges registration code for OAuth tokens (access + refresh)
-5. Stores tokens securely in Windows Credential Manager (not config.json)
+5. Stores tokens securely in encrypted file (C:\\ProgramData\\Owlette\\.tokens.enc, not config.json)
 6. Writes minimal configuration to config.json (site_id, project_id, api_base)
 7. Returns success/failure status
 
 OAuth Flow:
 - Registration code (from callback) → Access token + Refresh token (via API)
 - Access token: Short-lived (1h), used for Firestore API calls
-- Refresh token: Long-lived (30d), stored encrypted, used to get new access tokens
+- Refresh token: Long-lived (30d), encrypted with machine-specific key, used to get new access tokens
 
 Usage:
     python configure_site.py [--url URL]
@@ -248,7 +248,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
 
             print("✓ OAuth tokens received and stored securely")
             print("  - Access token: Valid for 1 hour")
-            print("  - Refresh token: Valid for 30 days (stored in Windows Credential Manager)")
+            print("  - Refresh token: Valid for 30 days (encrypted in C:\\ProgramData\\Owlette\\.tokens.enc)")
 
         except AuthenticationError as e:
             raise Exception(f"OAuth authentication failed: {e}")
@@ -288,7 +288,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         config['firebase']['project_id'] = project_id
         config['firebase']['api_base'] = api_base
 
-        # DO NOT store tokens in config.json - they are in Windows Credential Manager
+        # DO NOT store tokens in config.json - they are encrypted in C:\ProgramData\Owlette\.tokens.enc
         # Remove old token field if it exists (from previous versions)
         if 'token' in config['firebase']:
             del config['firebase']['token']
