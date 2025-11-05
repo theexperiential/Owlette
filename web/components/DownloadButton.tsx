@@ -83,7 +83,7 @@ export default function DownloadButton() {
           {isLoading ? (
             <p>Loading version info...</p>
           ) : (
-            <p>Download Owlette v{version}</p>
+            <p>Download v{version} to add a machine</p>
           )}
         </TooltipContent>
       </Tooltip>

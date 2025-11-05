@@ -15,12 +15,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Settings, Copy, Check, Pencil, Trash2, Download } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
@@ -62,7 +61,6 @@ export default function DashboardPage() {
   const [viewType, setViewType] = useState<ViewType>('card');
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
-  const [copiedSiteId, setCopiedSiteId] = useState(false);
 
   // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -91,6 +89,67 @@ export default function DashboardPage() {
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
+  // Random cheesy tech jokes
+  const techJokes = [
+    "Your pixels are in good hands",
+    "Keeping your GPUs well-fed and happy",
+    "Because Ctrl+Alt+Delete is so 2000s",
+    "Herding your processes since 2025",
+    "Making sure your renders don't surrender",
+    "Your CPU's personal trainer",
+    "We put the 'auto' in autolaunch",
+    "Babysitting processes so you don't have to",
+    "Keeping the frames flowing",
+    "Process management: Now streaming",
+    "Your digital janitor service",
+    "Making computers computier since 2025",
+    "Because someone has to babysit your GPUs",
+    "Turning crashes into... well, less crashes",
+    "Your processes' favorite nanny",
+    "We'll handle the restarts, you handle the art",
+    "Keeping your render farm from going on strike",
+    "Process wrangling at its finest",
+    "Making sure your video doesn't get stagefright",
+    "Your machines' remote control, literally",
+    "Teaching old GPUs new tricks",
+    "We don't judge your 47 Chrome tabs",
+    "Remotely judging your cable management",
+    "Making Windows behave since 2025",
+    "Your processes called, they want a manager",
+    "Turning blue screens into green lights",
+    "The cloud's favorite floor manager",
+    "Because 'Have you tried turning it off and on again?' gets old",
+    "Your GPU's therapist",
+    "Making sure your RAM doesn't feel lonely",
+    "Process management with extra cheese",
+    "We put the 'service' in Windows Service",
+    "Keeping your video walls from having a meltdown",
+    "Because manual restarts are for peasants",
+    "Your installation's guardian angel",
+    "Making TouchDesigner touch easier",
+    "Render farm to table, fresh processes daily",
+    "We speak fluent GPU",
+    "Your digital signage's best friend",
+    "Because someone needs to watch the watchers",
+    "Turning 'It works on my machine' into reality",
+    "Process therapy, cloud edition",
+    "Making Resolume resolve to stay running",
+    "Your kiosk's remote babysitter",
+    "Because uptime is updog",
+    "GPU whisperer extraordinaire",
+    "Making your media servers less dramatic",
+    "We've seen things... running things",
+    "Your process's life coach",
+    "Because closing Task Manager won't fix this",
+    "Keeping your renders rendering since 2025",
+    "The owl watches over your processes",
+    "Making Windows services less mysterious",
+    "Your exhibition's technical director",
+    "Process management: It's not rocket science, it's harder"
+  ];
+
+  const [randomJoke] = useState(() => techJokes[Math.floor(Math.random() * techJokes.length)]);
+
   const toggleMachineExpanded = (machineId: string) => {
     setExpandedMachines(prev => {
       const newSet = new Set(prev);
@@ -101,17 +160,6 @@ export default function DashboardPage() {
       }
       return newSet;
     });
-  };
-
-  const copySiteIdToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(currentSiteId);
-      setCopiedSiteId(true);
-      toast.success('Site ID copied to clipboard!');
-      setTimeout(() => setCopiedSiteId(false), 2000);
-    } catch (error) {
-      toast.error('Failed to copy Site ID');
-    }
   };
 
   const handleRowClick = (machineId: string, canExpand: boolean) => {
@@ -358,40 +406,9 @@ export default function DashboardPage() {
               Welcome back{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
             </h2>
             <p className="text-sm md:text-base text-slate-400">
-              Manage your Windows processes from the cloud
+              {randomJoke}
             </p>
           </div>
-
-          {/* Site ID Display with Copy */}
-          {currentSiteId && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-slate-700 bg-slate-800/50 hover:bg-slate-800 transition-colors cursor-pointer group flex-shrink-0" onClick={copySiteIdToClipboard}>
-                    <div className="flex flex-col">
-                      <span className="text-xs text-slate-400">Site ID</span>
-                      <span className="font-mono text-sm text-blue-400 font-semibold">{currentSiteId}</span>
-                    </div>
-                    {copiedSiteId ? (
-                      <Check className="h-4 w-4 text-green-400 flex-shrink-0" />
-                    ) : (
-                      <Copy className="h-4 w-4 text-slate-400 group-hover:text-blue-400 transition-colors flex-shrink-0" />
-                    )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-semibold mb-1">Your Site ID</p>
-                  <p className="text-xs text-slate-300">
-                    This site ID will be automatically configured when you run the Owlette Agent installer
-                    and complete the OAuth authorization in your browser
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2">
-                    Download installer from: <span className="font-mono text-blue-400">dev.owlette.app</span>
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
         </div>
 
         {/* Quick stats */}
