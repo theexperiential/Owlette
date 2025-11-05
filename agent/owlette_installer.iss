@@ -291,9 +291,12 @@ begin
   // Check if running as admin
   if not IsAdmin then
   begin
-    MsgBox('This installer requires administrator privileges to install the Windows service.' + #13#10 +
-           'Please right-click the installer and select "Run as administrator".',
-           mbError, MB_OK);
+    Log('ERROR: Not running as administrator');
+    // Only show error dialog in interactive mode
+    if not WizardSilent() then
+      MsgBox('This installer requires administrator privileges to install the Windows service.' + #13#10 +
+             'Please right-click the installer and select "Run as administrator".',
+             mbError, MB_OK);
     Result := False;
     Exit;
   end;
@@ -301,11 +304,15 @@ begin
   // Check for existing installation
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}_is1', 'UninstallString', UninstallString) then
   begin
-    if MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
-              'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
-              'Click OK to uninstall and continue, or Cancel to exit.',
-              mbConfirmation, MB_OKCANCEL) = IDOK then
+    // In silent mode, automatically proceed with uninstall without user confirmation
+    // In interactive mode, ask user for confirmation
+    if WizardSilent() or
+       (MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
+               'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
+               'Click OK to uninstall and continue, or Cancel to exit.',
+               mbConfirmation, MB_OKCANCEL) = IDOK) then
     begin
+      Log('Proceeding with uninstall (Silent mode: ' + BoolToStr(WizardSilent()) + ')');
       // Extract the uninstaller path (remove /SILENT flag if present)
       UninstallExe := RemoveQuotes(UninstallString);
 
@@ -325,7 +332,10 @@ begin
       end
       else
       begin
-        MsgBox('Failed to uninstall the existing version. Please uninstall manually and try again.', mbError, MB_OK);
+        Log('ERROR: Failed to uninstall the existing version');
+        // Only show error dialog in interactive mode
+        if not WizardSilent() then
+          MsgBox('Failed to uninstall the existing version. Please uninstall manually and try again.', mbError, MB_OK);
         Result := False;
         Exit;
       end;
