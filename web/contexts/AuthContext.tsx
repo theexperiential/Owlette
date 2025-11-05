@@ -10,6 +10,9 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   updateProfile,
+  updatePassword as firebaseUpdatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
@@ -30,6 +33,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
+  updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,6 +47,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signOut: async () => {},
   updateUserProfile: async () => {},
+  updatePassword: async () => {},
 });
 
 export const useAuth = () => {
@@ -300,6 +305,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updatePassword = async (currentPassword: string, newPassword: string) => {
+    try {
+      if (!auth?.currentUser) {
+        const error = new Error('No user is currently signed in.');
+        toast.error('Update Failed', {
+          description: 'You must be signed in to update your password.',
+        });
+        throw error;
+      }
+
+      if (!auth.currentUser.email) {
+        const error = new Error('Cannot update password for accounts without email.');
+        toast.error('Update Failed', {
+          description: 'Password updates are only available for email/password accounts.',
+        });
+        throw error;
+      }
+
+      // Re-authenticate user with current password
+      const credential = EmailAuthProvider.credential(
+        auth.currentUser.email,
+        currentPassword
+      );
+
+      await reauthenticateWithCredential(auth.currentUser, credential);
+
+      // Update to new password
+      await firebaseUpdatePassword(auth.currentUser, newPassword);
+
+      toast.success('Password Updated', {
+        description: 'Your password has been updated successfully.',
+      });
+    } catch (error: any) {
+      // Handle specific re-authentication errors
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        toast.error('Update Failed', {
+          description: 'Current password is incorrect.',
+        });
+      } else if (error.code === 'auth/weak-password') {
+        toast.error('Update Failed', {
+          description: 'New password is too weak. Please choose a stronger password.',
+        });
+      } else {
+        const friendlyMessage = handleError(error);
+        toast.error('Update Failed', {
+          description: friendlyMessage,
+        });
+      }
+      throw error;
+    }
+  };
+
   const value = {
     user,
     loading,
@@ -311,6 +368,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signInWithGoogle,
     signOut,
     updateUserProfile,
+    updatePassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
