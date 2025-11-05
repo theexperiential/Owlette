@@ -23,8 +23,11 @@ rules_version = '2';
 //
 // Custom Token Claims (for agents):
 // - role: 'agent' (identifies agent authentication)
-// - site_id: 'site_xxx' (which site this agent belongs to)
-// - machine_id: 'DESKTOP-001' (which machine this agent represents)
+// - site_id: 'site_xxx' (which site this agent belongs to - snake_case!)
+// - machine_id: 'DESKTOP-001' (which machine this agent represents - snake_case!)
+//
+// IMPORTANT: Claim names must be snake_case (site_id, machine_id) NOT camelCase!
+// Firebase custom token claims are used in security rules exactly as provided.
 
 service cloud.firestore {
   match /databases/{database}/documents {

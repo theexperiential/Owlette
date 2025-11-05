@@ -88,8 +88,9 @@ export async function POST(request: NextRequest) {
     // Generate Firebase Custom Token for agent
     const adminAuth = getAdminAuth();
     const customToken = await adminAuth.createCustomToken(agentUid, {
-      siteId,
-      machineId,
+      role: 'agent',
+      site_id: siteId,
+      machine_id: machineId,
       version,
     });
 
