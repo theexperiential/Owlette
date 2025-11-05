@@ -267,6 +267,19 @@ class OwletteConfigApp:
         )
         self.leave_site_button.grid(row=10, column=2, sticky='sw', padx=(10, 0), pady=(5, 10))
 
+        # Join Site button (re-authenticate to a site)
+        self.join_site_button = ctk.CTkButton(
+            self.master,
+            text="Join Site",
+            command=self.on_join_site_click,
+            width=100,
+            height=24,
+            fg_color="#059669",  # Green (emerald-600)
+            hover_color="#047857",  # Darker green (emerald-700)
+            font=("", 11)
+        )
+        self.join_site_button.grid(row=10, column=3, sticky='sw', padx=(5, 0), pady=(5, 10))
+
         # Footer label (perfectly centered in row 10)
         footer_text = "Made with ♥ in California by TEC"
         self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#6b7280", font=("", 11))
@@ -1178,6 +1191,163 @@ class OwletteConfigApp:
                     message=f"Failed to leave site:\n{str(e)}",
                     icon="cancel"
                 )
+
+    def on_join_site_click(self):
+        """Handle Join Site button click - re-authenticate to a site."""
+        # Show confirmation dialog
+        response = CTkMessagebox(
+            master=self.master,
+            title="Join Site?",
+            message="This will open your browser to authenticate with a site.\n\n"
+                   "Steps:\n"
+                   "1. Log in to your Owlette account\n"
+                   "2. Select or create a site\n"
+                   "3. Authorize this machine\n\n"
+                   "The service will restart after authentication completes.",
+            icon="question",
+            option_1="Cancel",
+            option_2="Join Site",
+            width=550
+        )
+
+        if response.get() != "Join Site":
+            return
+
+        # Determine setup URL based on current config or default to dev
+        current_api_base = self.config.get('firebase', {}).get('api_base', '')
+        if 'dev.owlette.app' in current_api_base:
+            setup_url = "https://dev.owlette.app/setup"
+        else:
+            # Default to dev for testing (can change to production later)
+            setup_url = "https://dev.owlette.app/setup"
+
+        # Show loading dialog
+        loading_dialog = CTkMessagebox(
+            master=self.master,
+            title="Joining Site...",
+            message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
+            icon="info",
+            option_1="Cancel",
+            width=550
+        )
+
+        # Run OAuth flow in background thread
+        def run_oauth_thread():
+            try:
+                # Import configure_site module
+                import configure_site
+
+                # Run OAuth flow (no console prompts for GUI usage)
+                success, message, site_id = configure_site.run_oauth_flow(
+                    setup_url=setup_url,
+                    timeout_seconds=300,  # 5 minutes
+                    show_prompts=False  # No console output for GUI
+                )
+
+                # Close loading dialog
+                self.master.after(0, loading_dialog.destroy)
+
+                if success:
+                    logging.info(f"Successfully joined site: {site_id}")
+
+                    # Reload config to get new site information
+                    self.config = shared_utils.load_config()
+
+                    # Restart service to connect with new site
+                    nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
+                    if os.path.exists(nssm_path):
+                        try:
+                            logging.info("Restarting service with new site configuration...")
+                            subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                                         check=False,
+                                         capture_output=True,
+                                         timeout=10)
+                            time.sleep(3)
+                            subprocess.run([nssm_path, 'start', 'OwletteService'],
+                                         check=False,
+                                         capture_output=True,
+                                         timeout=10)
+                            time.sleep(2)
+                            logging.info("Service restarted successfully")
+                        except Exception as e:
+                            logging.warning(f"Failed to restart service: {e}")
+
+                    # Update Firebase client and status
+                    self._reinitialize_firebase()
+
+                    # Show success message
+                    self.master.after(0, lambda: CTkMessagebox(
+                        master=self.master,
+                        title="Joined Site Successfully",
+                        message=f"This machine has been registered to site: {site_id}\n\nThe Owlette service has been restarted and is now syncing with Firebase.",
+                        icon="check",
+                        width=600
+                    ))
+                else:
+                    logging.error(f"Failed to join site: {message}")
+                    # Show error message
+                    self.master.after(0, lambda: CTkMessagebox(
+                        master=self.master,
+                        title="Failed to Join Site",
+                        message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
+                        icon="cancel",
+                        width=600
+                    ))
+
+            except Exception as e:
+                logging.error(f"Error in OAuth flow: {e}")
+                self.master.after(0, loading_dialog.destroy)
+                self.master.after(0, lambda: CTkMessagebox(
+                    master=self.master,
+                    title="Error",
+                    message=f"An unexpected error occurred:\n\n{str(e)}",
+                    icon="cancel",
+                    width=600
+                ))
+
+        # Start OAuth thread
+        oauth_thread = threading.Thread(target=run_oauth_thread, daemon=True)
+        oauth_thread.start()
+
+    def _reinitialize_firebase(self):
+        """Reinitialize Firebase client after configuration change."""
+        try:
+            # Stop old client if exists
+            if hasattr(self, 'firebase_client') and self.firebase_client:
+                try:
+                    self.firebase_client.stop()
+                except:
+                    pass
+
+            # Reload config
+            self.config = shared_utils.load_config()
+
+            # Initialize new Firebase client (similar to _complete_initialization)
+            if self.config.get('firebase', {}).get('enabled'):
+                from firebase_client import FirebaseClient
+                from auth_manager import AuthManager
+
+                api_base = self.config['firebase'].get('api_base', 'https://owlette.app/api')
+                project_id = self.config['firebase'].get('project_id', 'owlette-prod')
+                site_id = self.config['firebase'].get('site_id', '')
+
+                auth_manager = AuthManager(api_base=api_base)
+
+                if auth_manager.is_authenticated():
+                    self.firebase_client = FirebaseClient(
+                        auth_manager=auth_manager,
+                        project_id=project_id,
+                        site_id=site_id
+                    )
+                    self.firebase_client.start()
+                    self.site_id = site_id
+                    logging.info(f"Firebase client reinitialized for site: {site_id}")
+
+            # Update status display
+            self.update_firebase_status()
+
+        except Exception as e:
+            logging.error(f"Failed to reinitialize Firebase: {e}")
 
     def restart_service(self):
         """Restart the Owlette service."""

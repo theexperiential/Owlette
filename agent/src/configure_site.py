@@ -332,38 +332,47 @@ def wait_for_callback(httpd, timeout_seconds):
     return True, "Configuration received successfully"
 
 
-def main():
-    """Start HTTP server and open browser for OAuth flow"""
+def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True):
+    """
+    Run OAuth flow to configure site authentication.
+
+    This function can be called from:
+    - Command line (configure_site.py main())
+    - GUI Join Site button (owlette_gui.py)
+    - Installer (Inno Setup)
+
+    Args:
+        setup_url: Setup URL (default: https://owlette.app/setup)
+        timeout_seconds: How long to wait for callback (default: 300)
+        show_prompts: Show console prompts (False for GUI usage)
+
+    Returns:
+        tuple: (success: bool, message: str, site_id: Optional[str])
+            - success: True if OAuth completed successfully
+            - message: Status message or error description
+            - site_id: Site ID if successful, None otherwise
+    """
     global received_config, server_error, web_app_url
 
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Owlette Site Configuration')
-    parser.add_argument('--url', type=str, default=DEFAULT_URL,
-                       help='Setup URL (default: https://owlette.app/setup)')
-    args = parser.parse_args()
+    # Reset global state
+    received_config = None
+    server_error = None
 
-    # Use provided URL or environment variable override (set global for save_config())
-    web_app_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+    # Use provided URL or environment variable override
+    if setup_url is None:
+        setup_url = os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
 
-    # Write command line args to debug log FIRST
-    debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
-    Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
-    with open(debug_log, 'w') as f:
-        f.write(f"Command Line Debug\n")
-        f.write(f"==================\n")
-        f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
-        f.write(f"--url argument received: {args.url}\n")
-        f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
-        f.write(f"Final web_app_url: {web_app_url}\n\n")
+    web_app_url = setup_url
 
-    print("=" * 60)
-    print("Owlette Site Configuration")
-    print("=" * 60)
-    print(f"Setup URL: {web_app_url}")
-    print()
+    if show_prompts:
+        print("=" * 60)
+        print("Owlette Site Configuration")
+        print("=" * 60)
+        print(f"Setup URL: {web_app_url}")
+        print()
 
-    # Check if already configured
-    if CONFIG_PATH.exists():
+    # Check if already configured (skip prompt if show_prompts=False)
+    if show_prompts and CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
@@ -372,82 +381,128 @@ def main():
                     print()
                     response = input("Reconfigure? (y/N): ").strip().lower()
                     if response != 'y':
-                        print("Keeping existing configuration.")
-                        return 0
+                        return (False, "User cancelled reconfiguration", None)
         except Exception as e:
-            print(f"⚠ Warning: Could not read existing config: {e}")
+            if show_prompts:
+                print(f"⚠ Warning: Could not read existing config: {e}")
 
     # Start HTTP server
-    print(f"Starting configuration server on http://localhost:{CALLBACK_PORT}...")
+    if show_prompts:
+        print(f"Starting configuration server on http://localhost:{CALLBACK_PORT}...")
 
     try:
         with socketserver.TCPServer(("localhost", CALLBACK_PORT), ConfigCallbackHandler) as httpd:
-            print(f"✓ Server started successfully")
-            print()
+            if show_prompts:
+                print(f"✓ Server started successfully")
+                print()
 
-            # Open browser to owlette.app
-            setup_url = f"{web_app_url}?callback_port={CALLBACK_PORT}"
-            print(f"Opening browser to: {web_app_url}")
-            print()
-            print("Please complete the following steps in your browser:")
-            print("1. Log in to your Owlette account")
-            print("2. Select or create a site")
-            print("3. Authorize this agent")
-            print()
+            # Open browser
+            callback_url = f"{web_app_url}?callback_port={CALLBACK_PORT}"
 
-            if webbrowser.open(setup_url):
-                print("✓ Browser opened successfully")
+            if show_prompts:
+                print(f"Opening browser to: {web_app_url}")
+                print()
+                print("Please complete the following steps in your browser:")
+                print("1. Log in to your Owlette account")
+                print("2. Select or create a site")
+                print("3. Authorize this agent")
+                print()
+
+            if webbrowser.open(callback_url):
+                if show_prompts:
+                    print("✓ Browser opened successfully")
             else:
-                print("⚠ Could not open browser automatically")
-                print(f"  Please manually navigate to: {setup_url}")
+                if show_prompts:
+                    print("⚠ Could not open browser automatically")
+                    print(f"  Please manually navigate to: {callback_url}")
 
-            print()
-            print(f"Waiting for configuration (timeout: {TIMEOUT_SECONDS}s)...")
-            print("Press Ctrl+C to cancel")
-            print()
+            if show_prompts:
+                print()
+                print(f"Waiting for configuration (timeout: {timeout_seconds}s)...")
+                print("Press Ctrl+C to cancel")
+                print()
 
             # Wait for callback
-            success, message = wait_for_callback(httpd, TIMEOUT_SECONDS)
+            success, message = wait_for_callback(httpd, timeout_seconds)
 
-            print()
             if success:
-                print("=" * 60)
-                print("✓ Configuration Complete!")
-                print("=" * 60)
-                print()
-                print(f"Site ID: {received_config['site_id']}")
-                print(f"Config saved to: {CONFIG_PATH}")
-                print()
-                print("The Owlette service will now be installed and started.")
-                return 0
+                site_id = received_config.get('site_id') if received_config else None
+                if show_prompts:
+                    print()
+                    print("=" * 60)
+                    print("✓ Configuration Complete!")
+                    print("=" * 60)
+                    print()
+                    print(f"Site ID: {site_id}")
+                    print(f"Config saved to: {CONFIG_PATH}")
+                    print()
+                return (True, "Configuration successful", site_id)
             else:
-                print("=" * 60)
-                print("✗ Configuration Failed")
-                print("=" * 60)
-                print()
-                print(f"Error: {message}")
-                print()
-                print("Please try running the installer again.")
-                return 1
+                if show_prompts:
+                    print()
+                    print("=" * 60)
+                    print("✗ Configuration Failed")
+                    print("=" * 60)
+                    print()
+                    print(f"Error: {message}")
+                    print()
+                return (False, message, None)
 
     except OSError as e:
         if "Address already in use" in str(e):
-            print(f"✗ Error: Port {CALLBACK_PORT} is already in use")
-            print("  Another instance may be running.")
-            print("  Please close it and try again.")
+            error_msg = f"Port {CALLBACK_PORT} is already in use. Another configuration process may be running."
+            if show_prompts:
+                print(f"✗ Error: {error_msg}")
+            return (False, error_msg, None)
         else:
-            print(f"✗ Error starting server: {e}")
-        return 1
+            error_msg = f"Failed to start server: {e}"
+            if show_prompts:
+                print(f"✗ Error: {error_msg}")
+            return (False, error_msg, None)
 
     except KeyboardInterrupt:
-        print()
-        print("Configuration cancelled by user.")
-        return 1
+        if show_prompts:
+            print()
+            print("✗ Cancelled by user")
+        return (False, "Cancelled by user", None)
 
     except Exception as e:
-        print(f"✗ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
+        error_msg = f"Unexpected error: {e}"
+        if show_prompts:
+            print(f"✗ Error: {error_msg}")
+        return (False, error_msg, None)
+
+
+def main():
+    """Start HTTP server and open browser for OAuth flow (command-line entry point)"""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Owlette Site Configuration')
+    parser.add_argument('--url', type=str, default=DEFAULT_URL,
+                       help='Setup URL (default: https://owlette.app/setup)')
+    args = parser.parse_args()
+
+    # Use provided URL or environment variable override
+    setup_url = os.environ.get("OWLETTE_SETUP_URL", args.url)
+
+    # Write command line args to debug log
+    debug_log = Path(shared_utils.get_data_path('logs/oauth_debug.log'))
+    Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
+    with open(debug_log, 'w') as f:
+        f.write(f"Command Line Debug\n")
+        f.write(f"==================\n")
+        f.write(f"DEFAULT_URL constant: {DEFAULT_URL}\n")
+        f.write(f"--url argument received: {args.url}\n")
+        f.write(f"OWLETTE_SETUP_URL env var: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n")
+        f.write(f"Final setup_url: {setup_url}\n\n")
+
+    # Run OAuth flow with console prompts
+    success, message, site_id = run_oauth_flow(setup_url=setup_url, show_prompts=True)
+
+    if success:
+        print("The Owlette service will now be installed and started.")
+        return 0
+    else:
+        print("Please try running the installer again.")
         return 1
 
 
