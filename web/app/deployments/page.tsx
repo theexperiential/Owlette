@@ -16,6 +16,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import DownloadButton from '@/components/DownloadButton';
 import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
@@ -25,6 +26,8 @@ export default function DeploymentsPage() {
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
+  const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
+  const [uninstallDeploymentId, setUninstallDeploymentId] = useState<string | undefined>(undefined);
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -46,9 +49,9 @@ export default function DeploymentsPage() {
 
   const { createUninstall } = useUninstall();
 
-  const handleCreateUninstall = async (softwareName: string, machineIds: string[]) => {
+  const handleCreateUninstall = async (softwareName: string, machineIds: string[], deploymentId?: string) => {
     try {
-      await createUninstall(currentSiteId, softwareName, machineIds);
+      await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to create uninstall task');
     }
@@ -94,6 +97,8 @@ export default function DeploymentsPage() {
     switch (status) {
       case 'completed':
         return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case 'uninstalled':
+        return <Trash2 className="h-5 w-5 text-purple-500" />;
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'cancelled':
@@ -110,6 +115,7 @@ export default function DeploymentsPage() {
   const getStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
       completed: 'bg-green-600 hover:bg-green-700',
+      uninstalled: 'bg-purple-600 hover:bg-purple-700',
       failed: 'bg-red-600 hover:bg-red-700',
       cancelled: 'bg-orange-600 hover:bg-orange-700',
       in_progress: 'bg-blue-600 hover:bg-blue-700',
@@ -138,6 +144,7 @@ export default function DeploymentsPage() {
         onSiteChange={handleSiteChange}
         onManageSites={() => setManageDialogOpen(true)}
         onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
       />
 
       {/* Site Management Dialogs */}
@@ -203,6 +210,8 @@ export default function DeploymentsPage() {
           onOpenChange={setUninstallDialogOpen}
           siteId={currentSiteId}
           onCreateUninstall={handleCreateUninstall}
+          initialSoftwareName={initialSoftwareName}
+          deploymentId={uninstallDeploymentId}
         />
 
         {/* Quick Stats */}
@@ -313,6 +322,8 @@ export default function DeploymentsPage() {
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
+                              setInitialSoftwareName(deployment.installer_name);
+                              setUninstallDeploymentId(deployment.id);
                               setUninstallDialogOpen(true);
                             }}
                             className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"

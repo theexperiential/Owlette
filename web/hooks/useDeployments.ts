@@ -16,11 +16,12 @@ export interface DeploymentTemplate {
 
 export interface DeploymentTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
   progress?: number;
   error?: string;
   completedAt?: number;
   cancelledAt?: number;
+  uninstalledAt?: number;
 }
 
 export interface Deployment {
@@ -33,7 +34,7 @@ export interface Deployment {
   targets: DeploymentTarget[];
   createdAt: number;
   completedAt?: number;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'uninstalled';
 }
 
 export function useDeploymentTemplates(siteId: string) {
@@ -182,10 +183,10 @@ export function useDeployments(siteId: string) {
 
     const unsubscribes: (() => void)[] = [];
 
-    // Get all unique machine IDs from in-progress deployments
+    // Get all unique machine IDs from active deployments (including those that might be uninstalled)
     const machineIds = new Set<string>();
     deployments.forEach(deployment => {
-      if (deployment.status === 'in_progress' || deployment.status === 'pending') {
+      if (deployment.status === 'in_progress' || deployment.status === 'pending' || deployment.status === 'completed' || deployment.status === 'partial') {
         deployment.targets.forEach(target => machineIds.add(target.machineId));
       }
     });
@@ -209,7 +210,30 @@ export function useDeployments(siteId: string) {
 
             const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
 
-            if (command.status === 'completed') {
+            // Handle uninstall commands
+            if (command.type === 'uninstall_software' && command.status === 'completed') {
+              const updatedTargets = deployment.targets.map(target => {
+                if (target.machineId === machineId) {
+                  return {
+                    ...target,
+                    status: 'uninstalled' as const,
+                    uninstalledAt: command.completedAt || Date.now()
+                  };
+                }
+                return target;
+              });
+
+              // Calculate overall status - if all machines are uninstalled, mark deployment as uninstalled
+              const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
+              const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
+              const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
+
+              // Update deployment
+              await setDoc(deploymentRef, {
+                targets: updatedTargets,
+                status: newStatus,
+              }, { merge: true });
+            } else if (command.status === 'completed') {
               // Handle completed installations
               const updatedTargets = deployment.targets.map(target => {
                 if (target.machineId === machineId) {
