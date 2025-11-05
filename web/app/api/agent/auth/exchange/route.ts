@@ -118,6 +118,43 @@ export async function POST(request: NextRequest) {
     const authData = await authResponse.json();
     const idToken = authData.idToken;
 
+    // CRITICAL: Set custom claims on the user account
+    // Custom token claims are NOT automatically persisted - must explicitly set them
+    // This ensures future ID tokens contain the required claims for Firestore security rules
+    await adminAuth.setCustomUserClaims(agentUid, {
+      role: 'agent',
+      site_id: siteId,
+      machine_id: machineId,
+      version,
+    });
+
+    // Force token refresh to get ID token with custom claims
+    // The previous ID token won't have the claims until we refresh
+    // We need to create a NEW custom token and exchange it again
+    const customTokenWithClaims = await adminAuth.createCustomToken(agentUid, {
+      role: 'agent',
+      site_id: siteId,
+      machine_id: machineId,
+      version,
+    });
+
+    const refreshAuthResponse = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: customTokenWithClaims, returnSecureToken: true }),
+      }
+    );
+
+    if (!refreshAuthResponse.ok) {
+      const errorData = await refreshAuthResponse.json();
+      throw new Error(`Failed to refresh token with claims: ${errorData.error?.message || 'Unknown error'}`);
+    }
+
+    const refreshAuthData = await refreshAuthResponse.json();
+    const finalIdToken = refreshAuthData.idToken; // This token has the custom claims
+
     // Generate refresh token (cryptographically secure random)
     const crypto = await import('crypto');
     const refreshToken = crypto.randomBytes(64).toString('base64url');
@@ -152,7 +189,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       {
-        accessToken: idToken,
+        accessToken: finalIdToken, // Use the refreshed token with custom claims
         refreshToken,
         expiresIn: 3600, // 1 hour in seconds
         siteId,

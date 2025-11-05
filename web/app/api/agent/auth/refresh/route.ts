@@ -97,6 +97,16 @@ export async function POST(request: NextRequest) {
 
     // Generate new Firebase Custom Token for agent
     const adminAuth = getAdminAuth();
+
+    // CRITICAL: Ensure custom claims are set on the user account
+    // This guarantees the claims persist across token refreshes
+    await adminAuth.setCustomUserClaims(agentUid, {
+      role: 'agent',
+      site_id: siteId,
+      machine_id: machineId,
+      version,
+    });
+
     const customToken = await adminAuth.createCustomToken(agentUid, {
       role: 'agent',
       site_id: siteId,
@@ -126,7 +136,7 @@ export async function POST(request: NextRequest) {
     }
 
     const authData = await authResponse.json();
-    const idToken = authData.idToken;
+    const idToken = authData.idToken; // This token now has the custom claims
 
     // Update last used timestamp (for monitoring)
     await tokenRef.update({
