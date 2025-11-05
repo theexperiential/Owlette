@@ -225,7 +225,7 @@ def cleanup_old_logs(max_age_days=90):
 
         if deleted_count > 0:
             mb_freed = round(total_size_freed / 1024 / 1024, 2)
-            logging.info(f"✓ Log cleanup complete: {deleted_count} file(s) deleted, {mb_freed} MB freed")
+            logging.info(f"[OK] Log cleanup complete: {deleted_count} file(s) deleted, {mb_freed} MB freed")
 
         return deleted_count
 
@@ -356,7 +356,7 @@ def add_firebase_log_handler(firebase_client):
         logger = logging.getLogger()
         logger.addHandler(firebase_handler)
 
-        logging.info(f"✓ Firebase log shipping enabled (errors_only: {errors_only})")
+        logging.info(f"[OK] Firebase log shipping enabled (errors_only: {errors_only})")
 
     except Exception as e:
         logging.warning(f"Could not enable Firebase log shipping: {e}")
@@ -652,10 +652,10 @@ def update_process_status_in_json(pid, new_status, firebase_client=None):
         try:
             metrics = get_system_metrics()
             firebase_client._upload_metrics(metrics)
-            logging.info(f"✓ Process status synced to Firebase: PID {pid} -> {new_status}")
+            logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> {new_status}")
         except Exception as e:
             # Don't crash if Firebase sync fails - it will sync on next interval
-            logging.error(f"✗ Failed to sync process status to Firebase: {e}")
+            logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
             logging.exception("Full traceback:")
 
 def fetch_process_by_id(id, data):

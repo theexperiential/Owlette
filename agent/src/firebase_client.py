@@ -182,7 +182,7 @@ class FirebaseClient:
                             'online': False,
                             'lastHeartbeat': SERVER_TIMESTAMP
                         })
-                        self.logger.info(f"✓ Machine marked OFFLINE in Firestore (attempt {attempt + 1}/{max_attempts})")
+                        self.logger.info(f"[OK] Machine marked OFFLINE in Firestore (attempt {attempt + 1}/{max_attempts})")
                         # Give network time to complete the write
                         time.sleep(1)
                         break
@@ -193,7 +193,7 @@ class FirebaseClient:
                         time.sleep(0.2)
 
             except Exception as e:
-                self.logger.error(f"✗ Failed to set machine offline after {max_attempts} attempts: {e}")
+                self.logger.error(f"[ERROR] Failed to set machine offline after {max_attempts} attempts: {e}")
 
         # Now stop the background threads
         self.running = False
@@ -382,7 +382,7 @@ class FirebaseClient:
             if online:
                 self.logger.debug("Heartbeat: Machine online")
             else:
-                self.logger.info(f"✓ Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
+                self.logger.info(f"[OK] Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
         except Exception as e:
             # Check if this is due to machine removal from web dashboard
             if self._handle_removal_detection(e):
