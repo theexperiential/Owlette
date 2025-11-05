@@ -8,8 +8,8 @@
 ; ---------------
 ; This installer uses OAuth custom token authentication (no service accounts).
 ; During installation, the user is prompted to authenticate via their browser.
-; The agent receives OAuth tokens which are stored securely in Windows
-; Credential Manager (encrypted, machine + user specific).
+; The agent receives OAuth tokens which are encrypted and stored in
+; C:\ProgramData\Owlette\.tokens.enc (machine-specific encryption key).
 ;
 ; OAUTH FLOW:
 ; -----------
@@ -18,7 +18,7 @@
 ; 3. Web backend generates registration code (single-use, 24h expiry)
 ; 4. Browser sends callback to http://localhost:8765 with site_id + code
 ; 5. configure_site.py exchanges code for access token + refresh token
-; 6. Tokens stored in Windows Credential Manager (not in config files)
+; 6. Tokens encrypted and stored in C:\ProgramData\Owlette\.tokens.enc (not in config files)
 ; 7. Agent uses tokens to authenticate with Firestore REST API
 ;
 ; SECURITY:
@@ -39,7 +39,7 @@
 ; ============================================================================
 
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.0.2"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"
@@ -336,8 +336,8 @@ begin
         Sleep(2000);
       end;
 
-      // Run uninstaller silently
-      if Exec(UninstallExe, '/SILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      // Run uninstaller very silently (no dialogs at all)
+      if Exec(UninstallExe, '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
       begin
         Log('Previous installation uninstalled successfully');
         DidUninstallExisting := True;  // Track that we handled uninstall
