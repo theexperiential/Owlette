@@ -411,17 +411,21 @@ class FirestoreRestClient:
         """
         def poll_document():
             """Poll document for changes."""
-            last_data = None
+            # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
+            _UNINITIALIZED = object()
+            last_data = _UNINITIALIZED
 
             while True:
                 try:
                     # Get current document
                     current_data = self.get_document(path)
 
-                    # Check if changed
+                    # Check if changed (including first run where last_data is sentinel)
                     if current_data != last_data:
-                        logger.debug(f"Document changed: {path}")
-                        callback(current_data)
+                        # Skip callback on first run if document doesn't exist
+                        if last_data is not _UNINITIALIZED or current_data is not None:
+                            logger.debug(f"Document changed: {path}")
+                            callback(current_data)
                         last_data = current_data
 
                     # Poll every 2 seconds (configurable)
