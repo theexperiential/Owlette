@@ -14,6 +14,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import DownloadButton from '@/components/DownloadButton';
 import { toast } from 'sonner';
 
 export default function ProjectsPage() {
@@ -121,6 +122,7 @@ export default function ProjectsPage() {
         onSiteChange={handleSiteChange}
         onManageSites={() => setManageDialogOpen(true)}
         onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
       />
 
       {/* Site Management Dialogs */}
