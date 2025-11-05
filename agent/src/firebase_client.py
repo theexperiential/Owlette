@@ -462,19 +462,25 @@ class FirebaseClient:
             if self.command_callback:
                 result = self.command_callback(cmd_id, cmd_data)
 
-                # Use appropriate completion method based on command type
+                # Check if result indicates an error (command handlers return error strings starting with "Error:")
+                is_error = isinstance(result, str) and result.startswith("Error:")
+
+                # Use appropriate completion method based on command type and result
                 if cmd_type == 'cancel_installation':
                     # Mark as cancelled instead of completed
-                    self._mark_command_cancelled(cmd_id, result, deployment_id)
+                    self._mark_command_cancelled(cmd_id, result, deployment_id, cmd_type)
+                elif is_error:
+                    # Command returned an error message - mark as failed
+                    self._mark_command_failed(cmd_id, result, deployment_id, cmd_type)
                 else:
                     # Normal completion for other commands
-                    self._mark_command_completed(cmd_id, result, deployment_id)
+                    self._mark_command_completed(cmd_id, result, deployment_id, cmd_type)
             else:
                 self.logger.warning(f"No command callback registered, ignoring command {cmd_id}")
 
         except Exception as e:
             self.logger.error(f"Error processing command {cmd_id}: {e}")
-            self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'))
+            self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'), cmd_data.get('type'))
 
     def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
         """
@@ -518,7 +524,7 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to update command {cmd_id} progress: {e}")
 
-    def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None):
+    def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as completed in Firestore."""
         if not self.connected or not self.db:
             return
@@ -549,6 +555,10 @@ class FirebaseClient:
             if deployment_id:
                 completed_data['deployment_id'] = deployment_id
 
+            # Include command type (needed for web app to identify command type)
+            if cmd_type:
+                completed_data['type'] = cmd_type
+
             completed_ref.set({
                 cmd_id: completed_data
             }, merge=True)
@@ -558,7 +568,7 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to mark command {cmd_id} as completed: {e}")
 
-    def _mark_command_failed(self, cmd_id: str, error: str, deployment_id: Optional[str] = None):
+    def _mark_command_failed(self, cmd_id: str, error: str, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as failed in Firestore."""
         if not self.connected or not self.db:
             return
@@ -589,6 +599,10 @@ class FirebaseClient:
             if deployment_id:
                 failed_data['deployment_id'] = deployment_id
 
+            # Include command type (needed for web app to identify command type)
+            if cmd_type:
+                failed_data['type'] = cmd_type
+
             completed_ref.set({
                 cmd_id: failed_data
             }, merge=True)
@@ -598,7 +612,7 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to mark command {cmd_id} as failed: {e}")
 
-    def _mark_command_cancelled(self, cmd_id: str, result: str, deployment_id: Optional[str] = None):
+    def _mark_command_cancelled(self, cmd_id: str, result: str, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as cancelled in Firestore."""
         if not self.connected or not self.db:
             return
@@ -628,6 +642,10 @@ class FirebaseClient:
             # Include deployment_id if present (needed for web app to track deployment status)
             if deployment_id:
                 cancelled_data['deployment_id'] = deployment_id
+
+            # Include command type (needed for web app to identify command type)
+            if cmd_type:
+                cancelled_data['type'] = cmd_type
 
             completed_ref.set({
                 cmd_id: cancelled_data
@@ -914,37 +932,69 @@ class FirebaseClient:
                 self.logger.warning(f"Failed to clear existing software inventory: {e}")
 
             # Upload new software list
-            batch = self.db.batch()
-            batch_count = 0
+            # Try batch write first, fall back to individual writes if batch fails
+            batch_write_failed = False
 
-            for software in installed_software:
-                # Create a unique document ID from software name + version
-                # Replace invalid characters for Firestore document IDs
-                doc_id = f"{software['name']}_{software['version']}".replace('/', '_').replace('\\', '_')
-                doc_id = doc_id[:1500]  # Firestore doc ID limit
+            try:
+                batch = self.db.batch()
+                batch_count = 0
 
-                doc_ref = software_collection_ref.document(doc_id)
+                for software in installed_software:
+                    # Create a unique document ID from software name + version
+                    # Replace invalid characters for Firestore document IDs
+                    doc_id = f"{software['name']}_{software['version']}".replace('/', '_').replace('\\', '_')
+                    doc_id = doc_id[:1500]  # Firestore doc ID limit
 
-                # Add timestamp
-                software_data = {
-                    **software,
-                    'detected_at': SERVER_TIMESTAMP
-                }
+                    doc_ref = software_collection_ref.document(doc_id)
 
-                batch.set(doc_ref, software_data)
-                batch_count += 1
+                    # Add timestamp
+                    software_data = {
+                        **software,
+                        'detected_at': SERVER_TIMESTAMP
+                    }
 
-                # Firestore batches limited to 500 operations
-                if batch_count >= 500:
+                    batch.set(doc_ref, software_data)
+                    batch_count += 1
+
+                    # Firestore batches limited to 500 operations
+                    if batch_count >= 500:
+                        batch.commit()
+                        batch = self.db.batch()
+                        batch_count = 0
+
+                # Commit remaining items
+                if batch_count > 0:
                     batch.commit()
-                    batch = self.db.batch()
-                    batch_count = 0
 
-            # Commit remaining items
-            if batch_count > 0:
-                batch.commit()
+                self.logger.info(f"Synced {len(installed_software)} software packages to Firestore (batch write)")
 
-            self.logger.info(f"Synced {len(installed_software)} software packages to Firestore")
+            except Exception as batch_error:
+                # Batch write failed (often 403 due to REST API + custom token limitations)
+                # This is expected with OAuth tokens, so log at INFO level
+                self.logger.info(f"Batch write not available (using individual writes instead)")
+                self.logger.debug(f"Batch write error: {batch_error}")
+                batch_write_failed = True
+
+            # Fallback to individual writes if batch failed
+            if batch_write_failed:
+                # Fallback: Write documents individually
+                success_count = 0
+                for software in installed_software:
+                    try:
+                        doc_id = f"{software['name']}_{software['version']}".replace('/', '_').replace('\\', '_')
+                        doc_id = doc_id[:1500]
+
+                        doc_ref = software_collection_ref.document(doc_id)
+                        software_data = {
+                            **software,
+                            'detected_at': SERVER_TIMESTAMP
+                        }
+                        doc_ref.set(software_data)
+                        success_count += 1
+                    except Exception as write_error:
+                        self.logger.warning(f"Failed to write {software.get('name', 'unknown')}: {write_error}")
+
+                self.logger.info(f"Synced {success_count}/{len(installed_software)} software packages (individual writes)")
 
         except Exception as e:
             self.logger.error(f"Failed to sync software inventory: {e}")

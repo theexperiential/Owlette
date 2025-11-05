@@ -279,6 +279,35 @@ class FirestoreRestClient:
             logger.error(f"Error setting document {path}: {e}")
             raise
 
+    def _escape_field_path(self, field_path: str) -> str:
+        """
+        Escape field path for Firestore REST API updateMask.
+
+        Field names containing special characters (anything other than
+        alphanumeric and underscore) must be enclosed in backticks.
+
+        Args:
+            field_path: Field path (may contain dots for nested fields)
+
+        Returns:
+            Escaped field path
+        """
+        import re
+
+        # Split on dots for nested paths
+        parts = field_path.split('.')
+        escaped_parts = []
+
+        for part in parts:
+            # Check if part contains special characters (not alphanumeric or underscore)
+            if re.search(r'[^a-zA-Z0-9_]', part):
+                # Wrap in backticks
+                escaped_parts.append(f'`{part}`')
+            else:
+                escaped_parts.append(part)
+
+        return '.'.join(escaped_parts)
+
     def update_document(self, path: str, updates: Dict[str, Any]):
         """
         Update specific fields in a document.
@@ -294,8 +323,8 @@ class FirestoreRestClient:
             url = f"{self.base_url}/{path}"
 
             # Firestore REST API uses updateMask to specify which fields to update
-            # Build updateMask from keys
-            update_mask_paths = list(updates.keys())
+            # Build updateMask from keys, escaping field names with special characters
+            update_mask_paths = [self._escape_field_path(key) for key in updates.keys()]
 
             # Convert updates to Firestore format, handling nested paths
             firestore_fields = {}
@@ -438,6 +467,7 @@ class FirestoreRestClient:
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 if operation == 'set':
+                    # For set operations, omit currentDocument to allow upsert
                     batch_writes.append({
                         'update': {
                             'name': doc_name,
@@ -471,7 +501,28 @@ class FirestoreRestClient:
             logger.debug(f"Batch write completed: {len(writes)} operations")
 
         except Exception as e:
-            logger.error(f"Error in batch write: {e}")
+            # Check if this is a 403 Forbidden error (expected with OAuth tokens)
+            is_403 = hasattr(e, 'response') and e.response is not None and e.response.status_code == 403
+
+            if is_403:
+                # 403 errors on batch writes are expected with OAuth tokens - log at DEBUG level
+                logger.debug(f"Batch write forbidden (expected with OAuth tokens): {e}")
+                if hasattr(e, 'response'):
+                    try:
+                        error_details = e.response.json()
+                        logger.debug(f"Firestore error details: {error_details}")
+                    except:
+                        pass
+            else:
+                # Log other errors at ERROR level
+                logger.error(f"Error in batch write: {e}")
+                # Log response body for debugging (may contain security rule details)
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        error_details = e.response.json()
+                        logger.error(f"Firestore error details: {error_details}")
+                    except:
+                        logger.error(f"Response text: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
             raise
 
     def collection(self, path: str):

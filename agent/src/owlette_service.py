@@ -861,7 +861,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
                 verify_path = cmd_data.get('verify_path')  # Optional verification path
-                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                timeout_seconds = cmd_data.get('timeout_seconds', 1200)  # Default: 20 minutes
                 expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
@@ -1037,7 +1037,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 silent_flags = cmd_data.get('silent_flags', '')
                 installer_type = cmd_data.get('installer_type', 'custom')
                 verify_paths = cmd_data.get('verify_paths', [])  # Paths to verify removal
-                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                timeout_seconds = cmd_data.get('timeout_seconds', 1200)  # Default: 20 minutes
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
                 if not software_name or not uninstall_command:

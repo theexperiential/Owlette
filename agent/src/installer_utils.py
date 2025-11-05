@@ -64,7 +64,7 @@ def execute_installer(
     flags: str = "",
     installer_name: str = "",
     active_processes: Optional[Dict[str, subprocess.Popen]] = None,
-    timeout_seconds: int = 600
+    timeout_seconds: int = 1200
 ) -> tuple[bool, int, str]:
     """
     Execute an installer with silent flags.
