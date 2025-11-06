@@ -33,14 +33,12 @@ import logging
 import json
 from typing import Optional, Dict, Any
 from secure_storage import SecureStorage, get_storage
+import shared_utils
 
 logger = logging.getLogger(__name__)
 
 # Default token refresh buffer (refresh 5 minutes before expiry)
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
-
-# Agent version (should match installer version)
-AGENT_VERSION = "2.0.3"
 
 
 class AuthenticationError(Exception):
@@ -150,7 +148,7 @@ class AuthManager:
                 json={
                     'registrationCode': registration_code,
                     'machineId': machine_id,
-                    'version': AGENT_VERSION,
+                    'version': shared_utils.APP_VERSION,
                 },
                 timeout=30,
             )

@@ -13,10 +13,32 @@ import threading
 import psutil
 import winreg
 import time
+from pathlib import Path
+
+# VERSION MANAGEMENT
+def get_app_version():
+    """
+    Read application version from VERSION file.
+    This ensures a single source of truth for version management.
+
+    Returns:
+        str: Version string (e.g., "2.0.3") or "0.0.0" if VERSION file not found
+    """
+    try:
+        # VERSION file is in agent/ directory (parent of src/)
+        version_file = Path(__file__).parent.parent / 'VERSION'
+        if version_file.exists():
+            return version_file.read_text().strip()
+        else:
+            # Fallback for development or if VERSION file is missing
+            return '2.0.3'  # Hardcoded fallback
+    except Exception as e:
+        # If anything goes wrong, use fallback version
+        return '2.0.3'
 
 # GLOBAL VARS
 
-APP_VERSION = '2.0.0'
+APP_VERSION = get_app_version()
 CONFIG_VERSION = '1.4.0'  # Added logging configuration
 # Color scheme matching web app (Tailwind slate palette)
 WINDOW_COLOR = '#020617'      # slate-950 - main background
