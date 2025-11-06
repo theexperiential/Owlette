@@ -939,27 +939,38 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         CREATE_NO_WINDOW = 0x08000000
 
                         try:
-                            subprocess.Popen(
-                                cmd_list,
-                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
-                                close_fds=True
+                            # Use Windows Task Scheduler to launch installer after service stops
+                            # This ensures the service is fully stopped before installer runs
+                            import subprocess
+                            import tempfile
+
+                            # Create a one-time scheduled task to run installer in 15 seconds
+                            task_name = "OwletteSelfUpdate"
+                            installer_cmd = f'"{temp_installer_path}"'
+                            if silent_flags:
+                                installer_cmd += f" {silent_flags}"
+
+                            # Delete any existing task first
+                            subprocess.run(f'schtasks /Delete /TN {task_name} /F', shell=True, capture_output=True)
+
+                            # Create new task that runs once in 15 seconds, then deletes itself
+                            create_task_cmd = (
+                                f'schtasks /Create /TN {task_name} /TR "{installer_cmd}" '
+                                f'/SC ONCE /ST {(datetime.datetime.now() + datetime.timedelta(seconds=15)).strftime("%H:%M")} '
+                                f'/RU SYSTEM /V1 /F'
                             )
-                            logging.info("Installer launched successfully in detached mode")
 
-                            # Schedule service shutdown after delay (let installer fully initialize)
-                            import threading
-                            def delayed_shutdown():
-                                import time
-                                time.sleep(5)  # Give installer time to fully start
-                                logging.warning("Self-update shutdown commencing in 5 seconds...")
-                                time.sleep(5)
-                                logging.warning("Stopping service to allow self-update to complete...")
-                                self.stop()
+                            result = subprocess.run(create_task_cmd, shell=True, capture_output=True, text=True)
+                            if result.returncode != 0:
+                                raise Exception(f"Failed to create scheduled task: {result.stderr}")
 
-                            shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=False)
-                            shutdown_thread.start()
+                            logging.info(f"Created scheduled task '{task_name}' to run installer in 15 seconds")
+                            logging.warning("Stopping service NOW - installer will run after service stops...")
 
-                            return "Self-update initiated: Service will stop to allow installation, then installer will restart service"
+                            # Stop service immediately
+                            self.stop()
+
+                            return "Self-update initiated: Service stopped, installer will run via scheduled task"
 
                         except Exception as e:
                             error_msg = f"Failed to launch self-update installer: {e}"
