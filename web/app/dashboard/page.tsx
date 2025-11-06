@@ -26,6 +26,7 @@ import DownloadButton from '@/components/DownloadButton';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { PageHeader } from '@/components/PageHeader';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 type ViewType = 'card' | 'list';
 
@@ -89,6 +90,92 @@ export default function DashboardPage() {
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
 
+  // Multilingual welcome messages with language info
+  const welcomeMessages = [
+    // English (heavy)
+    { text: "Welcome back", language: "English", translation: "Welcome back" },
+    { text: "Greetings", language: "English", translation: "Greetings" },
+    { text: "Hey there", language: "English (casual)", translation: "Hey there" },
+    { text: "Good to see you", language: "English", translation: "Good to see you" },
+    { text: "Hello again", language: "English", translation: "Hello again" },
+    { text: "Welcome", language: "English", translation: "Welcome" },
+    { text: "Howdy", language: "English (Southern US)", translation: "Howdy" },
+    { text: "What's up", language: "English (casual)", translation: "What's up" },
+    { text: "G'day", language: "English (Australian)", translation: "G'day / Good day" },
+    { text: "Cheers", language: "English (British)", translation: "Cheers / Hello" },
+
+    // Spanish (heavy)
+    { text: "Bienvenido", language: "Spanish", translation: "Welcome" },
+    { text: "Hola de nuevo", language: "Spanish", translation: "Hello again" },
+    { text: "Qué tal", language: "Spanish (casual)", translation: "What's up / How's it going" },
+    { text: "Saludos", language: "Spanish", translation: "Greetings" },
+    { text: "Buenas", language: "Spanish (casual)", translation: "Hey / Hi there" },
+    { text: "Hola", language: "Spanish", translation: "Hello" },
+    { text: "Bienvenido de vuelta", language: "Spanish", translation: "Welcome back" },
+    { text: "Qué onda", language: "Spanish (Mexican)", translation: "What's up" },
+    { text: "¿Cómo estás?", language: "Spanish", translation: "How are you?" },
+    { text: "Encantado de verte", language: "Spanish", translation: "Pleased to see you" },
+
+    // French
+    { text: "Bienvenue", language: "French", translation: "Welcome" },
+    { text: "Salut", language: "French (casual)", translation: "Hi" },
+    { text: "Bon retour", language: "French", translation: "Good return / Welcome back" },
+
+    // German
+    { text: "Willkommen zurück", language: "German", translation: "Welcome back" },
+    { text: "Hallo", language: "German", translation: "Hello" },
+    { text: "Grüß dich", language: "German (casual)", translation: "Greetings to you" },
+
+    // Italian
+    { text: "Benvenuto", language: "Italian", translation: "Welcome" },
+    { text: "Ciao", language: "Italian", translation: "Hi / Bye" },
+
+    // Portuguese
+    { text: "Bem-vindo de volta", language: "Portuguese", translation: "Welcome back" },
+    { text: "Olá", language: "Portuguese", translation: "Hello" },
+
+    // Dutch
+    { text: "Welkom terug", language: "Dutch", translation: "Welcome back" },
+
+    // Russian
+    { text: "Добро пожаловать", language: "Russian", translation: "Welcome" },
+    { text: "Привет", language: "Russian", translation: "Hi" },
+
+    // Asian languages
+    { text: "欢迎回来", language: "Chinese (Simplified)", translation: "Welcome back" },
+    { text: "ようこそ", language: "Japanese", translation: "Welcome" },
+    { text: "환영합니다", language: "Korean", translation: "Welcome" },
+    { text: "स्वागत है", language: "Hindi", translation: "Welcome" },
+    { text: "ยินดีต้อนรับกลับมา", language: "Thai", translation: "Welcome back" },
+    { text: "Chào mừng trở lại", language: "Vietnamese", translation: "Welcome back" },
+
+    // Middle Eastern
+    { text: "مرحبا بعودتك", language: "Arabic", translation: "Welcome back" },
+    { text: "ברוך השב", language: "Hebrew", translation: "Blessed is the return" },
+    { text: "Hoş geldin", language: "Turkish", translation: "Welcome" },
+
+    // Scandinavian
+    { text: "Välkommen tillbaka", language: "Swedish", translation: "Welcome back" },
+    { text: "Velkommen tilbage", language: "Danish", translation: "Welcome back" },
+    { text: "Velkommen tilbake", language: "Norwegian", translation: "Welcome back" },
+    { text: "Tervetuloa takaisin", language: "Finnish", translation: "Welcome back" },
+
+    // Other European
+    { text: "Witaj ponownie", language: "Polish", translation: "Welcome again" },
+    { text: "Vítejte zpět", language: "Czech", translation: "Welcome back" },
+    { text: "Καλώς ήρθες πάλι", language: "Greek", translation: "Welcome back" },
+    { text: "Bine ai revenit", language: "Romanian", translation: "Good you returned" },
+
+    // Southeast Asian
+    { text: "Selamat datang kembali", language: "Indonesian", translation: "Safe arrival back" },
+    { text: "Maligayang pagbabalik", language: "Filipino", translation: "Happy return" },
+
+    // Celtic
+    { text: "Fàilte air ais", language: "Scottish Gaelic", translation: "Welcome back" },
+    { text: "Croeso yn ôl", language: "Welsh", translation: "Welcome back" },
+    { text: "Fáilte ar ais", language: "Irish", translation: "Welcome back" },
+  ];
+
   // Random cheesy tech jokes
   const techJokes = [
     "Your pixels are in good hands",
@@ -148,6 +235,7 @@ export default function DashboardPage() {
     "Process management: It's not rocket science, it's harder"
   ];
 
+  const [randomWelcome] = useState(() => welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)]);
   const [randomJoke] = useState(() => techJokes[Math.floor(Math.random() * techJokes.length)]);
 
   const toggleMachineExpanded = (machineId: string) => {
@@ -403,7 +491,19 @@ export default function DashboardPage() {
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">
-              Welcome back{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-help">
+                      {randomWelcome.text}{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-semibold">{randomWelcome.language}</p>
+                    <p className="text-xs text-slate-300">{randomWelcome.translation}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </h2>
             <p className="text-sm md:text-base text-slate-400">
               {randomJoke}
