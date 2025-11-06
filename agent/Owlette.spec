@@ -7,7 +7,6 @@ block_cipher = None
 # Common hidden imports needed by multiple executables
 common_hidden_imports = [
     'win32timezone',
-    'keyring.backends.Windows',
     'customtkinter',
     'PIL',
     'PIL._tkinter_finder',

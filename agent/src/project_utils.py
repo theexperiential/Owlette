@@ -213,10 +213,10 @@ def download_project(
     """
     try:
         dest_path = get_temp_project_path(project_name)
-        success = download_file(url, dest_path, progress_callback)
+        success, actual_path = download_file(url, dest_path, progress_callback)
 
         if success:
-            return True, dest_path
+            return True, actual_path
         else:
             return False, f"Failed to download project from {url}"
 

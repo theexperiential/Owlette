@@ -11,6 +11,7 @@ import {
   Timestamp,
   arrayUnion,
   arrayRemove,
+  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
@@ -178,6 +179,28 @@ export function useUserManagement() {
     []
   );
 
+  /**
+   * Delete a user
+   *
+   * @param userId - The user's UID
+   */
+  const deleteUser = useCallback(
+    async (userId: string): Promise<void> => {
+      if (!db) {
+        throw new Error('Firebase is not configured');
+      }
+
+      try {
+        const userRef = doc(db, 'users', userId);
+        await deleteDoc(userRef);
+      } catch (err) {
+        console.error('Error deleting user:', err);
+        throw new Error(handleError(err));
+      }
+    },
+    []
+  );
+
   return {
     users,
     loading,
@@ -186,5 +209,6 @@ export function useUserManagement() {
     getUserCounts,
     assignSiteToUser,
     removeSiteFromUser,
+    deleteUser,
   };
 }

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -26,6 +26,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       href: '/admin/installers',
       icon: Package,
       description: 'Manage agent installer versions',
+    },
+    {
+      name: 'Template Library',
+      href: '/admin/presets',
+      icon: Settings,
+      description: 'Manage software catalog',
     },
     {
       name: 'User Management',

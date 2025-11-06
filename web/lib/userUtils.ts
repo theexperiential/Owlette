@@ -36,3 +36,50 @@ export function getUserDisplayText(user: User | null): string {
   if (!user) return '';
   return user.displayName || user.email || 'User';
 }
+
+/**
+ * Get shortened user display name for compact UI elements
+ * @param user Firebase user object
+ * @returns First name + last initial (e.g., "Dylan R.") or just first name
+ */
+export function getUserShortName(user: User | null): string {
+  if (!user) return '';
+
+  if (user.displayName) {
+    const names = user.displayName.trim().split(/\s+/);
+    if (names.length >= 2) {
+      // First name + last initial with period
+      return `${names[0]} ${names[names.length - 1][0]}.`;
+    }
+    // Single name - return as-is
+    return names[0];
+  }
+
+  // Fallback to email username
+  if (user.email) {
+    return user.email.split('@')[0];
+  }
+
+  return 'User';
+}
+
+/**
+ * Get just the first name from display name
+ * @param user Firebase user object
+ * @returns First name only (e.g., "Dylan")
+ */
+export function getUserFirstName(user: User | null): string {
+  if (!user) return '';
+
+  if (user.displayName) {
+    const names = user.displayName.trim().split(/\s+/);
+    return names[0];
+  }
+
+  // Fallback to email username
+  if (user.email) {
+    return user.email.split('@')[0];
+  }
+
+  return 'User';
+}

@@ -25,6 +25,7 @@ import time
 import json
 import datetime
 import atexit
+import subprocess
 
 # Firebase integration
 FIREBASE_IMPORT_ERROR = None
@@ -159,9 +160,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if self.firebase_client:
             try:
                 self.firebase_client.stop()
-                logging.info("✓ Firebase client stopped and machine set to offline")
+                logging.info("[OK] Firebase client stopped and machine set to offline")
             except Exception as e:
-                logging.error(f"✗ Error stopping Firebase client: {e}")
+                logging.error(f"[ERROR] Error stopping Firebase client: {e}")
 
         # Close any open Owlette windows (GUI, prompts, etc.)
         self.close_owlette_windows()
@@ -264,7 +265,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                                 'pid': pid
                                             }
                                             recovered_count += 1
-                                            logging.info(f"✓ Recovered process '{process.get('name')}' with PID {pid}")
+                                            logging.info(f"[OK] Recovered process '{process.get('name')}' with PID {pid}")
                                         else:
                                             logging.info(f"Skipping recovery of '{process.get('name')}' (PID {pid}) - autolaunch is disabled")
                                     else:
@@ -299,10 +300,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Write cleaned state back to file (removes dead PIDs)
             if dead_pid_count > 0:
                 shared_utils.write_json_to_file(cleaned_states, shared_utils.RESULT_FILE_PATH)
-                logging.info(f"✓ Cleaned up {dead_pid_count} dead PID(s) from state file")
+                logging.info(f"[OK] Cleaned up {dead_pid_count} dead PID(s) from state file")
 
             if recovered_count > 0:
-                logging.info(f"✓ Successfully recovered {recovered_count} running process(es) from previous session")
+                logging.info(f"[OK] Successfully recovered {recovered_count} running process(es) from previous session")
             else:
                 logging.info("No running processes to recover from previous session")
 
@@ -460,10 +461,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             try:
                 metrics = shared_utils.get_system_metrics()
                 self.firebase_client._upload_metrics(metrics)
-                logging.info(f"✓ Process status synced to Firebase: PID {pid} -> LAUNCHING")
+                logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> LAUNCHING")
             except Exception as e:
                 # Don't crash if Firebase sync fails - it will sync on next interval
-                logging.error(f"✗ Failed to sync process status to Firebase: {e}")
+                logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
                 logging.exception("Full traceback:")
 
         return pid
@@ -670,7 +671,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if stale_ids:
                 for pid in stale_ids:
                     del self.last_started[pid]
-                logging.info(f"✓ Cleaned up {len(stale_ids)} stale entries from last_started tracking")
+                logging.info(f"[OK] Cleaned up {len(stale_ids)} stale entries from last_started tracking")
 
             # Clean up relaunch_attempts dictionary (uses process names, need to map)
             current_process_names = {p.get('name') for p in config.get('processes', []) if p.get('name')}
@@ -678,7 +679,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if stale_names:
                 for name in stale_names:
                     del self.relaunch_attempts[name]
-                logging.info(f"✓ Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
+                logging.info(f"[OK] Cleaned up {len(stale_names)} stale entries from relaunch_attempts tracking")
 
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
@@ -730,7 +731,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 psutil.Process(pid).terminate()
                                 # Update status and sync to Firebase immediately
                                 shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
-                                logging.info(f"✓ Terminated removed process: {removed_proc.get('name')} (PID {pid})")
+                                logging.info(f"[OK] Terminated removed process: {removed_proc.get('name')} (PID {pid})")
                             except Exception as e:
                                 logging.error(f"Failed to terminate removed process PID {pid}: {e}")
 
@@ -757,7 +758,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                         psutil.Process(pid).terminate()
                                         # Update status and sync to Firebase immediately
                                         shared_utils.update_process_status_in_json(pid, 'STOPPED', self.firebase_client)
-                                        logging.info(f"✓ Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
+                                        logging.info(f"[OK] Terminated process with disabled autolaunch: {new_proc.get('name')} (PID {pid})")
                                     except Exception as e:
                                         logging.error(f"Failed to terminate PID {pid}: {e}")
                         elif new_autolaunch and not old_autolaunch:
@@ -860,7 +861,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
                 verify_path = cmd_data.get('verify_path')  # Optional verification path
-                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                timeout_seconds = cmd_data.get('timeout_seconds', 1200)  # Default: 20 minutes
                 expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
@@ -877,6 +878,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Get temporary path for installer
                 temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
 
+                # Initialize self-update flag (must be before try block for finally block access)
+                is_self_update = False
+
                 try:
                     # Update status: downloading
                     if self.firebase_client:
@@ -884,38 +888,108 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Download the installer
                     logging.info(f"Downloading installer to: {temp_installer_path}")
-                    download_success = installer_utils.download_file(installer_url, temp_installer_path)
+                    download_success, actual_installer_path = installer_utils.download_file(installer_url, temp_installer_path)
 
                     if not download_success:
                         return f"Error: Failed to download installer from {installer_url}"
+
+                    # Use the actual path where the file was saved (may differ if file was in use)
+                    temp_installer_path = actual_installer_path
 
                     # Verify checksum if provided (SECURITY: recommended for remote installations)
                     if expected_sha256:
                         logging.info("Verifying installer checksum...")
                         checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
                         if not checksum_valid:
-                            installer_utils.cleanup_installer(temp_installer_path)
+                            installer_utils.cleanup_installer(temp_installer_path, force=True)
                             return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
-                        logging.info("✓ Checksum verification passed")
+                        logging.info("[OK] Checksum verification passed")
                     else:
-                        logging.warning("⚠ No checksum provided - skipping verification (security risk)")
+                        logging.warning("[WARNING] No checksum provided - skipping verification (security risk)")
 
                     # Update status: installing
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Execute the installer (pass active_installations for cancellation support)
-                    logging.info("Executing installer with silent flags")
-                    success, exit_code, error_msg = installer_utils.execute_installer(
-                        temp_installer_path,
-                        silent_flags,
-                        installer_name,
-                        self.active_installations,
-                        timeout_seconds
-                    )
+                    # SELF-UPDATE DETECTION: Check if this is an Owlette self-update
+                    is_self_update = 'owlette' in installer_name.lower()
 
-                    if not success:
-                        return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
+                    if is_self_update:
+                        # This is a self-update - we need to shut down to allow file replacement
+                        logging.warning("=" * 60)
+                        logging.warning("SELF-UPDATE DETECTED: Owlette is updating itself")
+                        logging.warning(f"Installer: {installer_name}")
+                        logging.warning("Strategy: Launch installer detached, then stop service")
+                        logging.warning("=" * 60)
+
+                        # Launch installer in detached mode (won't wait for it to complete)
+                        import subprocess
+
+                        # Build command as list (no shell=True to avoid cmd.exe intermediary)
+                        cmd_list = [temp_installer_path]
+                        if silent_flags:
+                            cmd_list.extend(silent_flags.split())
+
+                        logging.info(f"Launching detached installer: {' '.join(cmd_list)}")
+
+                        # DETACHED_PROCESS (0x00000008) + CREATE_NEW_PROCESS_GROUP (0x00000200)
+                        # CREATE_NO_WINDOW (0x08000000)
+                        DETACHED_PROCESS = 0x00000008
+                        CREATE_NEW_PROCESS_GROUP = 0x00000200
+                        CREATE_NO_WINDOW = 0x08000000
+
+                        try:
+                            # Use Windows Task Scheduler to launch installer after service stops
+                            # This ensures the service is fully stopped before installer runs
+                            import subprocess
+                            import tempfile
+
+                            # Create a one-time scheduled task to run installer in 15 seconds
+                            task_name = "OwletteSelfUpdate"
+                            installer_cmd = f'"{temp_installer_path}"'
+                            if silent_flags:
+                                installer_cmd += f" {silent_flags}"
+
+                            # Delete any existing task first
+                            subprocess.run(f'schtasks /Delete /TN {task_name} /F', shell=True, capture_output=True)
+
+                            # Create new task that runs once in 15 seconds, then deletes itself
+                            create_task_cmd = (
+                                f'schtasks /Create /TN {task_name} /TR "{installer_cmd}" '
+                                f'/SC ONCE /ST {(datetime.datetime.now() + datetime.timedelta(seconds=15)).strftime("%H:%M")} '
+                                f'/RU SYSTEM /V1 /F'
+                            )
+
+                            result = subprocess.run(create_task_cmd, shell=True, capture_output=True, text=True)
+                            if result.returncode != 0:
+                                raise Exception(f"Failed to create scheduled task: {result.stderr}")
+
+                            logging.info(f"Created scheduled task '{task_name}' to run installer in 15 seconds")
+                            logging.warning("Stopping service NOW - installer will run after service stops...")
+
+                            # Stop service immediately
+                            self.stop()
+
+                            return "Self-update initiated: Service stopped, installer will run via scheduled task"
+
+                        except Exception as e:
+                            error_msg = f"Failed to launch self-update installer: {e}"
+                            logging.error(error_msg)
+                            return f"Error: {error_msg}"
+
+                    else:
+                        # Normal installation (not self-update) - wait for completion
+                        logging.info("Executing installer with silent flags")
+                        success, exit_code, error_msg = installer_utils.execute_installer(
+                            temp_installer_path,
+                            silent_flags,
+                            installer_name,
+                            self.active_installations,
+                            timeout_seconds
+                        )
+
+                        if not success:
+                            return f"Error: Installation failed with exit code {exit_code}. {error_msg}"
 
                     # Optional: Verify installation
                     if verify_path:
@@ -927,11 +1001,102 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         result_msg = f"Installation completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
+
+                    # Trigger immediate software inventory sync after installation completes
+                    try:
+                        if firebase_client and firebase_client.is_connected():
+                            logging.info("Triggering software inventory sync after installation")
+                            firebase_client._sync_software_inventory(force=True)
+                    except Exception as sync_error:
+                        logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
+                        # Don't fail the installation if sync fails
+
                     return result_msg
 
                 finally:
-                    # Always cleanup the temporary installer file
-                    installer_utils.cleanup_installer(temp_installer_path)
+                    # Always cleanup the temporary installer file (with force=True to handle locked files)
+                    # EXCEPT for self-updates: installer must stay on disk until it finishes extracting
+                    try:
+                        if not is_self_update:
+                            installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        else:
+                            logging.info("Skipping cleanup for self-update (installer will clean itself up)")
+                    except Exception as cleanup_error:
+                        logging.warning(f"Error in cleanup finally block: {cleanup_error}")
+
+            elif cmd_type == 'update_owlette':
+                # Self-update command: Downloads and installs new Owlette version
+                # Uses bootstrap updater pattern to replace running service
+                installer_url = cmd_data.get('installer_url')
+                deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
+
+                if not installer_url:
+                    return "Error: No installer URL provided for update"
+
+                logging.info("="*60)
+                logging.info("OWLETTE SELF-UPDATE INITIATED")
+                logging.info("="*60)
+                logging.info(f"Installer URL: {installer_url}")
+                logging.info("This service will stop and restart automatically")
+
+                try:
+                    # Update status: downloading (handled by bootstrap updater)
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
+
+                    # Get path to updater script
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    updater_script = os.path.join(script_dir, 'owlette_updater.py')
+
+                    if not os.path.exists(updater_script):
+                        return f"Error: Bootstrap updater not found at {updater_script}"
+
+                    # Get Python executable path
+                    python_exe = sys.executable
+
+                    # Spawn the bootstrap updater as a detached process
+                    # It will:
+                    # 1. Stop this service
+                    # 2. Download installer
+                    # 3. Run installer (which will upgrade and restart service)
+                    # 4. Exit
+                    logging.info(f"Spawning bootstrap updater: {updater_script}")
+                    logging.info(f"Python executable: {python_exe}")
+
+                    # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
+                    DETACHED_PROCESS = 0x00000008
+                    CREATE_NO_WINDOW = 0x08000000
+
+                    process = subprocess.Popen(
+                        [python_exe, updater_script, installer_url],
+                        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL
+                    )
+
+                    logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
+                    logging.info("Service will stop in 3 seconds...")
+
+                    # Give the updater time to initialize
+                    time.sleep(3)
+
+                    # Stop this service
+                    # The updater will take over from here
+                    logging.info("Stopping service for update...")
+                    logging.info("Service will restart automatically after update")
+                    logging.info("="*60)
+
+                    # Schedule service stop (will happen after this command completes)
+                    self.SvcStop()
+
+                    return "Update initiated - service stopping for upgrade"
+
+                except Exception as e:
+                    error_msg = f"Error initiating update: {str(e)}"
+                    logging.error(error_msg)
+                    logging.exception("Update initiation failed")
+                    return error_msg
 
             elif cmd_type == 'cancel_installation':
                 # Cancel an active installation
@@ -962,7 +1127,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 silent_flags = cmd_data.get('silent_flags', '')
                 installer_type = cmd_data.get('installer_type', 'custom')
                 verify_paths = cmd_data.get('verify_paths', [])  # Paths to verify removal
-                timeout_seconds = cmd_data.get('timeout_seconds', 600)  # Default: 10 minutes
+                timeout_seconds = cmd_data.get('timeout_seconds', 1200)  # Default: 20 minutes
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
                 if not software_name or not uninstall_command:
@@ -1042,7 +1207,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         for verify_path in verify_paths:
                             if verify_path:
                                 # Check if path still exists (should NOT exist after uninstall)
-                                import os
                                 path_exists = os.path.exists(verify_path)
                                 verification_results.append({
                                     'path': verify_path,
@@ -1066,6 +1230,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         result_msg = f"Uninstall completed successfully (exit code {exit_code})"
 
                     logging.info(result_msg)
+
+                    # Trigger immediate software inventory sync after uninstall completes
+                    try:
+                        if firebase_client and firebase_client.is_connected():
+                            logging.info("Triggering software inventory sync after uninstall")
+                            firebase_client._sync_software_inventory(force=True)
+                    except Exception as sync_error:
+                        logging.warning(f"Failed to sync software inventory after uninstall: {sync_error}")
+                        # Don't fail the uninstall if sync fails
+
                     return result_msg
 
                 except Exception as e:
@@ -1097,6 +1271,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 else:
                     logging.warning(f"Cancellation failed: {message}")
                     return f"Cancellation failed: {message}"
+
+            elif cmd_type == 'refresh_software_inventory':
+                # Force immediate refresh of software inventory
+                logging.info("Refreshing software inventory on demand")
+                try:
+                    if firebase_client and firebase_client.is_connected():
+                        firebase_client._sync_software_inventory(force=True)
+                        return "Software inventory refreshed successfully"
+                    else:
+                        return "Error: Not connected to Firebase"
+                except Exception as e:
+                    error_msg = f"Failed to refresh software inventory: {str(e)}"
+                    logging.error(error_msg)
+                    return error_msg
 
             elif cmd_type == 'distribute_project':
                 # Distribute project files (ZIP) with extraction
@@ -1255,51 +1443,92 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
-        while self.is_alive:
-            # Start the tray icon script as a process (if it isn't running)
-            tray_script = 'owlette_tray.py'
-            if not shared_utils.is_script_running(tray_script):
-                self.launch_python_script_as_user(tray_script)
+        try:
+            while self.is_alive:
+                # Check for shutdown flag from tray icon
+                shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
+                if os.path.exists(shutdown_flag):
+                    logging.info("Shutdown flag detected - initiating graceful shutdown")
+                    try:
+                        os.remove(shutdown_flag)
+                    except:
+                        pass
+                    self.is_alive = False
+                    break
 
-            # Get the current time
-            self.current_time = datetime.datetime.now()
+                # Start the tray icon script as a process (if it isn't running)
+                tray_script = 'owlette_tray.py'
+                if not shared_utils.is_script_running(tray_script):
+                    self.launch_python_script_as_user(tray_script)
 
-            # Load in latest results from the output file
-            content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
-            if content:
-                self.results = content
+                # Get the current time
+                self.current_time = datetime.datetime.now()
 
-            # Load in all processes in config json
-            processes = shared_utils.read_config(['processes'])
-            for process in processes:
-                if process.get('autolaunch', False): # Default to False if not found
-                    self.handle_process(process)
+                # Load in latest results from the output file
+                content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                if content:
+                    self.results = content
 
-            if self.first_start:
-                logging.info('Owlette initialized')
+                # Load in all processes in config json
+                processes = shared_utils.read_config(['processes'])
+                for process in processes:
+                    if process.get('autolaunch', False): # Default to False if not found
+                        self.handle_process(process)
 
-            self.first_start = False
+                if self.first_start:
+                    logging.info('Owlette initialized')
 
-            # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
-            cleanup_counter += 1
-            if cleanup_counter >= 30:
-                self.cleanup_stale_tracking_data()
-                cleanup_counter = 0
+                self.first_start = False
 
-            # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
-            log_cleanup_counter += 1
-            if log_cleanup_counter >= 8640:
+                # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
+                cleanup_counter += 1
+                if cleanup_counter >= 30:
+                    self.cleanup_stale_tracking_data()
+                    cleanup_counter = 0
+
+                # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
+                log_cleanup_counter += 1
+                if log_cleanup_counter >= 8640:
+                    try:
+                        max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
+                        deleted_count = shared_utils.cleanup_old_logs(max_age_days)
+                        if deleted_count > 0:
+                            logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                    except Exception as e:
+                        logging.error(f"Log cleanup failed: {e}")
+                    log_cleanup_counter = 0
+
+                # Sleep for 10 seconds
+                time.sleep(SLEEP_INTERVAL)
+        finally:
+            # CRITICAL: Cleanup when loop exits (graceful shutdown or signal handler)
+            # This ensures machine is marked offline even when running in NSSM mode
+            logging.info("Main loop exiting - performing cleanup...")
+
+            # Mark machine offline in Firestore
+            if self.firebase_client:
                 try:
-                    max_age_days = shared_utils.read_config(['logging', 'max_age_days']) or 90
-                    deleted_count = shared_utils.cleanup_old_logs(max_age_days)
-                    if deleted_count > 0:
-                        logging.info(f"Daily log cleanup: {deleted_count} old log file(s) removed")
+                    logging.info("Calling firebase_client.stop() to mark machine offline...")
+                    self.firebase_client.stop()
+                    logging.info("[OK] Cleanup complete - machine marked offline")
                 except Exception as e:
-                    logging.error(f"Log cleanup failed: {e}")
-                log_cleanup_counter = 0
+                    logging.error(f"[ERROR] Error during cleanup: {e}")
 
-            # Sleep for 10 seconds
-            time.sleep(SLEEP_INTERVAL)
+            # Close any open Owlette windows
+            try:
+                self.close_owlette_windows()
+                logging.info("[OK] Owlette windows closed")
+            except Exception as e:
+                logging.error(f"Error closing windows: {e}")
+
+            # Terminate tray icon
+            try:
+                self.terminate_tray_icon()
+                logging.info("[OK] Tray icon terminated")
+            except Exception as e:
+                logging.error(f"Error terminating tray icon: {e}")
+
+            logging.info("Service cleanup complete - exiting")
 
 if __name__ == '__main__':
     # Check if running under NSSM (no command-line arguments)

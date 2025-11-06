@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSites } from '@/hooks/useFirestore';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface ManageUserSitesDialogProps {
   open: boolean;
@@ -27,7 +28,8 @@ export function ManageUserSitesDialog({
   onAssignSite,
   onRemoveSite,
 }: ManageUserSitesDialogProps) {
-  const { sites, loading: sitesLoading } = useSites();
+  const { isAdmin, userSites: adminSites } = useAuth();
+  const { sites, loading: sitesLoading } = useSites(adminSites, isAdmin);
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
 
@@ -65,6 +67,10 @@ export function ManageUserSitesDialog({
 
   const assignedSites = sites.filter((site) => userSites.includes(site.id));
   const availableSites = sites.filter((site) => !userSites.includes(site.id));
+
+  // Find orphaned site IDs (in user's array but don't exist in sites collection)
+  const validSiteIds = sites.map(s => s.id);
+  const orphanedSiteIds = userSites.filter((siteId) => !validSiteIds.includes(siteId));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -121,6 +127,44 @@ export function ManageUserSitesDialog({
                 </div>
               )}
             </div>
+
+            {/* Orphaned/Invalid Site References */}
+            {orphanedSiteIds.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-red-400 mb-3">
+                  Invalid Site References ({orphanedSiteIds.length})
+                </h3>
+                <div className="space-y-2">
+                  <div className="text-xs text-slate-400 mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
+                    These site IDs are in the user's access list but the sites no longer exist or are inaccessible. Remove them to fix the site count.
+                  </div>
+                  {orphanedSiteIds.map((siteId) => (
+                    <div
+                      key={siteId}
+                      className="flex items-center justify-between p-3 bg-red-950/30 rounded-lg border border-red-900"
+                    >
+                      <div className="flex-1">
+                        <p className="text-red-300 font-medium">Invalid/Orphaned Site</p>
+                        <p className="text-xs text-red-400 font-mono">{siteId}</p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleRemoveSite(siteId)}
+                        disabled={removingFrom === siteId}
+                        className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                      >
+                        {removingFrom === siteId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <X className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Available Sites */}
             {availableSites.length > 0 && (

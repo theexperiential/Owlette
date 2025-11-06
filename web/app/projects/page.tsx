@@ -14,6 +14,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import DownloadButton from '@/components/DownloadButton';
 import { toast } from 'sonner';
 
 export default function ProjectsPage() {
@@ -121,6 +122,7 @@ export default function ProjectsPage() {
         onSiteChange={handleSiteChange}
         onManageSites={() => setManageDialogOpen(true)}
         onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
       />
 
       {/* Site Management Dialogs */}
@@ -182,7 +184,7 @@ export default function ProjectsPage() {
         />
 
         {/* Quick Stats */}
-        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
+        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4 animate-in fade-in duration-300">
           <Card className="border-slate-800 bg-slate-900">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-slate-200">Total Distributions</CardTitle>
@@ -225,7 +227,7 @@ export default function ProjectsPage() {
         </div>
 
         {/* Distributions List */}
-        <div className="space-y-4">
+        <div className="space-y-4 animate-in fade-in duration-300">
           {distributionsLoading ? (
             <Card className="border-slate-800 bg-slate-900">
               <CardContent className="p-8 text-center">

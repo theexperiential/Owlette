@@ -17,9 +17,38 @@ echo.
 cd /d "%~dp0"
 
 :: ============================================================================
+:: Step 0: Read and validate VERSION file
+:: ============================================================================
+echo [0/9] Reading VERSION file...
+
+if not exist "VERSION" (
+    echo ERROR: VERSION file not found!
+    pause
+    exit /b 1
+)
+:: echo DEBUG: VERSION file exists
+
+:: Read version from VERSION file
+set /p OWLETTE_VERSION=<VERSION
+:: echo DEBUG: Read result: [%OWLETTE_VERSION%]
+
+:: Remove spaces
+set OWLETTE_VERSION=%OWLETTE_VERSION: =%
+:: echo DEBUG: After trim: [%OWLETTE_VERSION%]
+
+if "%OWLETTE_VERSION%"=="" (
+    echo ERROR: VERSION is empty after reading!
+    pause
+    exit /b 1
+)
+
+echo Building Owlette version: %OWLETTE_VERSION%
+echo.
+
+:: ============================================================================
 :: Step 1: Clean previous builds
 :: ============================================================================
-echo [1/8] Cleaning previous builds...
+echo [1/9] Cleaning previous builds...
 if exist "build" (
     rmdir /s /q build 2>nul
 )
@@ -29,7 +58,7 @@ mkdir build\installer_package
 :: ============================================================================
 :: Step 2: Download Python 3.11 embedded
 :: ============================================================================
-echo [2/8] Downloading Python 3.11 embedded...
+echo [2/9] Downloading Python 3.11 embedded...
 if not exist "build\python-embed.zip" (
     echo Downloading Python 3.11.8 embedded...
     curl -L -o build\python-embed.zip https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip
@@ -47,7 +76,7 @@ powershell -Command "Expand-Archive -Path build\python-embed.zip -DestinationPat
 :: ============================================================================
 :: Step 3: Configure Python import paths
 :: ============================================================================
-echo [3/8] Configuring Python import paths...
+echo [3/9] Configuring Python import paths...
 (
     echo python311.zip
     echo .
@@ -62,30 +91,32 @@ echo [3/8] Configuring Python import paths...
 :: ============================================================================
 :: Step 4: Install pip
 :: ============================================================================
-echo [4/8] Installing pip...
+echo [4/9] Installing pip...
 curl -o build\get-pip.py https://bootstrap.pypa.io/get-pip.py
-build\python\python.exe build\get-pip.py
+"%~dp0build\python\python.exe" "%~dp0build\get-pip.py"
 if errorlevel 1 (
     echo ERROR: Failed to install pip
     pause
     exit /b 1
 )
+echo Pip installed successfully!
 
 :: ============================================================================
 :: Step 5: Install dependencies
 :: ============================================================================
-echo [5/8] Installing dependencies (this may take a few minutes)...
-build\python\python.exe -m pip install -r requirements.txt
+echo [5/9] Installing dependencies (this may take a few minutes)...
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo ERROR: Failed to install dependencies
     pause
     exit /b 1
 )
+echo Dependencies installed successfully!
 
 :: ============================================================================
 :: Step 6: Copy tkinter from system Python 3.11
 :: ============================================================================
-echo [6/8] Copying tkinter from system Python...
+echo [6/9] Copying tkinter from system Python...
 if exist "C:\Program Files\Python311" (
     echo Copying tkinter module...
     xcopy /E /I /Y "C:\Program Files\Python311\Lib\tkinter" build\python\Lib\tkinter\ >nul
@@ -106,7 +137,7 @@ if exist "C:\Program Files\Python311" (
 :: ============================================================================
 :: Step 7: Download NSSM
 :: ============================================================================
-echo [7/8] Downloading NSSM...
+echo [7/9] Downloading NSSM...
 if not exist "build\nssm.zip" (
     echo Downloading NSSM 2.24...
     curl -L -o build\nssm.zip https://nssm.cc/release/nssm-2.24.zip
@@ -141,6 +172,10 @@ mkdir build\installer_package\scripts 2>nul
 echo Copying Python runtime...
 xcopy /E /I /Y build\python\* build\installer_package\python\ >nul
 
+:: Copy VERSION file (single source of truth for version management)
+echo Copying VERSION file...
+copy /Y VERSION build\installer_package\agent\ >nul
+
 :: Copy agent source code
 echo Copying agent source code...
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
@@ -171,7 +206,7 @@ echo.
 echo [9/9] Checking for Inno Setup...
 
 :: Check for Inno Setup
-set INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
+set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "%INNO_PATH%" (
     echo Found Inno Setup! Creating installer.exe...
     mkdir build\installer_output 2>nul
@@ -187,7 +222,7 @@ if exist "%INNO_PATH%" (
         echo SUCCESS! Installer Created!
         echo ========================================
         echo.
-        echo Output: build\installer_output\Owlette-Installer-v2.0.0.exe
+        echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
         echo.
     )
 ) else (

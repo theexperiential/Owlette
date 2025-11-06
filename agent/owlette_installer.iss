@@ -8,8 +8,8 @@
 ; ---------------
 ; This installer uses OAuth custom token authentication (no service accounts).
 ; During installation, the user is prompted to authenticate via their browser.
-; The agent receives OAuth tokens which are stored securely in Windows
-; Credential Manager (encrypted, machine + user specific).
+; The agent receives OAuth tokens which are encrypted and stored in
+; C:\ProgramData\Owlette\.tokens.enc (machine-specific encryption key).
 ;
 ; OAUTH FLOW:
 ; -----------
@@ -18,7 +18,7 @@
 ; 3. Web backend generates registration code (single-use, 24h expiry)
 ; 4. Browser sends callback to http://localhost:8765 with site_id + code
 ; 5. configure_site.py exchanges code for access token + refresh token
-; 6. Tokens stored in Windows Credential Manager (not in config files)
+; 6. Tokens encrypted and stored in C:\ProgramData\Owlette\.tokens.enc (not in config files)
 ; 7. Agent uses tokens to authenticate with Firestore REST API
 ;
 ; SECURITY:
@@ -38,8 +38,22 @@
 ;   Owlette-Installer-v2.0.0.exe /SERVER=prod
 ; ============================================================================
 
+; VERSION MANAGEMENT
+; ------------------
+; Version is read from VERSION file at build time (passed via /DMyAppVersion=X.X.X)
+; If not provided, defaults to reading from VERSION file via ReadIni workaround
+; To bump version: Edit agent/VERSION file and rebuild
+; Build script (build_embedded_installer.bat) validates VERSION file exists and passes it here
+
+#ifndef MyAppVersion
+  #define MyAppVersion GetEnv("OWLETTE_VERSION")
+  #if MyAppVersion == ""
+    #define MyAppVersion "2.0.3"
+    #pragma message "WARNING: Using fallback version 2.0.3 - VERSION file not found or OWLETTE_VERSION not set"
+  #endif
+#endif
+
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"
@@ -122,7 +136,10 @@ Name: "{userstartup}\Owlette Tray"; Filename: "{app}\scripts\launch_tray.bat"; I
 ; Usage: Owlette-Installer-v2.0.0.exe              (uses owlette.app, default)
 ;        Owlette-Installer-v2.0.0.exe /SERVER=prod (uses owlette.app)
 ;        Owlette-Installer-v2.0.0.exe /SERVER=dev  (uses dev.owlette.app for testing)
-Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated
+;
+; IMPORTANT: Skip configuration in silent mode if config already exists (for self-updates)
+; This prevents the installer from hanging while waiting for browser OAuth that won't happen
+Filename: "{app}\python\python.exe"; Parameters: """{app}\agent\src\configure_site.py"" --url ""{code:GetServerEnvironment}"""; Description: "Configure Owlette site"; StatusMsg: "Opening browser for site configuration..."; Flags: waituntilterminated; Check: ShouldConfigureSite
 
 ; Step 2: Install and start the Windows service - RUNS SECOND (only after configuration completes)
 Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Install Owlette service"; StatusMsg: "Installing Owlette service..."; Flags: runhidden waituntilterminated
@@ -153,6 +170,27 @@ begin
     Result := 'https://owlette.app/setup';  // Default to production
 
   Log('Server environment: ' + ServerParam + ' -> ' + Result);
+end;
+
+function ShouldConfigureSite(): Boolean;
+var
+  ConfigPath: String;
+begin
+  // Check if config already exists (self-update scenario)
+  ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
+
+  // If running in silent mode AND config exists, skip configuration
+  // (machine is already set up - this is a self-update)
+  if WizardSilent() and FileExists(ConfigPath) then
+  begin
+    Log('Silent mode + config exists - skipping OAuth (self-update)');
+    Result := False;
+  end
+  else
+  begin
+    Log('Will run OAuth configuration (fresh install or interactive)');
+    Result := True;
+  end;
 end;
 
 procedure BackupConfigIfExists;
@@ -232,25 +270,35 @@ begin
     end;
 
     // Ask user if they want to remove configuration and logs from ProgramData
+    // In silent mode, always preserve data (for upgrades)
     DataDir := ExpandConstant('{commonappdata}\Owlette');
     if DirExists(DataDir) then
     begin
-      if MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
-                'This includes:' + #13#10 +
-                '  • Configuration (config.json)' + #13#10 +
-                '  • Authentication tokens' + #13#10 +
-                '  • Log files' + #13#10 +
-                '  • Cache files' + #13#10#13#10 +
-                'Choose "No" to keep your settings for future installations.',
-                mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+      // Silent uninstall (triggered by upgrade) → preserve data automatically
+      // Interactive uninstall → ask user
+      if not UninstallSilent() and
+         (MsgBox('Do you want to remove all Owlette configuration and data files?' + #13#10#13#10 +
+                 'This includes:' + #13#10 +
+                 '  • Configuration (config.json)' + #13#10 +
+                 '  • Authentication tokens' + #13#10 +
+                 '  • Log files' + #13#10 +
+                 '  • Cache files' + #13#10#13#10 +
+                 'Choose "No" to keep your settings for future installations.',
+                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
       begin
+        Log('User chose to remove all data');
         if DelTree(DataDir, True, True, True) then
           Log('Removed user data from: ' + DataDir)
         else
           Log('Failed to remove user data from: ' + DataDir);
       end
       else
-        Log('User data preserved at: ' + DataDir);
+      begin
+        if UninstallSilent() then
+          Log('Silent uninstall - preserving user data for upgrade')
+        else
+          Log('User chose to preserve data');
+      end;
     end;
   end;
 end;
@@ -267,9 +315,12 @@ begin
   // Check if running as admin
   if not IsAdmin then
   begin
-    MsgBox('This installer requires administrator privileges to install the Windows service.' + #13#10 +
-           'Please right-click the installer and select "Run as administrator".',
-           mbError, MB_OK);
+    Log('ERROR: Not running as administrator');
+    // Only show error dialog in interactive mode
+    if not WizardSilent() then
+      MsgBox('This installer requires administrator privileges to install the Windows service.' + #13#10 +
+             'Please right-click the installer and select "Run as administrator".',
+             mbError, MB_OK);
     Result := False;
     Exit;
   end;
@@ -277,11 +328,18 @@ begin
   // Check for existing installation
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A7B8C9D0-E1F2-4A5B-8C9D-0E1F2A3B4C5D}_is1', 'UninstallString', UninstallString) then
   begin
-    if MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
-              'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
-              'Click OK to uninstall and continue, or Cancel to exit.',
-              mbConfirmation, MB_OKCANCEL) = IDOK then
+    // In silent mode, automatically proceed with uninstall without user confirmation
+    // In interactive mode, ask user for confirmation
+    if WizardSilent() or
+       (MsgBox('An existing Owlette installation was detected.' + #13#10#13#10 +
+               'Your configuration can be preserved, but the installer needs to uninstall the old version first.' + #13#10#13#10 +
+               'Click OK to uninstall and continue, or Cancel to exit.',
+               mbConfirmation, MB_OKCANCEL) = IDOK) then
     begin
+      if WizardSilent() then
+        Log('Proceeding with uninstall (Silent mode - auto-confirmed)')
+      else
+        Log('Proceeding with uninstall (Interactive mode - user confirmed)');
       // Extract the uninstaller path (remove /SILENT flag if present)
       UninstallExe := RemoveQuotes(UninstallString);
 
@@ -292,8 +350,8 @@ begin
         Sleep(2000);
       end;
 
-      // Run uninstaller silently
-      if Exec(UninstallExe, '/SILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      // Run uninstaller very silently (no dialogs at all)
+      if Exec(UninstallExe, '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
       begin
         Log('Previous installation uninstalled successfully');
         DidUninstallExisting := True;  // Track that we handled uninstall
@@ -301,7 +359,10 @@ begin
       end
       else
       begin
-        MsgBox('Failed to uninstall the existing version. Please uninstall manually and try again.', mbError, MB_OK);
+        Log('ERROR: Failed to uninstall the existing version');
+        // Only show error dialog in interactive mode
+        if not WizardSilent() then
+          MsgBox('Failed to uninstall the existing version. Please uninstall manually and try again.', mbError, MB_OK);
         Result := False;
         Exit;
       end;
@@ -317,11 +378,16 @@ begin
   // (uninstall already stopped the service and closed processes)
   if not DidUninstallExisting then
   begin
+    Log('Closing any running Owlette processes (fresh install path)');
     // Try to close GUI and tray icon processes silently
     Exec('taskkill', '/F /IM pythonw.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec('taskkill', '/F /IM python.exe /FI "WINDOWTITLE eq OWLETTE*"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
     // Wait a moment for processes to close
     Sleep(2000);
+  end
+  else
+  begin
+    Log('Skipping process cleanup (already handled by uninstaller during upgrade)');
   end;
 end;

@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
+import { useEffect, useState, useRef } from 'react';
+import { collection, onSnapshot, doc, setDoc, getDoc, updateDoc, getDocs, deleteDoc, deleteField, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export interface DeploymentTemplate {
@@ -16,11 +16,12 @@ export interface DeploymentTemplate {
 
 export interface DeploymentTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'downloading' | 'installing' | 'completed' | 'failed' | 'cancelled' | 'uninstalled';
   progress?: number;
   error?: string;
   completedAt?: number;
   cancelledAt?: number;
+  uninstalledAt?: number;
 }
 
 export interface Deployment {
@@ -33,7 +34,7 @@ export interface Deployment {
   targets: DeploymentTarget[];
   createdAt: number;
   completedAt?: number;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'uninstalled';
 }
 
 export function useDeploymentTemplates(siteId: string) {
@@ -124,6 +125,8 @@ export function useDeployments(siteId: string) {
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Track processed commands across renders to prevent infinite loops
+  const processedCommandsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!db || !siteId) {
@@ -181,11 +184,13 @@ export function useDeployments(siteId: string) {
     if (!db || !siteId || deployments.length === 0) return;
 
     const unsubscribes: (() => void)[] = [];
+    // Use ref to persist processed commands across renders
+    const processedCommands = processedCommandsRef.current;
 
-    // Get all unique machine IDs from in-progress deployments
+    // Get all unique machine IDs from active deployments (including those that might be uninstalled)
     const machineIds = new Set<string>();
     deployments.forEach(deployment => {
-      if (deployment.status === 'in_progress' || deployment.status === 'pending') {
+      if (deployment.status === 'in_progress' || deployment.status === 'pending' || deployment.status === 'completed' || deployment.status === 'partial') {
         deployment.targets.forEach(target => machineIds.add(target.machineId));
       }
     });
@@ -194,109 +199,199 @@ export function useDeployments(siteId: string) {
     machineIds.forEach(machineId => {
       const completedRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
 
-      const unsubscribe = onSnapshot(completedRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
+      const unsubscribe = onSnapshot(
+        completedRef,
+        async (snapshot) => {
+          if (!snapshot.exists()) return;
 
-        const completedCommands = snapshot.data();
+          const completedCommands = snapshot.data();
 
-        // Check each completed command for deployment_id
-        for (const [commandId, commandData] of Object.entries(completedCommands)) {
-          const command = commandData as any;
+          // Check each completed command for deployment_id
+          for (const [commandId, commandData] of Object.entries(completedCommands)) {
+            const command = commandData as any;
 
-          if (command.deployment_id) {
-            const deployment = deployments.find(d => d.id === command.deployment_id);
-            if (!deployment) continue;
+            // Skip if we've already processed this command
+            if (processedCommands.has(commandId)) {
+              continue;
+            }
 
-            const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
+            if (command.deployment_id) {
+              const deploymentRef = doc(db!, 'sites', siteId, 'deployments', command.deployment_id);
 
-            if (command.status === 'completed') {
-              // Handle completed installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || Date.now() }
-                  : target
-              );
+              try {
+                // Fetch the latest deployment document from Firestore (don't use stale local state)
+                const deploymentSnap = await getDoc(deploymentRef);
+                if (!deploymentSnap.exists()) {
+                  console.debug(`[useDeployments] Deployment ${command.deployment_id} not found`);
+                  continue;
+                }
 
-              // Calculate overall status
-              const allCompleted = updatedTargets.every(t => t.status === 'completed');
-              const anyFailed = updatedTargets.some(t => t.status === 'failed');
-              const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
+                const deployment = {
+                  id: deploymentSnap.id,
+                  ...deploymentSnap.data()
+                } as Deployment;
 
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allCompleted ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'failed') {
-              // Handle failed installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || Date.now() }
-                  : target
-              );
+                // Handle uninstall commands
+                if (command.type === 'uninstall_software' && command.status === 'completed') {
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      return {
+                        ...target,
+                        status: 'uninstalled' as const,
+                        uninstalledAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
 
-              // Calculate overall status
-              const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
-              const anyCompleted = updatedTargets.some(t => t.status === 'completed');
-              const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
+                  // Calculate overall status - if all machines are uninstalled, mark deployment as uninstalled
+                  const allUninstalled = updatedTargets.every(t => t.status === 'uninstalled');
+                  const someUninstalled = updatedTargets.some(t => t.status === 'uninstalled');
+                  const newStatus = allUninstalled ? 'uninstalled' : (someUninstalled ? 'partial' : deployment.status);
 
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allDone ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'cancelled') {
-              // Handle cancelled installations
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
-                  : target
-              );
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
 
-              // Calculate overall status
-              // Cancelled targets don't affect the overall completion status
-              const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
-              const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
-              const anyFailed = remainingTargets.some(t => t.status === 'failed');
-              const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                  }, { merge: true });
 
-              let newStatus = deployment.status;
-              if (remainingTargets.length === 0) {
-                // All targets cancelled
-                newStatus = 'failed';
-              } else if (allCompleted) {
-                newStatus = 'completed';
-              } else if (anyFailed && !anyInProgress) {
-                newStatus = 'partial';
-              } else {
-                newStatus = 'in_progress';
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'completed') {
+                  // Handle completed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress/error fields
+                      const { progress, error, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'completed' as const,
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allCompleted = updatedTargets.every(t => t.status === 'completed');
+                  const anyFailed = updatedTargets.some(t => t.status === 'failed');
+                  const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
+
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allCompleted ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'failed') {
+                  // Handle failed installations
+                  const updatedTargets = deployment.targets.map(target => {
+                    if (target.machineId === machineId) {
+                      // Create new target object without progress field
+                      const { progress, ...rest } = target;
+                      return {
+                        ...rest,
+                        status: 'failed' as const,
+                        ...(command.error ? { error: command.error } : {}),
+                        completedAt: command.completedAt || Date.now()
+                      };
+                    }
+                    return target;
+                  });
+
+                  // Calculate overall status
+                  const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
+                  const anyCompleted = updatedTargets.some(t => t.status === 'completed');
+                  const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
+
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus}`);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(allDone ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'cancelled') {
+                  // Handle cancelled installations
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? { ...target, status: 'cancelled' as const, cancelledAt: command.completedAt || Date.now() }
+                      : target
+                  );
+
+                  // Calculate overall status
+                  // Cancelled targets don't affect the overall completion status
+                  const remainingTargets = updatedTargets.filter(t => t.status !== 'cancelled');
+                  const allCompleted = remainingTargets.length > 0 && remainingTargets.every(t => t.status === 'completed');
+                  const anyFailed = remainingTargets.some(t => t.status === 'failed');
+                  const anyInProgress = remainingTargets.some(t => t.status === 'pending' || t.status === 'downloading' || t.status === 'installing');
+
+                  let newStatus = deployment.status;
+                  if (remainingTargets.length === 0) {
+                    // All targets cancelled
+                    newStatus = 'failed';
+                  } else if (allCompleted) {
+                    newStatus = 'completed';
+                  } else if (anyFailed && !anyInProgress) {
+                    newStatus = 'partial';
+                  } else {
+                    newStatus = 'in_progress';
+                  }
+
+                  console.log(`[useDeployments] Updating deployment ${command.deployment_id} to status: ${newStatus} (cancelled)`);
+
+                  // Update deployment
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: newStatus,
+                    ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
+                  }, { merge: true });
+
+                  console.log(`[useDeployments] Deployment ${command.deployment_id} updated successfully`);
+                } else if (command.status === 'downloading' || command.status === 'installing') {
+                  // Handle intermediate states (downloading, installing)
+                  const updatedTargets = deployment.targets.map(target =>
+                    target.machineId === machineId
+                      ? {
+                          ...target,
+                          status: command.status as 'downloading' | 'installing',
+                          ...(command.progress !== undefined ? { progress: command.progress } : {})
+                        }
+                      : target
+                  );
+
+                  // Update deployment with new target status
+                  await setDoc(deploymentRef, {
+                    targets: updatedTargets,
+                    status: 'in_progress',
+                  }, { merge: true });
+                }
+
+                // Mark this command as processed to prevent reprocessing
+                processedCommands.add(commandId);
+              } catch (error: any) {
+                // Handle Firestore write errors gracefully
+                console.error(`[useDeployments] Error updating deployment ${command.deployment_id}:`, error);
+                // Still mark as processed even on error to avoid infinite retries
+                processedCommands.add(commandId);
               }
-
-              // Update deployment
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(remainingTargets.length === 0 || (allCompleted && !anyInProgress) ? { completedAt: Date.now() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'downloading' || command.status === 'installing') {
-              // Handle intermediate states (downloading, installing)
-              const updatedTargets = deployment.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: command.status as 'downloading' | 'installing', progress: command.progress }
-                  : target
-              );
-
-              // Update deployment with new target status
-              await setDoc(deploymentRef, {
-                targets: updatedTargets,
-                status: 'in_progress',
-              }, { merge: true });
             }
           }
+        },
+        (error) => {
+          // Silently handle permission errors for machines that don't exist or are inaccessible
+          // This prevents console spam when deployments reference deleted/offline machines
+          console.debug(`[useDeployments] Listener error for machine ${machineId}:`, error.code);
         }
-      });
+      );
 
       unsubscribes.push(unsubscribe);
     });
@@ -312,6 +407,8 @@ export function useDeployments(siteId: string) {
   ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
+    console.log('[createDeployment] Starting deployment creation...', { siteId, machineIds });
+
     const deploymentId = `deploy-${Date.now()}`;
     const deploymentRef = doc(db!, 'sites', siteId, 'deployments', deploymentId);
 
@@ -321,15 +418,28 @@ export function useDeployments(siteId: string) {
       status: 'pending',
     }));
 
-    // Create deployment document
-    await setDoc(deploymentRef, {
-      ...deployment,
+    // Create deployment document (filter out undefined values)
+    const deploymentData: any = {
+      name: deployment.name,
+      installer_name: deployment.installer_name,
+      installer_url: deployment.installer_url,
+      silent_flags: deployment.silent_flags,
       targets,
       createdAt: Date.now(),
       status: 'pending',
-    });
+    };
+
+    // Only include verify_path if it's provided
+    if (deployment.verify_path) {
+      deploymentData.verify_path = deployment.verify_path;
+    }
+
+    console.log('[createDeployment] Creating deployment document...', { deploymentId, deploymentData });
+    await setDoc(deploymentRef, deploymentData);
+    console.log('[createDeployment] Deployment document created successfully');
 
     // Send install command to each machine in parallel
+    console.log('[createDeployment] Writing commands to machines...');
     const commandPromises = machineIds.map(async (machineId) => {
       // Use underscores to avoid Firestore field path parsing issues with hyphens
       const sanitizedDeploymentId = deploymentId.replace(/-/g, '_');
@@ -337,27 +447,38 @@ export function useDeployments(siteId: string) {
       const commandId = `install_${sanitizedDeploymentId}_${sanitizedMachineId}_${Date.now()}`;
       const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
 
+      const commandData: any = {
+        type: 'install_software',
+        installer_url: deployment.installer_url,
+        installer_name: deployment.installer_name,
+        silent_flags: deployment.silent_flags,
+        deployment_id: deploymentId,
+        timestamp: Date.now(),
+        status: 'pending',
+      };
+
+      // Only include verify_path if it's provided
+      if (deployment.verify_path) {
+        commandData.verify_path = deployment.verify_path;
+      }
+
+      console.log('[createDeployment] Writing command to machine:', { machineId, commandId, commandPath: `sites/${siteId}/machines/${machineId}/commands/pending` });
       await setDoc(commandRef, {
-        [commandId]: {
-          type: 'install_software',
-          installer_url: deployment.installer_url,
-          installer_name: deployment.installer_name,
-          silent_flags: deployment.silent_flags,
-          verify_path: deployment.verify_path,
-          deployment_id: deploymentId,
-          timestamp: Date.now(),
-          status: 'pending',
-        }
+        [commandId]: commandData
       }, { merge: true });
+      console.log('[createDeployment] Command written successfully for machine:', machineId);
     });
 
     // Wait for all commands to be sent
     await Promise.all(commandPromises);
+    console.log('[createDeployment] All commands written successfully');
 
     // Update deployment status to in_progress
+    console.log('[createDeployment] Updating deployment status to in_progress...');
     await setDoc(deploymentRef, {
       status: 'in_progress',
     }, { merge: true });
+    console.log('[createDeployment] Deployment status updated successfully');
 
     return deploymentId;
   };

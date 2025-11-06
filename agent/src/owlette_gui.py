@@ -25,19 +25,20 @@ class OwletteConfigApp:
 
     def __init__(self, master):
         self.master = master
-        self.entry = ctk.CTkEntry(master)
-        self.entry.grid(row=0, column=0)
 
-        # Initialize basic window properties FIRST for fast appearance
+        # Initialize basic window properties
         hostname = socket.gethostname()
-        self.master.title(f"Owlette Configuration: {hostname}")
+        self.master.title(f"Owlette: {hostname}")
+
         # Set window icon
         try:
             icon_path = shared_utils.get_path('../icons/normal.ico')
             self.master.iconbitmap(icon_path)
         except Exception as e:
             logging.warning(f"Could not load icon: {e}")
-        shared_utils.center_window(master, 1280, 450)
+
+        # Set dark mode
+        ctk.set_appearance_mode("dark")
 
         # Initialize state variables
         self.prev_process_list = None
@@ -47,66 +48,24 @@ class OwletteConfigApp:
         self.firebase_client = None
         self.config = None
         self.service_running = None
+        self.details_collapsed = True  # Default to collapsed (will be loaded from config)
 
-        # Show loading screen immediately
-        self.show_loading_screen()
-
-        # Start async initialization
-        self.master.after(50, self._complete_initialization)
-
-    def show_loading_screen(self):
-        """Display minimal loading screen while heavy operations complete"""
-        # Set dark mode
-        ctk.set_appearance_mode("dark")
-
-        # Create loading frame
-        self.loading_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
-        self.loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-
-        # Owlette title
-        self.loading_title = ctk.CTkLabel(
-            self.loading_frame,
-            text="OWLETTE",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 32, "bold")
-        )
-        self.loading_title.place(relx=0.5, rely=0.35, anchor="center")
-
-        # Loading message
-        self.loading_message = ctk.CTkLabel(
-            self.loading_frame,
-            text="Loading configuration...",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 14)
-        )
-        self.loading_message.place(relx=0.5, rely=0.5, anchor="center")
-
-        # Version label
-        self.loading_version = ctk.CTkLabel(
-            self.loading_frame,
-            text=f"v{shared_utils.APP_VERSION}",
-            text_color=shared_utils.TEXT_COLOR,
-            font=("", 10)
-        )
-        self.loading_version.place(relx=0.5, rely=0.9, anchor="center")
-
-    def _complete_initialization(self):
-        """Complete initialization in phases to keep UI responsive"""
-        # Phase 1: Load config (fast, keep on main thread)
-        self.loading_message.configure(text="Loading configuration...")
-        self.master.update()
+        # Load config directly
         self.config = shared_utils.load_config()
 
-        # Phase 2: Build full UI (before async operations so widgets exist)
-        self.loading_message.configure(text="Building interface...")
-        self.master.update()
-        self.loading_frame.destroy()  # Remove loading screen
+        # Load saved UI state (default to collapsed)
+        self.details_collapsed = self.config.get('gui', {}).get('details_collapsed', True)
+
+        # Build UI directly - no loading screen
         self.setup_ui()
 
-        # Phase 3: Start background threads for heavy operations
+        # Apply saved window state
+        self._apply_window_state()
+
+        # Start background initialization for heavy operations
         self._start_background_initialization()
 
-        # Phase 4: Initialize UI with config data
+        # Initialize UI with config data
         self.update_process_list()
 
         # Set default values if empty
@@ -135,7 +94,6 @@ class OwletteConfigApp:
 
                 # If not running, start it
                 if not is_running:
-                    self.loading_message.configure(text="Starting service...")
                     self.start_service()
                     self.service_running = True
 
@@ -190,6 +148,24 @@ class OwletteConfigApp:
         threading.Thread(target=check_service_async, daemon=True, name="ServiceCheck").start()
         threading.Thread(target=init_firebase_async, daemon=True, name="FirebaseInit").start()
 
+    def _apply_window_state(self):
+        """Apply saved window state (collapsed or expanded)"""
+        if self.details_collapsed:
+            # Start in collapsed state (narrow window crops out PROCESS DETAILS completely)
+            shared_utils.center_window(self.master, 290, 450)
+            self.master.minsize(290, 450)
+            self.details_toggle_button.configure(text=">>")
+            self.footer_label.grid_remove()  # Hide footer
+            self.site_label_left.pack(side='left', expand=True)  # Show Site in center
+            self.site_id_label.pack_forget()  # Hide Site in right panel
+        else:
+            # Start in expanded state
+            shared_utils.center_window(self.master, 1300, 450)
+            self.master.minsize(1300, 450)
+            self.details_toggle_button.configure(text="<<")
+            self.site_label_left.pack_forget()  # Hide Site from header
+            # Footer and site_id_label are already visible by default
+
     def _apply_windows11_theme(self):
         """Apply Windows 11 dark titlebar - deferred for faster startup"""
         try:
@@ -207,11 +183,8 @@ class OwletteConfigApp:
             pass  # Silently fail if not on Windows 11 or if it doesn't work
 
     def setup_ui(self):
-        # Set appearance mode and color theme
-        ctk.set_appearance_mode("dark")
-
-        # Defer Windows 11 titlebar customization to after window is shown
-        self.master.after(100, self._apply_windows11_theme)
+        # Apply Windows 11 dark theme directly
+        self._apply_windows11_theme()
 
         self.background_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.WINDOW_COLOR)
         self.background_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -219,40 +192,54 @@ class OwletteConfigApp:
         # PROCESS LIST (LEFT SIDE)
         # Create a frame for the process list
         self.process_list_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_list_frame.grid(row=0, column=0, sticky='news', rowspan=10, columnspan=3, padx=(10, 5), pady=(10, 10))
+        self.process_list_frame.grid(row=0, column=0, sticky='nsew', rowspan=10, columnspan=3, padx=(10, 0), pady=(10, 0))
 
-        # Create a label for the process list
-        self.process_list_label = ctk.CTkLabel(self.master, text="MANAGED PROCESSES", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
-        self.process_list_label.grid(row=0, column=0, sticky='w', padx=(20, 10), pady=(20, 0))
-        self.process_list_label.configure(width=40)
+        # Header container frame (spans columns 0-2, row 0)
+        self.header_frame = ctk.CTkFrame(self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR)
+        self.header_frame.grid(row=0, column=0, columnspan=3, sticky='ew', padx=(20, 2), pady=(20, 0))
+
+        # PROCESSES label (left aligned)
+        self.process_list_label = ctk.CTkLabel(self.header_frame, text="Processes", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_list_label.pack(side='left')
+
+        # Toggle button (right aligned)
+        self.details_toggle_button = ctk.CTkButton(self.header_frame, text="<<", command=self.toggle_details_panel, width=30, height=24, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.details_toggle_button.pack(side='right', padx=(0, 5))
+
+        # Site label (center - only visible when collapsed)
+        site_id = self.config.get('firebase', {}).get('site_id', '')
+        site_display = site_id if site_id else "Unassigned"
+        self.site_label_left = ctk.CTkLabel(self.header_frame, text=f"Site: {site_display}", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color="#60a5fa", font=("", 12))
+        self.site_label_left.pack(side='left', expand=True)  # expand=True centers it in remaining space
+        self.site_label_left.pack_forget()  # Hidden initially if starting expanded
 
         # Create a Listbox to display the list of processes
         self.process_list = CTkListbox(self.master, command=self.on_select)
-        self.process_list.grid(row=1, column=0, columnspan=3, rowspan=7, sticky='nsew', padx=(20,15), pady=10)
+        self.process_list.grid(row=1, column=0, columnspan=3, rowspan=7, sticky='nsew', padx=(20, 10), pady=10)
         self.process_list.configure(highlight_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, border_color="#334155", border_width=1)
         # Adjust scrollbar padding to shift it left
         self.process_list._scrollbar.grid_configure(padx=(0, 8))
 
-        # Button row 1: New/Delete/Kill
+        # Button row 1: New/Up/Kill
         self.new_button = ctk.CTkButton(self.master, text="New", command=self.new_process, width=60, fg_color=shared_utils.BUTTON_IMPORTANT_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.new_button.grid(row=8, column=0, sticky='w', padx=(20, 0), pady=(5, 5))
 
-        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.remove_button.grid(row=8, column=1, sticky='w', padx=5, pady=(5, 5))
+        self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.up_button.grid(row=8, column=1, sticky='', padx=5, pady=(5, 5))
 
         self.kill_button = ctk.CTkButton(self.master, text="Kill", command=self.kill_process, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.kill_button.grid(row=8, column=2, sticky='w', padx=(5, 15), pady=(5, 5))
+        self.kill_button.grid(row=8, column=2, sticky='e', padx=5, pady=(5, 5))
 
-        # Button row 2: Up/Down arrows
-        self.up_button = ctk.CTkButton(self.master, text="↑", command=self.move_up, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.up_button.grid(row=9, column=1, sticky='w', padx=5, pady=(5, 15))
-
+        # Button row 2: Down arrow/Delete
         self.down_button = ctk.CTkButton(self.master, text="↓", command=self.move_down, width=60, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
-        self.down_button.grid(row=9, column=2, sticky='w', padx=5, pady=(5, 15))
+        self.down_button.grid(row=9, column=1, sticky='', padx=5, pady=(5, 15))
+
+        self.remove_button = ctk.CTkButton(self.master, text="Delete", command=self.remove_process, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
+        self.remove_button.grid(row=9, column=2, sticky='e', padx=5, pady=(5, 15))
 
         # Firebase status indicator (left side of row 10)
         self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
-        self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 10))
+        self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 5))
 
         # Leave Site button (next to Firebase status)
         self.leave_site_button = ctk.CTkButton(
@@ -263,29 +250,46 @@ class OwletteConfigApp:
             height=24,
             fg_color="#991b1b",  # Red
             hover_color="#7f1d1d",  # Darker red
-            font=("", 11)
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
         )
-        self.leave_site_button.grid(row=10, column=2, sticky='sw', padx=(10, 0), pady=(5, 10))
+        self.leave_site_button.grid(row=10, column=2, sticky='se', padx=5, pady=(5, 5))
+
+        # Join Site button (below Delete/up arrow in left panel)
+        self.join_site_button = ctk.CTkButton(
+            self.master,
+            text="Join Site",
+            command=self.on_join_site_click,
+            width=80,
+            height=24,
+            fg_color="#059669",  # Green (emerald-600)
+            hover_color="#047857",  # Darker green (emerald-700)
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
+        )
+        self.join_site_button.grid(row=10, column=1, sticky='sw', padx=5, pady=(5, 5))
 
         # Footer label (perfectly centered in row 10)
         footer_text = "Made with ♥ in California by TEC"
-        self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#6b7280", font=("", 11))
-        self.footer_label.grid(row=10, column=0, columnspan=8, sticky='', padx=0, pady=(5, 10))
+        self.footer_label = ctk.CTkLabel(self.master, text=footer_text, fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color="#60a5fa", font=("", 11))
+        self.footer_label.grid(row=10, column=0, columnspan=8, sticky='', padx=0, pady=(5, 5))
         # Make TEC text clickable
         self.footer_label.configure(cursor="hand2")
         self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
 
         # Version label (far right of row 10)
         self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
-        self.version_label.grid(row=10, column=7, sticky='se', padx=(0, 20), pady=(5, 10))
+        self.version_label.grid(row=10, column=7, sticky='se', padx=(0, 20), pady=(5, 5))
 
         # PROCESS DETAILS (RIGHT SIDE)
         # Create frame for process details
         self.process_details_frame = ctk.CTkFrame(master=self.master, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.WINDOW_COLOR, border_width=0, corner_radius=12)
-        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=5, padx=(5, 10), pady=(10, 10))
+        self.process_details_frame.grid(row=0, column=4, sticky='news', rowspan=10, columnspan=5, padx=(5, 10), pady=(10, 0))
 
         # Create a label for the process details
-        self.process_details_label = ctk.CTkLabel(self.master, text="PROCESS DETAILS", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.process_details_label = ctk.CTkLabel(self.master, text="Process Details", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.process_details_label.grid(row=0, column=4, columnspan=2, sticky='w', padx=(20, 10), pady=(20, 0))
 
         # Create hostname and site ID labels in same row, right-aligned
@@ -322,7 +326,7 @@ class OwletteConfigApp:
         self.name_entry.grid(row=2, column=5, columnspan=3, sticky='ew', padx=(10, 20), pady=5)
 
         # Create Exe path field
-        self.exe_path_label = ctk.CTkLabel(self.master, text="Executable Path:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.exe_path_label = ctk.CTkLabel(self.master, text="Exe:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.exe_path_label.grid(row=3, column=4, sticky='e', padx=5, pady=5)
         self.exe_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_exe, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.exe_browse_button.grid(row=3, column=5, sticky='w', padx=(10, 5), pady=5)
@@ -330,7 +334,7 @@ class OwletteConfigApp:
         self.exe_path_entry.grid(row=3, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create File path / cmd line args
-        self.file_path_label = ctk.CTkLabel(self.master, text="File Path / Cmd Args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.file_path_label = ctk.CTkLabel(self.master, text="Path / Args:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.file_path_label.grid(row=4, column=4, sticky='e', padx=5, pady=5)
         self.file_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_file, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.file_browse_button.grid(row=4, column=5, sticky='w', padx=(10, 5), pady=5)
@@ -338,7 +342,7 @@ class OwletteConfigApp:
         self.file_path_entry.grid(row=4, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create CWD path field
-        self.cwd_label = ctk.CTkLabel(self.master, text="Working Directory:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.cwd_label = ctk.CTkLabel(self.master, text="CWD:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.cwd_label.grid(row=5, column=4, sticky='e', padx=5, pady=5)
         self.cwd_browse_button = ctk.CTkButton(self.master, text="Browse", command=self.browse_cwd, width=80, fg_color=shared_utils.BUTTON_COLOR, hover_color=shared_utils.BUTTON_HOVER_COLOR, bg_color=shared_utils.FRAME_COLOR, corner_radius=6)
         self.cwd_browse_button.grid(row=5, column=5, sticky='w', padx=(10, 5), pady=5)
@@ -346,13 +350,13 @@ class OwletteConfigApp:
         self.cwd_entry.grid(row=5, column=6, columnspan=2, sticky='ew', padx=(5, 20), pady=5)
 
         # Create Time delay label and field
-        self.time_delay_label = ctk.CTkLabel(self.master, text="Launch Time Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_delay_label = ctk.CTkLabel(self.master, text="Delay (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_delay_label.grid(row=6, column=4, sticky='e', padx=5, pady=5)
         self.time_delay_entry = ctk.CTkEntry(self.master, placeholder_text="0", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_delay_entry.grid(row=6, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Priority dropdown
-        self.priority_label = ctk.CTkLabel(self.master, text="Task Priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.priority_label = ctk.CTkLabel(self.master, text="Priority:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.priority_label.grid(row=6, column=6, sticky='e', padx=5, pady=5)
         self.priority_options = ["Low", "Normal", "High", "Realtime"]
         self.priority_menu = ctk.CTkOptionMenu(self.master, values=self.priority_options, command=self.update_selected_process)
@@ -361,13 +365,13 @@ class OwletteConfigApp:
         self.priority_menu.set('Normal')
 
         # Create a label and entry for "Time to Initialize"
-        self.time_to_init_label = ctk.CTkLabel(self.master, text="Time to Initialize (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.time_to_init_label = ctk.CTkLabel(self.master, text="Wait (sec):", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.time_to_init_label.grid(row=7, column=4, sticky='e', padx=5, pady=5)
         self.time_to_init_entry = ctk.CTkEntry(self.master, placeholder_text="10", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.time_to_init_entry.grid(row=7, column=5, sticky='w', padx=(10, 5), pady=5)
 
         # Create Visibility dropdown
-        self.visibility_label = ctk.CTkLabel(self.master, text="Window Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.visibility_label = ctk.CTkLabel(self.master, text="Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.visibility_label.grid(row=7, column=6, sticky='e', padx=5, pady=5)
         self.visibility_options = ["Show", "Hide"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
@@ -376,7 +380,7 @@ class OwletteConfigApp:
         self.visibility_menu.set('Show')
 
         # Create a label and entry for "Restart Attempts"
-        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Relaunch attempts til Restart:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
+        self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.relaunch_attempts_label.grid(row=8, column=4, sticky='e', padx=5, pady=5)
         self.relaunch_attempts_entry = ctk.CTkEntry(self.master, placeholder_text="3", width=80, fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR, border_color="#334155", border_width=1, corner_radius=6)
         self.relaunch_attempts_entry.grid(row=8, column=5, sticky='w', padx=(10, 5), pady=5)
@@ -408,12 +412,12 @@ class OwletteConfigApp:
         self.master.bind("<Button-1>", self.defocus_entry)
 
         # Make columns stretchable
-        # Left side (process list): columns 0-2
-        self.master.grid_columnconfigure(0, weight=0)
-        self.master.grid_columnconfigure(1, weight=0)
-        self.master.grid_columnconfigure(2, weight=0)
+        # Left side (process list): columns 0-2 - VERY high weight to dominate space
+        # self.master.grid_columnconfigure(0, weight=1, minsize=120)
+        # self.master.grid_columnconfigure(1, weight=100, minsize=120)
+        # self.master.grid_columnconfigure(2, weight=100, minsize=120)
         # Separator: column 3
-        self.master.grid_columnconfigure(3, weight=0)
+        self.master.grid_columnconfigure(3, weight=0, minsize=10)
         # Right side (process details): columns 4-7
         self.master.grid_columnconfigure(4, weight=1)  # Labels column
         self.master.grid_columnconfigure(5, weight=0)  # First input/browse column
@@ -421,6 +425,57 @@ class OwletteConfigApp:
         self.master.grid_columnconfigure(7, weight=2)  # Second input column
 
         # No row weight configuration needed - keeps layout compact
+
+    def toggle_details_panel(self):
+        """Toggle collapse/expand window (crop to show/hide right panel)"""
+        # Get current window position to preserve it
+        geometry = self.master.geometry()  # e.g., "1300x450+100+200"
+        parts = geometry.split('+')
+        if len(parts) >= 3:
+            # Extract position (x, y coordinates)
+            x = parts[1]
+            y = parts[2]
+        else:
+            # Fallback: center the window if position not available
+            x = None
+            y = None
+
+        if self.details_collapsed:
+            # EXPAND: Resize window to show everything
+            self.details_toggle_button.configure(text="<<")
+            self.footer_label.grid()  # Show footer
+            self.site_label_left.pack_forget()  # Hide Site from header center
+            self.site_id_label.pack(side='right', padx=(0, 15))  # Show Site in right panel
+
+            if x and y:
+                self.master.geometry(f'1300x450+{x}+{y}')
+            else:
+                shared_utils.center_window(self.master, 1300, 450)
+
+            self.master.minsize(1300, 450)
+            self.details_collapsed = False
+        else:
+            # COLLAPSE: Resize window to crop and show only left panel
+            self.details_toggle_button.configure(text=">>")
+            self.footer_label.grid_remove()  # Hide footer
+            self.site_id_label.pack_forget()  # Hide Site from right panel
+            self.site_label_left.pack(side='left', expand=True)  # Show Site in header center
+
+            if x and y:
+                self.master.geometry(f'290x450+{x}+{y}')
+            else:
+                shared_utils.center_window(self.master, 290, 450)
+
+            self.master.minsize(290, 450)
+            self.details_collapsed = True
+
+        # Save state to config
+        if 'gui' not in self.config:
+            self.config['gui'] = {}
+        self.config['gui']['details_collapsed'] = self.details_collapsed
+        shared_utils.save_config(self.config)
+
+        self.master.update()
 
     # PROCESS HANDLING
 
@@ -1022,26 +1077,43 @@ class OwletteConfigApp:
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
         site_id = self.config.get('firebase', {}).get('site_id', '')
 
-        # Update site display label
+        # Update site display label (both left and right panel labels)
         site_display = site_id if site_id else "Unassigned"
         self.site_id_label.configure(text=f"Site: {site_display}")
+        self.site_label_left.configure(text=f"Site: {site_display}")  # Keep both in sync
 
-        # Check if OAuth tokens exist (new authentication method)
-        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
-        tokens_exist = os.path.exists(token_path)
+        # Check if OAuth tokens are VALID (not just if file exists)
+        tokens_valid = False
+        if firebase_enabled:
+            try:
+                from auth_manager import AuthManager
+                api_base = self.config.get('firebase', {}).get('api_base', 'https://owlette.app/api')
+                auth = AuthManager(api_base=api_base)
+
+                # Try to get valid token - this will return None if no tokens exist or if refresh fails
+                # This is better than just checking file existence
+                try:
+                    token = auth.get_valid_token()
+                    tokens_valid = bool(token)
+                except Exception:
+                    # Token doesn't exist, expired and can't refresh, or other auth error
+                    tokens_valid = False
+            except Exception:
+                # Failed to initialize AuthManager
+                tokens_valid = False
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
             self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
             self.leave_site_button.configure(state="disabled")
-        elif firebase_enabled and tokens_exist:
+        elif firebase_enabled and tokens_valid:
             self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
             self.leave_site_button.configure(state="normal")
-        elif firebase_enabled and not tokens_exist:
+        elif firebase_enabled and not tokens_valid:
             self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
             self.leave_site_button.configure(state="disabled")
         else:
-            self.firebase_status_label.configure(text="Disabled", text_color="#6b7280")  # Gray
+            self.firebase_status_label.configure(text="Disabled", text_color="#6b7300")  # Gray
             self.leave_site_button.configure(state="disabled")
 
     def on_leave_site_click(self):
@@ -1091,7 +1163,8 @@ class OwletteConfigApp:
 
                 # CRITICAL: STOP the service BEFORE deleting the machine document
                 # This prevents the service from recreating the document while we delete it
-                nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
+                # NSSM is at C:\Owlette\tools\nssm.exe (three directories up from this file)
+                nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
                 if os.path.exists(nssm_path):
                     try:
                         logging.info("Stopping service to prevent document recreation...")
@@ -1161,6 +1234,163 @@ class OwletteConfigApp:
                     message=f"Failed to leave site:\n{str(e)}",
                     icon="cancel"
                 )
+
+    def on_join_site_click(self):
+        """Handle Join Site button click - re-authenticate to a site."""
+        # Show confirmation dialog
+        response = CTkMessagebox(
+            master=self.master,
+            title="Join Site?",
+            message="This will open your browser to authenticate with a site.\n\n"
+                   "Steps:\n"
+                   "1. Log in to your Owlette account\n"
+                   "2. Select or create a site\n"
+                   "3. Authorize this machine\n\n"
+                   "The service will restart after authentication completes.",
+            icon=None,
+            option_1="Cancel",
+            option_2="Join Site",
+            width=550
+        )
+
+        if response.get() != "Join Site":
+            return
+
+        # Determine setup URL based on current config or default to dev
+        current_api_base = self.config.get('firebase', {}).get('api_base', '')
+        if 'dev.owlette.app' in current_api_base:
+            setup_url = "https://dev.owlette.app/setup"
+        else:
+            # Default to dev for testing (can change to production later)
+            setup_url = "https://dev.owlette.app/setup"
+
+        # Show loading dialog
+        loading_dialog = CTkMessagebox(
+            master=self.master,
+            title="Joining Site...",
+            message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
+            icon=None,
+            option_1="Cancel",
+            width=550
+        )
+
+        # Run OAuth flow in background thread
+        def run_oauth_thread():
+            try:
+                # Import configure_site module
+                import configure_site
+
+                # Run OAuth flow (no console prompts for GUI usage)
+                success, message, site_id = configure_site.run_oauth_flow(
+                    setup_url=setup_url,
+                    timeout_seconds=300,  # 5 minutes
+                    show_prompts=False  # No console output for GUI
+                )
+
+                # Close loading dialog
+                self.master.after(0, loading_dialog.destroy)
+
+                if success:
+                    logging.info(f"Successfully joined site: {site_id}")
+
+                    # Reload config to get new site information
+                    self.config = shared_utils.load_config()
+
+                    # Restart service to connect with new site
+                    nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
+                    if os.path.exists(nssm_path):
+                        try:
+                            logging.info("Restarting service with new site configuration...")
+                            subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                                         check=False,
+                                         capture_output=True,
+                                         timeout=10)
+                            time.sleep(3)
+                            subprocess.run([nssm_path, 'start', 'OwletteService'],
+                                         check=False,
+                                         capture_output=True,
+                                         timeout=10)
+                            time.sleep(2)
+                            logging.info("Service restarted successfully")
+                        except Exception as e:
+                            logging.warning(f"Failed to restart service: {e}")
+
+                    # Update Firebase client and status
+                    self._reinitialize_firebase()
+
+                    # Show success message
+                    self.master.after(0, lambda: CTkMessagebox(
+                        master=self.master,
+                        title="Joined Site Successfully",
+                        message=f"This machine has been registered to site: {site_id}\n\nThe Owlette service has been restarted and is now syncing with Firebase.",
+                        icon=None,
+                        width=600
+                    ))
+                else:
+                    logging.error(f"Failed to join site: {message}")
+                    # Show error message
+                    self.master.after(0, lambda: CTkMessagebox(
+                        master=self.master,
+                        title="Failed to Join Site",
+                        message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
+                        icon=None,
+                        width=600
+                    ))
+
+            except Exception as e:
+                logging.error(f"Error in OAuth flow: {e}")
+                self.master.after(0, loading_dialog.destroy)
+                self.master.after(0, lambda: CTkMessagebox(
+                    master=self.master,
+                    title="Error",
+                    message=f"An unexpected error occurred:\n\n{str(e)}",
+                    icon=None,
+                    width=600
+                ))
+
+        # Start OAuth thread
+        oauth_thread = threading.Thread(target=run_oauth_thread, daemon=True)
+        oauth_thread.start()
+
+    def _reinitialize_firebase(self):
+        """Reinitialize Firebase client after configuration change."""
+        try:
+            # Stop old client if exists
+            if hasattr(self, 'firebase_client') and self.firebase_client:
+                try:
+                    self.firebase_client.stop()
+                except:
+                    pass
+
+            # Reload config
+            self.config = shared_utils.load_config()
+
+            # Initialize new Firebase client (similar to _complete_initialization)
+            if self.config.get('firebase', {}).get('enabled'):
+                from firebase_client import FirebaseClient
+                from auth_manager import AuthManager
+
+                api_base = self.config['firebase'].get('api_base', 'https://owlette.app/api')
+                project_id = self.config['firebase'].get('project_id', 'owlette-prod')
+                site_id = self.config['firebase'].get('site_id', '')
+
+                auth_manager = AuthManager(api_base=api_base)
+
+                if auth_manager.is_authenticated():
+                    self.firebase_client = FirebaseClient(
+                        auth_manager=auth_manager,
+                        project_id=project_id,
+                        site_id=site_id
+                    )
+                    self.firebase_client.start()
+                    self.site_id = site_id
+                    logging.info(f"Firebase client reinitialized for site: {site_id}")
+
+            # Update status display
+            self.update_firebase_status()
+
+        except Exception as e:
+            logging.error(f"Failed to reinitialize Firebase: {e}")
 
     def restart_service(self):
         """Restart the Owlette service."""

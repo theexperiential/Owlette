@@ -16,6 +16,8 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import DownloadButton from '@/components/DownloadButton';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
@@ -25,10 +27,14 @@ export default function DeploymentsPage() {
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
+  const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
+  const [uninstallDeploymentId, setUninstallDeploymentId] = useState<string | undefined>(undefined);
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deploymentToDelete, setDeploymentToDelete] = useState<string | null>(null);
   const router = useRouter();
 
   const {
@@ -46,11 +52,25 @@ export default function DeploymentsPage() {
 
   const { createUninstall } = useUninstall();
 
-  const handleCreateUninstall = async (softwareName: string, machineIds: string[]) => {
+  const handleCreateUninstall = async (softwareName: string, machineIds: string[], deploymentId?: string) => {
     try {
-      await createUninstall(currentSiteId, softwareName, machineIds);
+      await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
     } catch (error: any) {
       throw new Error(error.message || 'Failed to create uninstall task');
+    }
+  };
+
+  const handleDeleteDeployment = async () => {
+    if (!deploymentToDelete) return;
+
+    try {
+      await deleteDeployment(deploymentToDelete);
+      toast.success('Deployment record deleted successfully');
+    } catch (error: any) {
+      console.error('Failed to delete deployment:', error);
+      toast.error(error.message || 'Failed to delete deployment record');
+    } finally {
+      setDeploymentToDelete(null);
     }
   };
 
@@ -94,6 +114,8 @@ export default function DeploymentsPage() {
     switch (status) {
       case 'completed':
         return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case 'uninstalled':
+        return <Trash2 className="h-5 w-5 text-purple-500" />;
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-500" />;
       case 'cancelled':
@@ -110,6 +132,7 @@ export default function DeploymentsPage() {
   const getStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
       completed: 'bg-green-600 hover:bg-green-700',
+      uninstalled: 'bg-purple-600 hover:bg-purple-700',
       failed: 'bg-red-600 hover:bg-red-700',
       cancelled: 'bg-orange-600 hover:bg-orange-700',
       in_progress: 'bg-blue-600 hover:bg-blue-700',
@@ -138,6 +161,7 @@ export default function DeploymentsPage() {
         onSiteChange={handleSiteChange}
         onManageSites={() => setManageDialogOpen(true)}
         onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
       />
 
       {/* Site Management Dialogs */}
@@ -203,10 +227,23 @@ export default function DeploymentsPage() {
           onOpenChange={setUninstallDialogOpen}
           siteId={currentSiteId}
           onCreateUninstall={handleCreateUninstall}
+          initialSoftwareName={initialSoftwareName}
+          deploymentId={uninstallDeploymentId}
+        />
+
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          title="Delete Deployment Record"
+          description={`Are you sure you want to delete this deployment record?\n\nThis will permanently remove the deployment from the list. This action cannot be undone.\n\nNote: This only deletes the record - it does not uninstall software from machines.`}
+          confirmText="Delete"
+          cancelText="Cancel"
+          onConfirm={handleDeleteDeployment}
+          variant="destructive"
         />
 
         {/* Quick Stats */}
-        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4">
+        <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4 animate-in fade-in duration-300">
           <Card className="border-slate-800 bg-slate-900">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-slate-200">Total Deployments</CardTitle>
@@ -249,7 +286,7 @@ export default function DeploymentsPage() {
         </div>
 
         {/* Deployments List */}
-        <div className="space-y-4">
+        <div className="space-y-4 animate-in fade-in duration-300">
           {deploymentsLoading ? (
             <Card className="border-slate-800 bg-slate-900">
               <CardContent className="p-8 text-center">
@@ -313,6 +350,8 @@ export default function DeploymentsPage() {
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
+                              setInitialSoftwareName(deployment.installer_name);
+                              setUninstallDeploymentId(deployment.id);
                               setUninstallDialogOpen(true);
                             }}
                             className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
@@ -321,13 +360,10 @@ export default function DeploymentsPage() {
                             Uninstall Software
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={async (e) => {
+                            onClick={(e) => {
                               e.stopPropagation();
-                              try {
-                                await deleteDeployment(deployment.id);
-                              } catch (error: any) {
-                                console.error('Failed to delete deployment:', error);
-                              }
+                              setDeploymentToDelete(deployment.id);
+                              setDeleteDialogOpen(true);
                             }}
                             className="text-red-400 focus:bg-red-950/30 focus:text-red-400 cursor-pointer"
                           >
@@ -382,7 +418,7 @@ export default function DeploymentsPage() {
                                       console.error('Failed to cancel deployment:', error);
                                     }
                                   }}
-                                  className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30"
+                                  className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                                 >
                                   <X className="h-4 w-4" />
                                 </Button>

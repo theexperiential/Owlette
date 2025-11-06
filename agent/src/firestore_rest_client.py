@@ -50,6 +50,14 @@ FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
 
+# Special sentinel value for deleting fields (compatible with firebase_admin SDK)
+class _DeleteFieldSentinel:
+    """Sentinel class to mark fields for deletion (matches firebase_admin.firestore.DELETE_FIELD)"""
+    def __repr__(self):
+        return "DELETE_FIELD"
+
+DELETE_FIELD = _DeleteFieldSentinel()
+
 
 class FirestoreRestClient:
     """
@@ -109,6 +117,9 @@ class FirestoreRestClient:
         """
         if value is None:
             return {'nullValue': None}
+        elif isinstance(value, _DeleteFieldSentinel):
+            # Special marker for field deletion
+            return None  # Signal to caller to handle as deletion
         elif value == SERVER_TIMESTAMP:
             # Server timestamp - use current UTC time
             # Note: True server timestamp requires Firestore transform operation
@@ -268,11 +279,41 @@ class FirestoreRestClient:
             logger.error(f"Error setting document {path}: {e}")
             raise
 
+    def _escape_field_path(self, field_path: str) -> str:
+        """
+        Escape field path for Firestore REST API updateMask.
+
+        Field names containing special characters (anything other than
+        alphanumeric and underscore) must be enclosed in backticks.
+
+        Args:
+            field_path: Field path (may contain dots for nested fields)
+
+        Returns:
+            Escaped field path
+        """
+        import re
+
+        # Split on dots for nested paths
+        parts = field_path.split('.')
+        escaped_parts = []
+
+        for part in parts:
+            # Check if part contains special characters (not alphanumeric or underscore)
+            if re.search(r'[^a-zA-Z0-9_]', part):
+                # Wrap in backticks
+                escaped_parts.append(f'`{part}`')
+            else:
+                escaped_parts.append(part)
+
+        return '.'.join(escaped_parts)
+
     def update_document(self, path: str, updates: Dict[str, Any]):
         """
         Update specific fields in a document.
 
         Supports nested field paths like 'metrics.cpu' or 'metrics.processes'.
+        Supports DELETE_FIELD to remove fields from documents.
 
         Args:
             path: Document path
@@ -282,12 +323,19 @@ class FirestoreRestClient:
             url = f"{self.base_url}/{path}"
 
             # Firestore REST API uses updateMask to specify which fields to update
-            # Build updateMask from keys
-            update_mask_paths = list(updates.keys())
+            # Build updateMask from keys, escaping field names with special characters
+            update_mask_paths = [self._escape_field_path(key) for key in updates.keys()]
 
             # Convert updates to Firestore format, handling nested paths
             firestore_fields = {}
             for key, value in updates.items():
+                firestore_value = self._to_firestore_value(value)
+
+                # If _to_firestore_value returns None, it's a DELETE_FIELD sentinel
+                # Include in updateMask but not in fields (this deletes the field)
+                if firestore_value is None:
+                    continue
+
                 # Handle nested paths like 'metrics.cpu'
                 if '.' in key:
                     # For nested updates, we need to construct the nested structure
@@ -300,10 +348,10 @@ class FirestoreRestClient:
                         current = current[part]['mapValue']['fields']
 
                     # Set the final value
-                    current[parts[-1]] = self._to_firestore_value(value)
+                    current[parts[-1]] = firestore_value
                 else:
                     # Top-level field
-                    firestore_fields[key] = self._to_firestore_value(value)
+                    firestore_fields[key] = firestore_value
 
             # Make PATCH request with updateMask
             params = {
@@ -363,17 +411,21 @@ class FirestoreRestClient:
         """
         def poll_document():
             """Poll document for changes."""
-            last_data = None
+            # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
+            _UNINITIALIZED = object()
+            last_data = _UNINITIALIZED
 
             while True:
                 try:
                     # Get current document
                     current_data = self.get_document(path)
 
-                    # Check if changed
+                    # Check if changed (including first run where last_data is sentinel)
                     if current_data != last_data:
-                        logger.debug(f"Document changed: {path}")
-                        callback(current_data)
+                        # Skip callback on first run if document doesn't exist
+                        if last_data is not _UNINITIALIZED or current_data is not None:
+                            logger.debug(f"Document changed: {path}")
+                            callback(current_data)
                         last_data = current_data
 
                     # Poll every 2 seconds (configurable)
@@ -419,6 +471,7 @@ class FirestoreRestClient:
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 if operation == 'set':
+                    # For set operations, omit currentDocument to allow upsert
                     batch_writes.append({
                         'update': {
                             'name': doc_name,
@@ -452,7 +505,28 @@ class FirestoreRestClient:
             logger.debug(f"Batch write completed: {len(writes)} operations")
 
         except Exception as e:
-            logger.error(f"Error in batch write: {e}")
+            # Check if this is a 403 Forbidden error (expected with OAuth tokens)
+            is_403 = hasattr(e, 'response') and e.response is not None and e.response.status_code == 403
+
+            if is_403:
+                # 403 errors on batch writes are expected with OAuth tokens - log at DEBUG level
+                logger.debug(f"Batch write forbidden (expected with OAuth tokens): {e}")
+                if hasattr(e, 'response'):
+                    try:
+                        error_details = e.response.json()
+                        logger.debug(f"Firestore error details: {error_details}")
+                    except:
+                        pass
+            else:
+                # Log other errors at ERROR level
+                logger.error(f"Error in batch write: {e}")
+                # Log response body for debugging (may contain security rule details)
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        error_details = e.response.json()
+                        logger.error(f"Firestore error details: {error_details}")
+                    except:
+                        logger.error(f"Response text: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
             raise
 
     def collection(self, path: str):

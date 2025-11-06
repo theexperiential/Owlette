@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Owlette Firestore Security Rules
 // Version: 2.2.0 - Multi-User Site Access Control
-// Last Updated: 2025-01-31
+// Last Updated: 2025-11-05
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -23,8 +23,11 @@ rules_version = '2';
 //
 // Custom Token Claims (for agents):
 // - role: 'agent' (identifies agent authentication)
-// - site_id: 'site_xxx' (which site this agent belongs to)
-// - machine_id: 'DESKTOP-001' (which machine this agent represents)
+// - site_id: 'site_xxx' (which site this agent belongs to - snake_case!)
+// - machine_id: 'DESKTOP-001' (which machine this agent represents - snake_case!)
+//
+// IMPORTANT: Claim names must be snake_case (site_id, machine_id) NOT camelCase!
+// Firebase custom token claims are used in security rules exactly as provided.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -78,10 +81,12 @@ service cloud.firestore {
     // Check if user has access to a site
     // Admins can access all sites
     // Regular users can only access sites in their assigned sites array
+    // Returns false if user document doesn't exist (graceful handling for new users)
     function canAccessSite(siteId) {
       return isAuthenticated() && (
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-        siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)
       );
     }
 
@@ -128,6 +133,21 @@ service cloud.firestore {
                           isServiceAccount() ||
                           agentCanAccessMachine(siteId, machineId);
           allow delete: if canAccessSite(siteId); // Authenticated users can delete commands
+        }
+
+        // Installed Software Inventory Subcollection
+        // Agents write software inventory data
+        // Web dashboard reads to display installed software
+        // OAuth agents can ONLY write to their own machine's inventory
+        match /installed_software/{softwareId} {
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+          allow write: if isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId); // Only agents can write inventory
+          allow delete: if canAccessSite(siteId) ||
+                           isServiceAccount() ||
+                           agentCanAccessMachine(siteId, machineId); // Allow cleanup
         }
       }
 
@@ -237,6 +257,25 @@ service cloud.firestore {
       // ADMIN WRITE: Only admins can upload/modify installer versions
       allow read: if true;  // Public read for download button
       allow write: if isAdmin();  // Only admins can manage installers
+    }
+
+    // ============================================
+    // System Presets Collection
+    // ============================================
+
+    match /system_presets/{presetId} {
+      // Global software deployment presets (Owlette Agent, TouchDesigner, etc.)
+      // READ: All authenticated users can see presets
+      // WRITE: Only admins can create/update/delete presets
+      allow read: if isAuthenticated();
+
+      // Create requires all essential fields
+      allow create: if isAdmin() &&
+                       hasRequiredFields(['name', 'software_name', 'category',
+                                         'installer_name', 'silent_flags', 'order', 'createdAt']);
+
+      // Update and delete: admin only
+      allow update, delete: if isAdmin();
     }
 
     // ============================================

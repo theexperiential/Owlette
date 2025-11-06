@@ -10,12 +10,12 @@ import {
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+const Toaster = ({ theme, ...props }: ToasterProps) => {
+  const { theme: systemTheme = "system" } = useTheme()
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={(theme || systemTheme) as ToasterProps["theme"]}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
@@ -24,14 +24,20 @@ const Toaster = ({ ...props }: ToasterProps) => {
         error: <OctagonXIcon className="size-4" />,
         loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
-      style={
-        {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
-        } as React.CSSProperties
-      }
+      toastOptions={{
+        classNames: {
+          toast: "bg-slate-800 border-slate-700 text-white",
+          title: "text-white font-medium",
+          description: "text-slate-300",
+          actionButton: "bg-blue-600 text-white hover:bg-blue-700",
+          cancelButton: "bg-slate-700 text-white hover:bg-slate-600",
+          closeButton: "bg-slate-700 text-white hover:bg-slate-600",
+          error: "bg-red-900/90 border-red-700 text-white",
+          success: "bg-green-900/90 border-green-700 text-white",
+          warning: "bg-yellow-900/90 border-yellow-700 text-white",
+          info: "bg-blue-900/90 border-blue-700 text-white",
+        },
+      }}
       {...props}
     />
   )

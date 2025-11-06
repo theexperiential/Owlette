@@ -30,6 +30,7 @@ export interface Machine {
   machineId: string;
   lastHeartbeat: number;
   online: boolean;
+  agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
   metrics?: {
     cpu: { name?: string; percent: number; unit: string };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
@@ -155,8 +156,21 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
   const createSite = async (siteId: string, name: string, userId: string) => {
     if (!db) throw new Error('Firebase not configured');
 
-    // Create site document with owner field
+    // Validate site ID format
+    const { isValid, error } = await import('@/lib/validators').then(m => m.validateSiteId(siteId));
+    if (!isValid) {
+      throw new Error(error);
+    }
+
+    // Check if site already exists (CRITICAL: Prevent overwriting existing sites)
     const siteRef = doc(db, 'sites', siteId);
+    const siteSnap = await getDoc(siteRef);
+
+    if (siteSnap.exists()) {
+      throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
+    }
+
+    // Create site document with owner field
     await setDoc(siteRef, {
       name,
       createdAt: Date.now(),
@@ -204,18 +218,75 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
     // Delete the site document
     // Note: Firestore doesn't automatically delete subcollections (machines)
     // In a production app, you might want to use a Cloud Function to handle this
-    // For now, we'll just delete the site document
     const siteRef = doc(db, 'sites', siteId);
     await deleteDoc(siteRef);
+
+    // TODO: Clean up user references to this site
+    // This should query all users with this siteId in their sites array
+    // and remove it using arrayRemove. For now, admins can manually
+    // clean up orphaned references via the Manage Site Access dialog.
+    logger.info(`Site ${siteId} deleted. Note: User references may need manual cleanup.`);
   };
 
-  return { sites, loading, error, createSite, renameSite, deleteSite };
+  const checkSiteIdAvailability = async (siteId: string): Promise<boolean> => {
+    if (!db) throw new Error('Firebase not configured');
+
+    // Don't check empty IDs
+    if (!siteId || siteId.trim() === '') {
+      return false;
+    }
+
+    // Validate format first
+    const { isValid } = await import('@/lib/validators').then(m => m.validateSiteId(siteId));
+    if (!isValid) {
+      return false;
+    }
+
+    // Check if site exists
+    const siteRef = doc(db, 'sites', siteId);
+    const siteSnap = await getDoc(siteRef);
+
+    return !siteSnap.exists();
+  };
+
+  return { sites, loading, error, createSite, renameSite, deleteSite, checkSiteIdAvailability };
 }
 
 export function useMachines(siteId: string) {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Client-side heartbeat timeout checker
+  // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
+  // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
+  useEffect(() => {
+    if (machines.length === 0) return;
+
+    const interval = setInterval(() => {
+      setMachines(prevMachines => {
+        const now = Math.floor(Date.now() / 1000);
+        let hasChanges = false;
+
+        const updated = prevMachines.map(machine => {
+          const heartbeatAge = now - machine.lastHeartbeat;
+          const shouldBeOnline = (machine.online === true) && (heartbeatAge < 90);
+
+          // If calculated online state differs from current state, update it
+          if (machine.online !== shouldBeOnline) {
+            hasChanges = true;
+            return { ...machine, online: shouldBeOnline };
+          }
+          return machine;
+        });
+
+        // Only trigger re-render if something actually changed
+        return hasChanges ? updated : prevMachines;
+      });
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [machines.length]); // Re-create interval when machine count changes
 
   useEffect(() => {
     if (!db || !siteId) {
@@ -282,10 +353,11 @@ export function useMachines(siteId: string) {
             // Determine online status: use both boolean flag AND heartbeat timestamp
             // Machine is online if BOTH conditions are true:
             // 1. online flag is true
-            // 2. Last heartbeat was within 60 seconds (2x the heartbeat interval)
+            // 2. Last heartbeat was within 90 seconds (1.5x the metrics interval)
+            //    Agent sends metrics every 60s, so 90s allows for network delays
             const now = Math.floor(Date.now() / 1000); // Current time in seconds
             const heartbeatAge = now - lastHeartbeat; // Age in seconds
-            const isOnline = (data.online === true) && (heartbeatAge < 60);
+            const isOnline = (data.online === true) && (heartbeatAge < 90);
 
               // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
               const metrics = data.metrics ? {

@@ -1,13 +1,46 @@
-import { Heart } from "lucide-react";
+"use client";
+
 import Link from "next/link";
+import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
+
+const RANDOM_EMOJIS = [
+  "❤️", "💙", "💚", "💛", "💜", "🧡", // hearts
+  "✨", "🌟", "⭐", "💫", "🌈", // sparkles
+  "🔥", "⚡", "💥", "🚀", // energy
+  "🎨", "🎭", "🎪", "🎯", // creative
+  "🦉", "🦆", "🐧", "🦜", // birds (owlette!)
+  "☕", "🍕", "🌮", "🍔", // food
+  "🎵", "🎸", "🎹", "🎤", // music
+  "💻", "🖥️", "⌨️", "🖱️", // tech
+  "🎲", "🎮", "🕹️", // games
+  "🌙", "☀️", "⛅", "🌤️", // weather
+  "🤪", "😜", "😝", "🥴", "😵‍💫", "🤡", "🥳", "😎", // goofy faces
+  "💨", "🌪️", "💩", "🧻", // wind/farts
+  "🦄", "🦖", "🦕", "🐙", "🦑", "🦞", // silly animals
+  "🍌", "🥒", "🌽", "🍆", "🥑", "🧀", // funny food
+  "🎃", "👻", "💀", "👽", "🤖", "🛸", // spooky/weird
+  "🦷", "👀", "👁️", "🧠", "🦴", // body parts (weird!)
+  "💯", "🆒", "🤙", "🤘", "✌️", "🫰", // gestures
+  "🪐", "🌮", "🦥", "🐢", "🐌", // random fun
+];
 
 export function Footer() {
+  const [emoji, setEmoji] = useState("❤️");
+  const pathname = usePathname();
+
+  useEffect(() => {
+    // Pick a random emoji whenever the route changes
+    const randomEmoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
+    setEmoji(randomEmoji);
+  }, [pathname]);
+
   return (
     <footer className="fixed bottom-0 left-0 right-0 w-full bg-gradient-to-t from-slate-950 via-slate-950/95 to-transparent pt-8 pb-6 z-10 pointer-events-none">
       <div className="container mx-auto px-4 pointer-events-auto">
         <p className="text-center text-xs text-slate-500">
           Made with{" "}
-          <Heart className="inline-block h-3 w-3 text-red-500 fill-red-500" />{" "}
+          <span className="inline-block text-base align-middle leading-none">{emoji}</span>{" "}
           in California by{" "}
           <Link
             href="https://tec.design"

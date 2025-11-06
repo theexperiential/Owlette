@@ -6,7 +6,7 @@
 
 ### _Cloud-Connected Process Management & Remote Deployment System_
 
-**Version 2.0.0** - A modern, cloud-connected process management system for Windows that combines:
+**Version 2.0.4** - A modern, cloud-connected process management system for Windows that combines:
 
 - 🖥️ **Windows Service** - Monitors and auto-restarts applications
 - 🌐 **Web Dashboard** - Real-time monitoring and control from anywhere
@@ -417,11 +417,47 @@ This will remove the Owlette service from your system.
 
 ### 📝 Logs 
 Logs are stored in the `logs` folder, per script. `service.log` for the service, `email.log` for the email sender, `tray.log` for the tray icon, etc. Check these logs for debugging information.
-    
+---
+
+## 🔧 Version Management
+
+Owlette uses a unified versioning system across all components.
+
+**Current Version:** 2.0.4
+
+### For Developers
+
+When releasing a new version, use the sync script to keep all components aligned:
+
+```bash
+# Check current versions
+node scripts/sync-versions.js
+
+# Bump to new version (updates product, agent, and web)
+node scripts/sync-versions.js 2.1.0
+```
+
+This automatically updates:
+- `/VERSION` (product version)
+- `agent/VERSION` (Windows service)
+- `web/package.json` (dashboard)
+
+**Note:** Firestore rules version is independent (tracks schema changes only).
+
+See [docs/version-management.md](docs/version-management.md) for complete details.
+
+---
+
 <a id="contributing"></a>
 ## 🤝 Contributing
 
 Feel free to contribute by submitting pull requests.
+
+**Before submitting:**
+- Use `node scripts/sync-versions.js` for version bumps
+- Update CHANGELOG.md with your changes
+- Ensure all tests pass (`npm test` in web/, `pytest` in agent/)
+- Follow existing code style and patterns
 
 <a id="license"></a>
 ## 📜 License

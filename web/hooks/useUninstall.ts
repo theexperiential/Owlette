@@ -90,7 +90,8 @@ export function useUninstall() {
   const createUninstall = async (
     siteId: string,
     softwareName: string,
-    machineIds: string[]
+    machineIds: string[],
+    deploymentId?: string
   ): Promise<void> => {
     if (!db || !siteId || !softwareName || machineIds.length === 0) {
       throw new Error('Invalid parameters');
@@ -100,14 +101,18 @@ export function useUninstall() {
     setError(null);
 
     try {
+      console.log('[useUninstall] Creating uninstall:', { siteId, softwareName, machineIds, deploymentId });
+
       // First, fetch software details from one of the machines to get uninstall command
       let softwareDetails: Software | null = null;
 
+      console.log('[useUninstall] Fetching software details from machines...');
       for (const machineId of machineIds) {
         const softwareList = await fetchMachineSoftware(siteId, machineId);
         const found = softwareList.find(s => s.name === softwareName);
         if (found) {
           softwareDetails = found;
+          console.log('[useUninstall] Found software details:', softwareDetails);
           break;
         }
       }
@@ -120,7 +125,11 @@ export function useUninstall() {
       const timestamp = Date.now();
       const commandId = `uninstall-${timestamp}`;
 
+      console.log('[useUninstall] Creating commands for machines with ID:', commandId);
+
       for (const machineId of machineIds) {
+        console.log(`[useUninstall] Creating command for machine: ${machineId}`);
+
         // Send uninstall_software command to each machine
         const commandRef = doc(
           db,
@@ -137,7 +146,7 @@ export function useUninstall() {
         const existingCommands = commandDoc.exists() ? commandDoc.data() : {};
 
         // Add new uninstall command
-        const newCommand = {
+        const newCommand: any = {
           type: 'uninstall_software',
           software_name: softwareDetails.name,
           uninstall_command: softwareDetails.uninstall_command,
@@ -146,15 +155,25 @@ export function useUninstall() {
           timestamp: timestamp,
         };
 
+        // Only include deployment_id if provided (when uninstalling from deployment view)
+        if (deploymentId) {
+          newCommand.deployment_id = deploymentId;
+        }
+
+        console.log(`[useUninstall] Writing command to Firestore:`, newCommand);
+
         // Merge with existing commands
         await setDoc(commandRef, {
           ...existingCommands,
           [commandId]: newCommand,
         });
+
+        console.log(`[useUninstall] Command written successfully for ${machineId}`);
       }
 
-      console.log(`Uninstall commands created for ${machineIds.length} machines`);
+      console.log(`[useUninstall] All uninstall commands created for ${machineIds.length} machines`);
     } catch (err: any) {
+      console.error('[useUninstall] Error:', err);
       const errorMsg = err.message || 'Failed to create uninstall commands';
       setError(errorMsg);
       throw new Error(errorMsg);

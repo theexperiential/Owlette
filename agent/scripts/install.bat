@@ -62,10 +62,40 @@ echo [2/4] Checking for existing service...
 if %errorLevel% equ 0 (
     echo Stopping existing service...
     "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-    timeout /t 2 /nobreak >nul
+
+    :: Wait up to 10 seconds for service to stop gracefully
+    :: This allows the service to cleanly set online=false in Firestore
+    echo Waiting for service to stop gracefully...
+    set WAIT_COUNT=0
+    :WAIT_LOOP
+    "%INSTALL_DIR%\tools\nssm.exe" status OwletteService | findstr /C:"SERVICE_STOPPED" >nul 2>&1
+    if !errorLevel! equ 0 goto SERVICE_STOPPED
+
+    timeout /t 1 /nobreak >nul
+    set /a WAIT_COUNT+=1
+    if !WAIT_COUNT! lss 10 goto WAIT_LOOP
+
+    :: If service didn't stop after 10 seconds, force stop
+    echo Service did not stop gracefully, forcing...
+    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
+    timeout /t 1 /nobreak >nul
+
+    :SERVICE_STOPPED
+    echo Service stopped successfully
+
+    :: SAFETY MARGIN: Wait additional 3 seconds after service stops
+    :: This ensures Firestore has fully processed the online=false write
+    :: and the web dashboard will show machine as offline
+    echo Waiting for Firestore sync to complete...
+    timeout /t 3 /nobreak >nul
 
     echo Removing existing service...
     "%INSTALL_DIR%\tools\nssm.exe" remove OwletteService confirm
+
+    :: SAFETY MARGIN: Wait 2 seconds after removing service
+    :: This prevents any race conditions between old/new service
+    echo Preparing to install new service...
+    timeout /t 2 /nobreak >nul
 )
 
 :: ============================================================================
@@ -74,7 +104,7 @@ if %errorLevel% equ 0 (
 echo [3/4] Installing Owlette service...
 
 :: Install service with application and script (no spaces in C:\Owlette path)
-"%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\pythonw.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
+"%INSTALL_DIR%\tools\nssm.exe" install OwletteService "%INSTALL_DIR%\python\python.exe" "%INSTALL_DIR%\agent\src\owlette_runner.py"
 
 if %errorLevel% neq 0 (
     echo ERROR: Failed to install service
@@ -88,10 +118,12 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DisplayName "Owlette Service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
-:: CRITICAL: Run service as logged-in user so OAuth tokens in Windows Credential Manager are accessible
-echo Configuring service to run as current user...
-"%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName ".\%USERNAME%"
+:: Run service as LocalSystem for elevated privileges (needed for silent installer execution)
+:: OAuth tokens are stored in C:\ProgramData\Owlette\.tokens.enc (accessible by SYSTEM)
+echo Configuring service to run as LocalSystem...
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService ObjectName "LocalSystem"
 
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStdout "%DATA_DIR%\logs\service_stdout.log"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppStderr "%DATA_DIR%\logs\service_stderr.log"
@@ -102,6 +134,12 @@ echo Configuring service to run as current user...
 
 :: Set service dependencies (wait for network)
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService DependOnService Tcpip Dnscache
+
+:: Configure restart behavior
+:: - Exit code 0 (clean exit) -> Don't restart (user intentionally stopped it)
+:: - Default (crashes/errors) -> Restart (auto-recovery)
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit Default Restart
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppExit 0 Exit
 
 :: ============================================================================
 :: Step 5: Start service

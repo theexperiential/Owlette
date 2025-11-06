@@ -24,7 +24,7 @@ This method creates a fresh embedded Python environment and builds everything fr
 **Command:**
 ```bash
 cd agent
-./build_embedded_installer.bat
+./build_installer_full.bat
 ```
 
 **What it does:**
@@ -53,25 +53,19 @@ This method updates only the Python source files and recompiles the Inno Setup i
 **Command:**
 ```bash
 cd agent
-
-# Update a single file and rebuild
-cp src/configure_site.py build/installer_package/agent/src/configure_site.py
-"/c/Program Files (x86)/Inno Setup 6/ISCC.exe" owlette_installer.iss
-
-# Or update multiple files
-cp src/auth_manager.py build/installer_package/agent/src/auth_manager.py
-cp src/secure_storage.py build/installer_package/agent/src/secure_storage.py
-"/c/Program Files (x86)/Inno Setup 6/ISCC.exe" owlette_installer.iss
+./build_installer_quick.bat
 ```
 
 **What it does:**
-1. Copies updated Python files to existing build directory
-2. Recompiles Inno Setup installer (packages existing files)
+1. Validates VERSION file
+2. Copies all updated Python source files to existing build directory
+3. Copies scripts and icons
+4. Recompiles Inno Setup installer (packages existing files)
 
 **Output:**
-- `build/installer_output/Owlette-Installer-v2.0.0.exe` (updated)
+- `build/installer_output/Owlette-Installer-v{VERSION}.exe` (updated)
 
-**Duration:** ~2 minutes (just Inno Setup compilation)
+**Duration:** ~30 seconds (just file copy + Inno Setup compilation)
 
 **Important:**
 - Requires a previous full build (Method 1) to exist in `build/`
@@ -99,7 +93,8 @@ agent/
 │       └── Owlette-Installer-v2.0.0.exe  # Final installer executable
 │
 ├── owlette_installer.iss             # Inno Setup script
-└── build_embedded_installer.bat      # Full build script
+├── build_installer_full.bat          # Full build script (~5-10 min)
+└── build_installer_quick.bat         # Quick build script (~30 sec)
 ```
 
 ## Testing the Installer
@@ -179,7 +174,7 @@ taskkill /F /IM ISCC.exe
 **Solution:** Do a full rebuild (Method 1) to reinstall dependencies:
 ```bash
 rm -rf build/
-./build_embedded_installer.bat
+./build_installer_full.bat
 ```
 
 ### Issue: Changes not reflected in installed service
@@ -220,7 +215,7 @@ For automated builds, use Method 1 in your CI/CD pipeline:
 - name: Build Installer
   run: |
     cd agent
-    ./build_embedded_installer.bat
+    ./build_installer_full.bat
 
 - name: Upload Installer
   uses: actions/upload-artifact@v3

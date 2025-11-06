@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,9 @@ import { toast } from 'sonner';
 import { useMachines } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
+import { useSystemPresets } from '@/hooks/useSystemPresets';
+import { useInstallerVersion } from '@/hooks/useInstallerVersion';
+import { SelectGroup, SelectLabel } from '@/components/ui/select';
 
 interface DeploymentDialogProps {
   open: boolean;
@@ -35,6 +38,9 @@ export default function DeploymentDialog({
   onDeleteTemplate,
 }: DeploymentDialogProps) {
   const { machines } = useMachines(siteId);
+  const { presets, categories } = useSystemPresets();
+  const { version: latestInstallerVersion, downloadUrl: latestInstallerUrl } = useInstallerVersion();
+
   const [deploymentName, setDeploymentName] = useState('');
   const [installerName, setInstallerName] = useState('');
   const [installerUrl, setInstallerUrl] = useState('');
@@ -45,9 +51,26 @@ export default function DeploymentDialog({
   const [deploying, setDeploying] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [editingTemplate, setEditingTemplate] = useState<string>('');  // ID of template being edited
+  const [selectedPreset, setSelectedPreset] = useState<string>('');  // ID of selected system preset
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (open) {
+      setDeploymentName('');
+      setInstallerName('');
+      setInstallerUrl('');
+      setSilentFlags('');
+      setVerifyPath('');
+      setSelectedMachines(new Set());
+      setSaveAsTemplate(false);
+      setSelectedTemplate('');
+      setEditingTemplate('');
+      setSelectedPreset('');
+    }
+  }, [open]);
 
   const handleTemplateSelect = (templateId: string) => {
     if (templateId === 'none') {
@@ -64,6 +87,41 @@ export default function DeploymentDialog({
       setInstallerUrl(template.installer_url);
       setSilentFlags(template.silent_flags);
       setVerifyPath(template.verify_path || '');
+      setEditingTemplate('');
+
+      // Clear preset selection when template is selected
+      setSelectedPreset('');
+    }
+  };
+
+  const handlePresetSelect = (presetId: string) => {
+    if (presetId === 'none') {
+      setSelectedPreset('');
+      return;
+    }
+
+    const preset = presets.find(p => p.id === presetId);
+    if (preset) {
+      setSelectedPreset(presetId);
+
+      // Populate form with preset data
+      if (preset.is_owlette_agent) {
+        // Special handling for Owlette Agent preset - fetch latest from installer_metadata
+        setDeploymentName(`Update Owlette to v${latestInstallerVersion || 'latest'}`);
+        setInstallerName(preset.installer_name);
+        setInstallerUrl(latestInstallerUrl || ''); // Dynamic URL from installer_metadata
+      } else {
+        // Standard preset
+        setDeploymentName(`Deploy ${preset.software_name}`);
+        setInstallerName(preset.installer_name);
+        setInstallerUrl(preset.installer_url);
+      }
+
+      setSilentFlags(preset.silent_flags);
+      setVerifyPath(preset.verify_path || '');
+
+      // Clear template selection when preset is selected
+      setSelectedTemplate('');
       setEditingTemplate('');
     }
   };
@@ -101,15 +159,6 @@ export default function DeploymentDialog({
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete template');
     }
-  };
-
-  const handleTouchDesignerPreset = () => {
-    setDeploymentName('TouchDesigner Deployment');
-    setInstallerName('TouchDesigner.2025.31550.exe');
-    setInstallerUrl('https://download.derivative.ca/TouchDesignerWebInstaller.2025.31550.exe');
-    setSilentFlags('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="C:\\Program Files\\Derivative\\TouchDesigner.2025.31550" /TDDesktopIcon=false /Codemeter /LOG="C:\\ProgramData\\Owlette\\logs\\TouchDesigner_Install.log"');
-    setVerifyPath('C:\\Program Files\\Derivative\\TouchDesigner.2025.31550\\bin\\TouchDesigner.exe');
-    toast.success('TouchDesigner preset loaded with all configuration.');
   };
 
   const toggleMachine = (machineId: string) => {
@@ -169,38 +218,52 @@ export default function DeploymentDialog({
     try {
       // Update existing template if in edit mode
       if (editingTemplate) {
-        await onUpdateTemplate(editingTemplate, {
+        const templateData: any = {
           name: deploymentName,
           installer_name: installerName,
           installer_url: installerUrl,
           silent_flags: silentFlags,
-          verify_path: verifyPath || undefined,
-        });
+        };
+        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+
+        await onUpdateTemplate(editingTemplate, templateData);
         toast.success('Template updated successfully!');
         setEditingTemplate('');
       }
       // Save as new template if requested
       else if (saveAsTemplate) {
-        await onCreateTemplate({
+        const templateData: any = {
           name: deploymentName,
           installer_name: installerName,
           installer_url: installerUrl,
           silent_flags: silentFlags,
-          verify_path: verifyPath || undefined,
-        });
+        };
+        if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
+
+        await onCreateTemplate(templateData);
         toast.success('Template saved successfully!');
       }
 
+      // Check if this is an Owlette update deployment
+      const selectedPresetData = selectedPreset ? presets.find(p => p.id === selectedPreset) : null;
+      const isOwletteUpdate = selectedPresetData?.is_owlette_agent || false;
+
+      // Build deployment object, excluding undefined fields
+      const deploymentData: any = {
+        name: deploymentName,
+        installer_name: installerName,
+        installer_url: installerUrl,
+        silent_flags: silentFlags,
+        targets: [],  // Will be filled by the hook
+      };
+
+      // Only add optional fields if they have values (Firestore doesn't accept undefined)
+      if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
+      if (isOwletteUpdate) deploymentData.is_owlette_update = true;
+
       // Create deployment
       const deploymentId = await onCreateDeployment(
-        {
-          name: deploymentName,
-          installer_name: installerName,
-          installer_url: installerUrl,
-          silent_flags: silentFlags,
-          verify_path: verifyPath || undefined,
-          targets: [],  // Will be filled by the hook
-        },
+        deploymentData,
         Array.from(selectedMachines)
       );
 
@@ -236,78 +299,118 @@ export default function DeploymentDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Template Selection */}
-          {templates.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="template" className="text-white">Load from Template</Label>
-              <div className="flex gap-2">
-                <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                  <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
-                    <SelectValue placeholder="Select a template..." />
-                  </SelectTrigger>
-                  <SelectContent className="border-slate-700 bg-slate-800">
-                    <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
-                      None
-                    </SelectItem>
-                    {templates.map((template) => (
-                      <SelectItem
-                        key={template.id}
-                        value={template.id}
-                        className="text-white focus:bg-slate-700 focus:text-white"
-                      >
-                        {template.name}
+          {/* Template Selections - Side by Side */}
+          {(templates.length > 0 || presets.length > 0) && (
+            <div className="flex gap-4">
+              {/* Template Library - Left */}
+              {presets.length > 0 && (
+                <div className="flex-1 space-y-2">
+                  <Label htmlFor="system-preset" className="text-white">Template Library</Label>
+                  <Select value={selectedPreset} onValueChange={handlePresetSelect}>
+                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
+                      <SelectValue placeholder="Select a template..." />
+                    </SelectTrigger>
+                    <SelectContent className="border-slate-700 bg-slate-800">
+                      <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                        None
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedTemplate && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={handleEditTemplate}
-                      className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
-                      title="Edit template"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={handleDeleteTemplate}
-                      className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
-                      title="Delete template"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </>
-                )}
-              </div>
-              {editingTemplate && (
-                <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
-                  <Pencil className="h-3 w-3 text-blue-400" />
-                  <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                      {categories.map(category => {
+                        const categoryPresets = presets.filter(p => p.category === category);
+                        if (categoryPresets.length === 0) return null;
+
+                        return (
+                          <SelectGroup key={category}>
+                            <SelectLabel className="text-slate-400">{category}</SelectLabel>
+                            {categoryPresets.map(preset => (
+                              <SelectItem
+                                key={preset.id}
+                                value={preset.id}
+                                className="text-white focus:bg-slate-700 focus:text-white"
+                              >
+                                <span className="flex items-center gap-2">
+                                  {preset.icon && <span>{preset.icon}</span>}
+                                  <span>{preset.name}</span>
+                                  {preset.is_owlette_agent && (
+                                    <Badge variant="outline" className="ml-2 border-blue-600 text-blue-400 text-xs">
+                                      Auto
+                                    </Badge>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500">
+                    Admin-curated software catalog (TouchDesigner, VLC, Owlette Agent, etc.)
+                  </p>
+                </div>
+              )}
+
+              {/* My Templates - Right */}
+              {templates.length > 0 && (
+                <div className="flex-1 space-y-2">
+                  <Label htmlFor="template" className="text-white">My Templates</Label>
+                  <div className="flex gap-2">
+                    <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
+                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
+                        <SelectValue placeholder="Select a template..." />
+                      </SelectTrigger>
+                      <SelectContent className="border-slate-700 bg-slate-800">
+                        <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
+                          None
+                        </SelectItem>
+                        {templates.map((template) => (
+                          <SelectItem
+                            key={template.id}
+                            value={template.id}
+                            className="text-white focus:bg-slate-700 focus:text-white"
+                          >
+                            {template.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedTemplate && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleEditTemplate}
+                          className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                          title="Edit template"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleDeleteTemplate}
+                          className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                          title="Delete template"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Your custom deployment templates
+                  </p>
+                  {editingTemplate && (
+                    <div className="flex items-center gap-2 p-2 bg-blue-900/30 border border-blue-700 rounded text-sm">
+                      <Pencil className="h-3 w-3 text-blue-400" />
+                      <span className="text-blue-300">Editing template - changes will be saved when you deploy</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-
-          {/* TouchDesigner Preset */}
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleTouchDesignerPreset}
-              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 cursor-pointer"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              TouchDesigner Preset
-            </Button>
-            <span className="text-xs text-slate-500">Quick preset for TouchDesigner deployment</span>
-          </div>
 
           {/* Deployment Name */}
           <div className="space-y-2">

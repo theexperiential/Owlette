@@ -55,12 +55,21 @@ def load_icon(status='normal'):
     - warning: Orange dot (Firebase connection issues)
     - error: Red dot (service stopped/disconnected)
     """
-    # Use universal icon from root icons folder (no light/dark variants)
-    icon_path = shared_utils.get_path(f'../icons/{status}.png')
+    # Use .ico files for better Windows HiDPI support
+    # .ico files contain multiple resolutions (16x16 to 256x256) that Windows
+    # automatically selects based on DPI settings
+    icon_path = shared_utils.get_path(f'../icons/{status}.ico')
+
+    # Fallback to .png if .ico doesn't exist (backwards compatibility)
+    if not os.path.exists(icon_path):
+        logging.debug(f"ICO file not found: {icon_path}, trying PNG")
+        icon_path = shared_utils.get_path(f'../icons/{status}.png')
 
     if not os.path.exists(icon_path):
-        logging.warning(f"Icon file not found: {icon_path}, falling back to normal.png")
-        icon_path = shared_utils.get_path('../icons/normal.png')
+        logging.warning(f"Icon file not found: {icon_path}, falling back to normal.ico")
+        icon_path = shared_utils.get_path('../icons/normal.ico')
+        if not os.path.exists(icon_path):
+            icon_path = shared_utils.get_path('../icons/normal.png')
 
     try:
         return Image.open(icon_path)
@@ -272,19 +281,17 @@ def exit_action(icon, item):
                 # Close the window
                 win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
 
-        # Stop the Windows service using NSSM
-        nssm_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools', 'nssm.exe')
-        if os.path.exists(nssm_path):
-            # Use subprocess instead of ShellExecuteW for better error handling
-            subprocess.run([nssm_path, 'stop', 'OwletteService'],
-                         check=False,
-                         capture_output=True,
-                         timeout=10)
-            logging.info("Service stopped via tray icon Exit")
-        else:
-            logging.error(f"NSSM not found at {nssm_path}")
+        # Write shutdown flag file for service to detect
+        shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
+        os.makedirs(os.path.dirname(shutdown_flag), exist_ok=True)
+        with open(shutdown_flag, 'w') as f:
+            f.write('exit')
+        logging.info("Shutdown flag written - service will exit gracefully")
+
+        # Give service a moment to detect the flag and shut down
+        time.sleep(2)
     except Exception as e:
-        logging.error(f"Failed to stop service: {e}")
+        logging.error(f"Failed to initiate shutdown: {e}")
     icon.stop()
 
 
