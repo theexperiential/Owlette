@@ -924,32 +924,35 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                         # Launch installer in detached mode (won't wait for it to complete)
                         import subprocess
-                        command = f'"{temp_installer_path}"'
-                        if silent_flags:
-                            command += f" {silent_flags}"
 
-                        logging.info(f"Launching detached installer: {command}")
+                        # Build command as list (no shell=True to avoid cmd.exe intermediary)
+                        cmd_list = [temp_installer_path]
+                        if silent_flags:
+                            cmd_list.extend(silent_flags.split())
+
+                        logging.info(f"Launching detached installer: {' '.join(cmd_list)}")
 
                         # DETACHED_PROCESS (0x00000008) + CREATE_NEW_PROCESS_GROUP (0x00000200)
+                        # CREATE_NO_WINDOW (0x08000000)
                         DETACHED_PROCESS = 0x00000008
                         CREATE_NEW_PROCESS_GROUP = 0x00000200
+                        CREATE_NO_WINDOW = 0x08000000
 
                         try:
                             subprocess.Popen(
-                                command,
-                                shell=True,
-                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                                cmd_list,
+                                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
                                 close_fds=True
                             )
                             logging.info("Installer launched successfully in detached mode")
 
-                            # Schedule service shutdown after brief delay (let installer start)
+                            # Schedule service shutdown after delay (let installer fully initialize)
                             import threading
                             def delayed_shutdown():
                                 import time
-                                time.sleep(3)  # Give installer time to fully start
-                                logging.warning("Self-update shutdown commencing in 3 seconds...")
-                                time.sleep(3)
+                                time.sleep(5)  # Give installer time to fully start
+                                logging.warning("Self-update shutdown commencing in 5 seconds...")
+                                time.sleep(5)
                                 logging.warning("Stopping service to allow self-update to complete...")
                                 self.stop()
 
