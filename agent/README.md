@@ -55,7 +55,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
 ```json
 {
-  "version": "2.0.0",
+  "version": "2.0.3",
   "processes": [
     {
       "id": "unique-id-here",
@@ -173,20 +173,84 @@ python owlette_service.py debug
 
 **Note:** Requires administrator privileges to access Windows service APIs.
 
-### Building Executable
+### Version Management
+
+**Single Source of Truth: `agent/VERSION` file**
+
+To bump the version:
+
+1. **Edit VERSION file**:
+   ```cmd
+   echo 2.0.4 > agent\VERSION
+   ```
+
+2. **Rebuild installer**:
+   ```cmd
+   cd agent
+   build_installer_full.bat
+   ```
+
+That's it! The version automatically propagates to:
+- System tray display (`owlette_tray.py`)
+- Configuration GUI (`owlette_gui.py`)
+- Firestore agent registration (`firebase_client.py`)
+- OAuth device registration (`auth_manager.py`)
+- Installer filename (`Owlette-Installer-v2.0.4.exe`)
+
+**How it works:**
+- `shared_utils.py` reads `VERSION` file at runtime
+- Build script reads `VERSION` and passes to Inno Setup compiler
+- All code imports version from `shared_utils.APP_VERSION`
+
+**Do NOT manually edit:**
+- `shared_utils.py` - Reads from `VERSION` file
+- `owlette_installer.iss` - Reads from environment variable set by build script
+- `auth_manager.py` - Imports from `shared_utils`
+
+### Building the Installer
+
+You have two options for building the installer:
+
+#### Option 1: Full Build (First Time / Clean Build)
 
 ```cmd
 cd agent
-build.bat
+build_installer_full.bat
 ```
 
-This creates standalone executables in `dist/` using PyInstaller.
+**What it does:**
+- Downloads Python 3.11 embedded (~25 MB)
+- Installs all dependencies
+- Copies source files
+- Downloads NSSM service manager
+- Compiles installer with Inno Setup
 
-### Creating Installer
+**Time:** ~5-10 minutes
+**When to use:** First build, after dependency changes, or for clean builds
 
-After building:
-- The Inno Setup script `owlette_setup.iss` creates a Windows installer
-- Output: `installer/owlette_setup.exe`
+#### Option 2: Quick Build (Development Iteration)
+
+```cmd
+cd agent
+build_installer_quick.bat
+```
+
+**What it does:**
+- Validates VERSION file
+- Copies updated source files only
+- Runs Inno Setup compiler
+
+**Time:** ~30 seconds
+**When to use:** After code changes (Python files, scripts, icons)
+
+**Prerequisites:** Must run full build at least once to set up build/ directory
+
+**Output:** Both scripts produce `build\installer_output\Owlette-Installer-v{VERSION}.exe`
+
+**Tip:** During development, use quick build for fast iteration. Only use full build when:
+- Starting fresh (no build/ directory)
+- Updating Python dependencies (requirements.txt)
+- After pulling major changes from git
 
 ---
 

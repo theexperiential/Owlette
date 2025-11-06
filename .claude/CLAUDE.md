@@ -4,7 +4,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system designed for managing TouchDesigner installations, digital signage, kiosks, and media servers across multiple Windows machines. It consists of a Python-based Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
 
-**Version**: 2.0.0
+**Version**: 2.0.4 (see [Version Management](../docs/version-management.md))
 **License**: GNU General Public License v3.0
 **Repository Type**: Monorepo (web + agent)
 
@@ -74,16 +74,106 @@ pip install -r requirements.txt
 cd src
 python owlette_service.py debug
 
-# Build executable
+# Build installer - Full build (first time, ~5-10 min)
 cd agent
-build.bat
+build_installer_full.bat
 
-# Install as Windows service
-install.bat
+# Build installer - Quick build (development, ~30 sec)
+cd agent
+build_installer_quick.bat
+
+# Install as Windows service (run built installer)
+Owlette-Installer-v2.0.4.exe
 
 # Uninstall service
-uninstall.bat
+# Use Windows Settings -> Apps -> Owlette -> Uninstall
 ```
+
+### Version Management
+
+**Monorepo Versioning:** Owlette uses independent component versions with automated sync.
+
+#### Version Files
+
+- `/VERSION` - Product release version (2.0.4)
+- `agent/VERSION` - Agent binary version (2.0.4)
+- `web/package.json` - Web app version (2.0.4)
+- `firestore.rules` - Security schema version (2.2.0 - independent!)
+
+#### Syncing Versions (REQUIRED for Releases)
+
+**Always use the sync script to bump versions:**
+
+```bash
+# Check current versions
+node scripts/sync-versions.js
+
+# Bump product, agent, and web to 2.1.0
+node scripts/sync-versions.js 2.1.0
+
+# Alternative: Python version
+python scripts/sync_versions.py 2.1.0
+```
+
+**What the script does:**
+- ✅ Updates `/VERSION` (product)
+- ✅ Updates `agent/VERSION` (agent binary)
+- ✅ Updates `web/package.json` (web app)
+- ✅ Reminds you to update CHANGELOG.md
+- ✅ Reminds you to create git tag
+
+**Firestore Rules Version:**
+- Bump **manually** only when security schema changes
+- Currently: 2.2.0 (tracks authentication/permission model)
+- Independent from product version
+
+#### Version Propagation
+
+Agent version automatically appears in:
+- System tray display
+- Configuration GUI
+- Firestore agent registration
+- OAuth device registration
+- Installer filename
+
+Web version automatically appears in:
+- Dashboard footer
+- Package metadata
+- Build artifacts
+
+#### Full Release Workflow
+
+```bash
+# 1. Sync all component versions
+node scripts/sync-versions.js 2.1.0
+
+# 2. Update CHANGELOG.md with release notes
+# (Document all changes since last release)
+
+# 3. If Firestore rules changed, bump manually
+# Edit firestore.rules header: Version: 2.3.0
+
+# 4. Commit and tag
+git add VERSION agent/VERSION web/package.json CHANGELOG.md
+git commit -m "chore: Bump version to 2.1.0"
+git tag v2.1.0
+git push origin main --tags
+
+# 5. Build release artifacts
+cd agent && build_installer_full.bat
+cd ../web && npm run build
+
+# 6. Deploy
+# - Agent: Upload installer via Admin Panel
+# - Web: Auto-deploys via Railway on push
+```
+
+**Documentation:** See [docs/version-management.md](../docs/version-management.md) for complete details.
+
+**Important:**
+- ⚠️ Do NOT manually edit version numbers in multiple files
+- ✅ Always use `node scripts/sync-versions.js` for releases
+- ✅ Firestore rules version is independent (only bump for schema changes)
 
 ---
 
@@ -815,7 +905,13 @@ npm start
 
 See [CHANGELOG.md](../CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.0.0 (January 31, 2025)
+**Current Version**: 2.0.3 (November 5, 2025)
+- Implemented single source of truth version management system
+- Created `agent/VERSION` file for centralized version control
+- Updated build system to validate and propagate version automatically
+- See [.claude/VERSION-MANAGEMENT.md](.claude/VERSION-MANAGEMENT.md) for details
+
+**Previous Version**: 2.0.0 (January 31, 2025)
 - Complete Firebase integration
 - Web dashboard for remote management
 - Bidirectional real-time sync
@@ -823,4 +919,4 @@ See [CHANGELOG.md](../CHANGELOG.md) for detailed version history.
 
 ---
 
-**Last Updated**: 2025-01-31
+**Last Updated**: 2025-11-05

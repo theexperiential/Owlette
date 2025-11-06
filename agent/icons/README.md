@@ -54,7 +54,7 @@ This script will:
 
 ### Build Integration
 
-The build system (`build_embedded_installer.bat`) automatically copies all icons to the installer package using:
+The build system (`build_installer_full.bat` and `build_installer_quick.bat`) automatically copies all icons to the installer package using:
 
 ```batch
 xcopy /E /I /Y icons\* build\installer_package\agent\icons\
