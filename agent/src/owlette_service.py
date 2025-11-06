@@ -878,6 +878,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Get temporary path for installer
                 temp_installer_path = installer_utils.get_temp_installer_path(installer_name)
 
+                # Initialize self-update flag (must be before try block for finally block access)
+                is_self_update = False
+
                 try:
                     # Update status: downloading
                     if self.firebase_client:
@@ -999,10 +1002,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 finally:
                     # Always cleanup the temporary installer file (with force=True to handle locked files)
                     # EXCEPT for self-updates: installer must stay on disk until it finishes extracting
-                    if not is_self_update:
-                        installer_utils.cleanup_installer(temp_installer_path, force=True)
-                    else:
-                        logging.info("Skipping cleanup for self-update (installer will clean itself up)")
+                    try:
+                        if not is_self_update:
+                            installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        else:
+                            logging.info("Skipping cleanup for self-update (installer will clean itself up)")
+                    except Exception as cleanup_error:
+                        logging.warning(f"Error in cleanup finally block: {cleanup_error}")
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version
