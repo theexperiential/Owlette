@@ -11,8 +11,22 @@ cd /d "%~dp0"
 
 echo [1/3] Reading VERSION file...
 
-REM Use PowerShell to read VERSION file (more reliable than batch)
-for /f "delims=" %%i in ('powershell -Command "Get-Content VERSION -First 1"') do set OWLETTE_VERSION=%%i
+REM Read version from VERSION file using temporary file approach
+if not exist "VERSION" (
+    echo ERROR: VERSION file not found!
+    pause
+    exit /b 1
+)
+
+powershell -Command "(Get-Content VERSION -First 1).Trim()" > version.tmp 2>&1
+if errorlevel 1 (
+    echo ERROR: PowerShell failed to read VERSION file!
+    pause
+    exit /b 1
+)
+
+set /p OWLETTE_VERSION=<version.tmp
+del version.tmp
 
 if not defined OWLETTE_VERSION (
     echo ERROR: Could not read VERSION file!

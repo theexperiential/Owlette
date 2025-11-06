@@ -23,16 +23,21 @@ echo [0/9] Reading VERSION file...
 
 if not exist "VERSION" (
     echo ERROR: VERSION file not found!
-    echo Please create agent\VERSION file with version number (e.g., 2.0.4)
     pause
     exit /b 1
 )
+:: echo DEBUG: VERSION file exists
 
-:: Read version from VERSION file using PowerShell (more reliable than batch)
-for /f "delims=" %%i in ('powershell -Command "Get-Content VERSION -First 1"') do set OWLETTE_VERSION=%%i
+:: Read version from VERSION file
+set /p OWLETTE_VERSION=<VERSION
+:: echo DEBUG: Read result: [%OWLETTE_VERSION%]
 
-if not defined OWLETTE_VERSION (
-    echo ERROR: Could not read VERSION file!
+:: Remove spaces
+set OWLETTE_VERSION=%OWLETTE_VERSION: =%
+:: echo DEBUG: After trim: [%OWLETTE_VERSION%]
+
+if "%OWLETTE_VERSION%"=="" (
+    echo ERROR: VERSION is empty after reading!
     pause
     exit /b 1
 )
@@ -88,23 +93,25 @@ echo [3/9] Configuring Python import paths...
 :: ============================================================================
 echo [4/9] Installing pip...
 curl -o build\get-pip.py https://bootstrap.pypa.io/get-pip.py
-build\python\python.exe build\get-pip.py
+"%~dp0build\python\python.exe" "%~dp0build\get-pip.py"
 if errorlevel 1 (
     echo ERROR: Failed to install pip
     pause
     exit /b 1
 )
+echo Pip installed successfully!
 
 :: ============================================================================
 :: Step 5: Install dependencies
 :: ============================================================================
 echo [5/9] Installing dependencies (this may take a few minutes)...
-build\python\python.exe -m pip install -r requirements.txt
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo ERROR: Failed to install dependencies
     pause
     exit /b 1
 )
+echo Dependencies installed successfully!
 
 :: ============================================================================
 :: Step 6: Copy tkinter from system Python 3.11
@@ -158,7 +165,6 @@ mkdir build\installer_package\agent\src 2>nul
 mkdir build\installer_package\agent\icons 2>nul
 mkdir build\installer_package\tools 2>nul
 mkdir build\installer_package\scripts 2>nul
-mkdir build\installer_package\agent 2>nul
 
 :: Note: config, logs, cache, tmp directories are now created in ProgramData by the installer
 
