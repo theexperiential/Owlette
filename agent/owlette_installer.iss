@@ -38,8 +38,22 @@
 ;   Owlette-Installer-v2.0.0.exe /SERVER=prod
 ; ============================================================================
 
+; VERSION MANAGEMENT
+; ------------------
+; Version is read from VERSION file at build time (passed via /DMyAppVersion=X.X.X)
+; If not provided, defaults to reading from VERSION file via ReadIni workaround
+; To bump version: Edit agent/VERSION file and rebuild
+; Build script (build_embedded_installer.bat) validates VERSION file exists and passes it here
+
+#ifndef MyAppVersion
+  #define MyAppVersion GetEnv("OWLETTE_VERSION")
+  #if MyAppVersion == ""
+    #define MyAppVersion "2.0.3"
+    #pragma message "WARNING: Using fallback version 2.0.3 - VERSION file not found or OWLETTE_VERSION not set"
+  #endif
+#endif
+
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.3"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"
