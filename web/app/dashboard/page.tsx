@@ -563,7 +563,7 @@ export default function DashboardPage() {
 
         {/* Machines list */}
         {machines.length > 0 ? (
-          <div className="space-y-4">
+          <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-white">Machines</h3>
 
@@ -589,7 +589,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Card View - Always shown on mobile, toggle on desktop */}
-            <div className={`grid gap-4 md:grid-cols-2 ${viewType === 'list' ? 'md:hidden' : ''}`}>
+            <div className={`grid gap-4 md:grid-cols-2 animate-in fade-in duration-300 ${viewType === 'list' ? 'md:hidden' : ''}`}>
               {machines.map((machine) => (
                 <Card key={machine.machineId} className="border-slate-800 bg-slate-900">
                   <CardHeader className="pb-3 md:pb-6">
@@ -757,7 +757,7 @@ export default function DashboardPage() {
             </div>
 
             {/* List View - Hidden on mobile, only shown on desktop when selected */}
-            <div className={`rounded-lg border border-slate-800 bg-slate-900 overflow-hidden ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
+            <div className={`rounded-lg border border-slate-800 bg-slate-900 overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
                 <Table style={{ contain: 'layout' }}>
                   <MemoizedTableHeader />
                   <TableBody>
