@@ -998,7 +998,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 finally:
                     # Always cleanup the temporary installer file (with force=True to handle locked files)
-                    installer_utils.cleanup_installer(temp_installer_path, force=True)
+                    # EXCEPT for self-updates: installer must stay on disk until it finishes extracting
+                    if not is_self_update:
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                    else:
+                        logging.info("Skipping cleanup for self-update (installer will clean itself up)")
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version

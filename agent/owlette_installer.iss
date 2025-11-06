@@ -39,7 +39,7 @@
 ; ============================================================================
 
 #define MyAppName "Owlette"
-#define MyAppVersion "2.0.2"
+#define MyAppVersion "2.0.3"
 #define MyAppPublisher "Owlette Project"
 #define MyAppURL "https://github.com/yourusername/owlette"
 #define MyAppExeName "pythonw.exe"

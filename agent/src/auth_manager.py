@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 
 # Agent version (should match installer version)
-AGENT_VERSION = "2.0.0"
+AGENT_VERSION = "2.0.3"
 
 
 class AuthenticationError(Exception):

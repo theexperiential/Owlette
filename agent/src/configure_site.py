@@ -262,7 +262,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         else:
             config = {
                 "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
-                "version": "2.0.0",
+                "version": "2.0.3",
                 "processes": [],
                 "logging": {
                     "level": "INFO",
