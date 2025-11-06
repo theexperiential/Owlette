@@ -175,3 +175,85 @@ export const validateEnum = <T extends string>(
 
   return { isValid: true };
 };
+
+/**
+ * Reserved site IDs that cannot be used
+ */
+const RESERVED_SITE_IDS = [
+  'admin',
+  'api',
+  'auth',
+  'config',
+  'dashboard',
+  'deployments',
+  'login',
+  'logout',
+  'register',
+  'settings',
+  'setup',
+  'sites',
+  'users',
+] as const;
+
+/**
+ * Validates site ID (slug format)
+ * - 3-50 characters
+ * - Lowercase letters, numbers, hyphens, underscores
+ * - Must start with letter
+ * - Cannot be reserved word
+ */
+export const validateSiteId = (siteId: string): ValidationResult => {
+  if (!siteId || siteId.trim() === '') {
+    return {
+      isValid: false,
+      error: 'Site ID is required',
+    };
+  }
+
+  // Check length
+  if (siteId.length < 3) {
+    return {
+      isValid: false,
+      error: 'Site ID must be at least 3 characters',
+    };
+  }
+
+  if (siteId.length > 50) {
+    return {
+      isValid: false,
+      error: 'Site ID must be 50 characters or less',
+    };
+  }
+
+  // Check format: lowercase, letters, numbers, hyphens, underscores
+  if (!/^[a-z][a-z0-9_-]*$/.test(siteId)) {
+    return {
+      isValid: false,
+      error: 'Site ID must start with a letter and contain only lowercase letters, numbers, hyphens, and underscores',
+    };
+  }
+
+  // Check for reserved words
+  if (RESERVED_SITE_IDS.includes(siteId as any)) {
+    return {
+      isValid: false,
+      error: `"${siteId}" is a reserved word and cannot be used as a site ID`,
+    };
+  }
+
+  return { isValid: true };
+};
+
+/**
+ * Generates a URL-friendly slug from a site name
+ * Example: "New York Office" -> "new-york-office"
+ */
+export const generateSiteIdFromName = (siteName: string): string => {
+  return siteName
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+    .replace(/\s+/g, '-') // Replace spaces with hyphens
+    .replace(/-+/g, '-') // Collapse multiple hyphens
+    .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+};

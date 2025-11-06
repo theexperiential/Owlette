@@ -156,8 +156,21 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
   const createSite = async (siteId: string, name: string, userId: string) => {
     if (!db) throw new Error('Firebase not configured');
 
-    // Create site document with owner field
+    // Validate site ID format
+    const { isValid, error } = await import('@/lib/validators').then(m => m.validateSiteId(siteId));
+    if (!isValid) {
+      throw new Error(error);
+    }
+
+    // Check if site already exists (CRITICAL: Prevent overwriting existing sites)
     const siteRef = doc(db, 'sites', siteId);
+    const siteSnap = await getDoc(siteRef);
+
+    if (siteSnap.exists()) {
+      throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
+    }
+
+    // Create site document with owner field
     await setDoc(siteRef, {
       name,
       createdAt: Date.now(),
@@ -215,7 +228,28 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
     logger.info(`Site ${siteId} deleted. Note: User references may need manual cleanup.`);
   };
 
-  return { sites, loading, error, createSite, renameSite, deleteSite };
+  const checkSiteIdAvailability = async (siteId: string): Promise<boolean> => {
+    if (!db) throw new Error('Firebase not configured');
+
+    // Don't check empty IDs
+    if (!siteId || siteId.trim() === '') {
+      return false;
+    }
+
+    // Validate format first
+    const { isValid } = await import('@/lib/validators').then(m => m.validateSiteId(siteId));
+    if (!isValid) {
+      return false;
+    }
+
+    // Check if site exists
+    const siteRef = doc(db, 'sites', siteId);
+    const siteSnap = await getDoc(siteRef);
+
+    return !siteSnap.exists();
+  };
+
+  return { sites, loading, error, createSite, renameSite, deleteSite, checkSiteIdAvailability };
 }
 
 export function useMachines(siteId: string) {
