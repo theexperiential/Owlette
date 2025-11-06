@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ChevronRight, Settings, ChevronDown, LogOut, Shield } from 'lucide-react';
 import Image from 'next/image';
-import { getUserInitials } from '@/lib/userUtils';
+import { getUserInitials, getUserShortName, getUserFirstName } from '@/lib/userUtils';
 
 interface Site {
   id: string;
@@ -142,7 +142,14 @@ export function PageHeader({
                   </AvatarFallback>
                 </Avatar>
                 {user?.displayName && (
-                  <span className="text-xs sm:text-sm text-white hidden lg:inline truncate max-w-[80px] xl:max-w-none">{user.displayName}</span>
+                  <>
+                    {/* lg only: First name only (e.g., "Dylan") */}
+                    <span className="text-xs sm:text-sm text-white hidden lg:inline xl:hidden">{getUserFirstName(user)}</span>
+                    {/* xl only: First name + last initial (e.g., "Dylan R.") */}
+                    <span className="text-xs sm:text-sm text-white hidden xl:inline 2xl:hidden">{getUserShortName(user)}</span>
+                    {/* 2xl+: Full name (e.g., "Dylan Roscover") */}
+                    <span className="text-xs sm:text-sm text-white hidden 2xl:inline">{user.displayName}</span>
+                  </>
                 )}
                 <ChevronDown className="h-3 w-3 text-slate-400 hidden sm:block" />
               </Button>

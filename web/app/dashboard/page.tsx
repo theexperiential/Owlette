@@ -63,6 +63,9 @@ export default function DashboardPage() {
   const [expandedMachines, setExpandedMachines] = useState<Set<string>>(new Set());
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
+  // Delay showing "Getting Started" to avoid flash if machines are still loading
+  const [canShowGettingStarted, setCanShowGettingStarted] = useState(false);
+
   // Process Dialog state (supports both create and edit modes)
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
   const [processDialogMode, setProcessDialogMode] = useState<'create' | 'edit'>('edit');
@@ -395,6 +398,14 @@ export default function DashboardPage() {
     if (savedView) {
       setViewType(savedView);
     }
+  }, []);
+
+  // Delay showing "Getting Started" by 2 seconds to avoid flash if machines load quickly
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCanShowGettingStarted(true);
+    }, 2000); // 2 second delay
+    return () => clearTimeout(timer);
   }, []);
 
   // Save view preference to localStorage
@@ -922,8 +933,8 @@ export default function DashboardPage() {
                 </Table>
               </div>
           </div>
-        ) : (
-          <Card className="border-slate-800 bg-slate-900">
+        ) : canShowGettingStarted ? (
+          <Card className="border-slate-800 bg-slate-900 animate-in fade-in duration-500">
             <CardHeader>
               <CardTitle className="text-white">Getting Started</CardTitle>
               <CardDescription className="text-slate-400">
@@ -1033,7 +1044,7 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
-        )}
+        ) : null}
       </main>
 
       {/* Process Dialog (Create/Edit) */}
