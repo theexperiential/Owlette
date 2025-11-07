@@ -101,7 +101,9 @@ service cloud.firestore {
 
     match /sites/{siteId} {
       // Site document access
-      allow read: if canAccessSite(siteId);
+      // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
+      // UPDATE/DELETE: Only users with access to the site
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated(); // Any authenticated user can create a site
       allow update, delete: if canAccessSite(siteId);
 
