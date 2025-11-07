@@ -6,6 +6,7 @@ import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
 import { Shield, Users, Package, ArrowLeft, Menu, X, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 /**
  * Admin Layout
@@ -43,107 +44,145 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <RequireAdmin>
-      <div className="flex min-h-screen bg-slate-900">
+      <TooltipProvider delayDuration={100}>
+        <div className="flex min-h-screen bg-slate-900">
         {/* Mobile Menu Button */}
-        <div className="md:hidden fixed top-4 left-4 z-50">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 cursor-pointer"
-          >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </Button>
-        </div>
+        {!mobileMenuOpen && (
+          <div className="lg:hidden fixed top-4 left-4 z-50">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMobileMenuOpen(true)}
+              className="border-slate-600 bg-slate-800/95 backdrop-blur-sm text-white hover:bg-slate-700 cursor-pointer shadow-lg"
+            >
+              <Menu className="h-5 w-5 stroke-[2.5]" />
+            </Button>
+          </div>
+        )}
 
         {/* Mobile Overlay */}
         {mobileMenuOpen && (
           <div
-            className="md:hidden fixed inset-0 bg-black/50 z-30"
+            className="lg:hidden fixed inset-0 bg-black/50 z-30"
             onClick={() => setMobileMenuOpen(false)}
           />
         )}
 
         {/* Sidebar Navigation */}
         <aside className={`
-          w-64 bg-slate-800 border-r border-slate-700 flex flex-col
-          fixed md:static inset-y-0 left-0 z-40
-          transform transition-transform duration-200 ease-in-out
-          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          w-64 lg:w-20 xl:w-64 bg-slate-800 border-r border-slate-700 flex flex-col
+          fixed lg:static inset-y-0 left-0 z-40
+          transform transition-all duration-200 ease-in-out
+          ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
           {/* Header */}
-          <div className="p-6 border-b border-slate-700">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-blue-600 rounded-lg">
+          <div className="p-6 lg:p-3 xl:p-6 border-b border-slate-700">
+            {/* Mobile Header */}
+            <div className="lg:hidden mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <h1 className="text-xl font-bold text-white">Admin Panel</h1>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="p-2 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                  aria-label="Close menu"
+                >
+                  <X className="h-5 w-5 text-slate-400 hover:text-white" />
+                </button>
+              </div>
+              <p className="text-sm text-slate-400">System Management</p>
+            </div>
+
+            {/* Desktop/Tablet Header */}
+            <div className="hidden lg:flex items-center gap-3 mb-4 lg:justify-center xl:justify-start">
+              <div className="p-2 bg-blue-600 rounded-lg flex-shrink-0">
                 <Shield className="h-6 w-6 text-white" />
               </div>
-              <div>
+              <div className="hidden xl:block">
                 <h1 className="text-xl font-bold text-white">Admin Panel</h1>
                 <p className="text-xs text-slate-400">System Management</p>
               </div>
             </div>
 
             {/* Back to Dashboard */}
-            <Link href="/dashboard">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Dashboard
-              </Button>
-            </Link>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link href="/dashboard">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer lg:px-2 xl:px-3"
+                  >
+                    <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
+                    <span className="lg:hidden xl:inline">Back to Dashboard</span>
+                  </Button>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="hidden lg:block xl:hidden">
+                <p>Back to Dashboard</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* Navigation Links */}
-          <nav className="flex-1 p-4 space-y-2">
+          <nav className="flex-1 p-4 lg:p-2 xl:p-4 space-y-3">
             {navItems.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
 
               return (
-                <Link key={item.href} href={item.href} onClick={() => setMobileMenuOpen(false)}>
-                  <div
-                    className={`
-                      flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
-                      ${
-                        isActive
-                          ? 'bg-blue-600 text-white'
-                          : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-                      }
-                    `}
-                  >
-                    <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="font-medium text-sm">{item.name}</p>
-                      <p
-                        className={`text-xs mt-0.5 ${
-                          isActive ? 'text-blue-100' : 'text-slate-500'
-                        }`}
+                <Tooltip key={item.href}>
+                  <TooltipTrigger asChild>
+                    <Link href={item.href} onClick={() => setMobileMenuOpen(false)}>
+                      <div
+                        className={`
+                          flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors
+                          ${
+                            isActive
+                              ? 'bg-blue-600 text-white'
+                              : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                          }
+                        `}
                       >
-                        {item.description}
-                      </p>
-                    </div>
-                  </div>
-                </Link>
+                        <Icon className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                        <div className="lg:hidden xl:block">
+                          <p className="font-medium text-sm">{item.name}</p>
+                          <p
+                            className={`text-xs mt-0.5 ${
+                              isActive ? 'text-blue-100' : 'text-slate-500'
+                            }`}
+                          >
+                            {item.description}
+                          </p>
+                        </div>
+                      </div>
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="hidden lg:block xl:hidden">
+                    <p className="font-medium">{item.name}</p>
+                    <p className="text-xs text-slate-400">{item.description}</p>
+                  </TooltipContent>
+                </Tooltip>
               );
             })}
           </nav>
 
           {/* Footer */}
-          <div className="p-4 border-t border-slate-700">
-            <p className="text-xs text-slate-500 text-center">
+          <div className="p-4 lg:p-2 xl:p-4 border-t border-slate-700">
+            <p className="text-xs text-slate-500 text-center lg:hidden xl:block">
               Administrator Access
             </p>
+            <div className="hidden lg:block xl:hidden text-center">
+              <Shield className="h-4 w-4 text-slate-500 mx-auto" />
+            </div>
           </div>
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto pt-16 md:pt-0">
+        <main className="flex-1 overflow-auto pt-16 lg:pt-0">
           {children}
         </main>
       </div>
+      </TooltipProvider>
     </RequireAdmin>
   );
 }

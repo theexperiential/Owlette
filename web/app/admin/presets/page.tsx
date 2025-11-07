@@ -154,7 +154,7 @@ export default function SystemPresetsPage() {
           </div>
         </div>
 
-        {/* Presets Table */}
+        {/* Presets Table/Grid */}
         {filteredPresets.length === 0 ? (
           <div className="bg-slate-800 border border-slate-700 rounded-lg p-12 text-center">
             <Package className="h-16 w-16 text-slate-600 mx-auto mb-4" />
@@ -175,91 +175,168 @@ export default function SystemPresetsPage() {
             )}
           </div>
         ) : (
-          <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-slate-750 border-b border-slate-700">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Preset
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Category
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Installer
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Flags
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-700">
-                  {filteredPresets.map((preset) => (
-                    <tr key={preset.id} className="hover:bg-slate-750 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          {preset.icon && (
-                            <span className="text-2xl">{preset.icon}</span>
-                          )}
-                          <div>
-                            <p className="text-white font-medium">{preset.name}</p>
-                            <p className="text-slate-400 text-sm">{preset.software_name}</p>
-                            {preset.is_owlette_agent && (
-                              <Badge variant="outline" className="mt-1 border-blue-600 text-blue-400 text-xs">
-                                Auto-update
-                              </Badge>
+          <>
+            {/* Desktop Table View (hidden on mobile) */}
+            <div className="hidden lg:block bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-slate-750 border-b border-slate-700">
+                    <tr>
+                      <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Preset
+                      </th>
+                      <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Category
+                      </th>
+                      <th className="px-4 xl:px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Installer
+                      </th>
+                      <th className="hidden xl:table-cell px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Flags
+                      </th>
+                      <th className="px-4 xl:px-6 py-3 text-right text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700">
+                    {filteredPresets.map((preset) => (
+                      <tr key={preset.id} className="hover:bg-slate-750 transition-colors">
+                        <td className="px-4 xl:px-6 py-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {preset.icon && (
+                              <span className="text-2xl flex-shrink-0">{preset.icon}</span>
                             )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <p className="text-white font-medium text-sm">{preset.software_name}</p>
+                                <p className="text-slate-400 text-sm">{preset.name}</p>
+                              </div>
+                              {preset.is_owlette_agent && (
+                                <Badge variant="outline" className="mt-1 border-blue-600 text-blue-400 text-xs">
+                                  Auto-update
+                                </Badge>
+                              )}
+                            </div>
                           </div>
+                        </td>
+                        <td className="px-4 xl:px-6 py-3">
+                          <Badge variant="outline" className="border-slate-600 text-slate-300 text-xs whitespace-nowrap">
+                            {preset.category}
+                          </Badge>
+                        </td>
+                        <td className="px-4 xl:px-6 py-3">
+                          <p className="text-slate-300 text-sm font-mono truncate max-w-[200px]">{preset.installer_name}</p>
+                          {preset.installer_url && (
+                            <p className="text-slate-500 text-xs truncate max-w-[200px]">
+                              {preset.installer_url.substring(0, 40)}...
+                            </p>
+                          )}
+                        </td>
+                        <td className="hidden xl:table-cell px-6 py-3">
+                          <p className="text-slate-400 text-xs font-mono truncate max-w-[150px]" title={preset.silent_flags}>
+                            {preset.silent_flags}
+                          </p>
+                        </td>
+                        <td className="px-4 xl:px-6 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleEdit(preset)}
+                              className="border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer"
+                              title="Edit"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDelete(preset)}
+                              className="border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300 cursor-pointer"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="lg:hidden space-y-4">
+              {filteredPresets.map((preset) => (
+                <div key={preset.id} className="bg-slate-800 border border-slate-700 rounded-lg p-4 hover:border-slate-600 transition-colors">
+                  {/* Header with Icon and Name */}
+                  <div className="flex items-start gap-3 mb-3">
+                    {preset.icon && (
+                      <span className="text-3xl flex-shrink-0">{preset.icon}</span>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div>
+                          <h3 className="text-white font-medium text-base">{preset.software_name}</h3>
+                          <p className="text-slate-400 text-sm">{preset.name}</p>
                         </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <Badge variant="outline" className="border-slate-600 text-slate-300">
+                        <Badge variant="outline" className="border-slate-600 text-slate-300 text-xs whitespace-nowrap">
                           {preset.category}
                         </Badge>
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-slate-300 text-sm font-mono">{preset.installer_name}</p>
-                        {preset.installer_url && (
-                          <p className="text-slate-500 text-xs truncate max-w-xs">
-                            {preset.installer_url.substring(0, 50)}...
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <p className="text-slate-400 text-xs font-mono">
-                          {preset.silent_flags}
-                        </p>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleEdit(preset)}
-                            className="border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDelete(preset)}
-                            className="border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300 cursor-pointer"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                      {preset.is_owlette_agent && (
+                        <Badge variant="outline" className="border-blue-600 text-blue-400 text-xs">
+                          Auto-update
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Details */}
+                  <div className="space-y-2 text-sm mb-3">
+                    <div>
+                      <p className="text-slate-500 text-xs mb-1">Installer</p>
+                      <p className="text-slate-300 font-mono text-xs break-all">{preset.installer_name}</p>
+                    </div>
+                    {preset.installer_url && (
+                      <div>
+                        <p className="text-slate-500 text-xs mb-1">URL</p>
+                        <p className="text-slate-400 text-xs truncate">{preset.installer_url}</p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-slate-500 text-xs mb-1">Flags</p>
+                      <p className="text-slate-400 text-xs font-mono break-all">{preset.silent_flags}</p>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-3 border-t border-slate-700">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleEdit(preset)}
+                      className="flex-1 border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer"
+                    >
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDelete(preset)}
+                      className="flex-1 border-red-700 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300 cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
-          </div>
+          </>
         )}
 
         {/* Create/Edit Preset Dialog */}
