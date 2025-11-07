@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Agent Enhancements
+- **Service Lifecycle Logging** - Added call stack tracing to service stop events, service start/stop banners, and main loop markers for easier restart tracking
 - **Advanced Logging System** - Configurable log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL) via config
 - **Firebase Log Shipping** - Centralized log monitoring by shipping errors to Firestore (optional)
 - **Automatic Log Cleanup** - Delete log files older than configurable days (default: 90 days)
@@ -53,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 #### Agent
+- **Self-Update AttributeError** - Fixed `self.stop()` → `self.SvcStop()` in self-update shutdown mechanism preventing AttributeError exceptions
 - **Tray Icon Visibility** - Fixed icon not updating when service status changes
 - **Service Status Detection** - Improved reliability of service running checks
 - **"Leave Site" Workflow** - Fixed machine document recreation by stopping service BEFORE Firestore deletion

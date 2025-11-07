@@ -153,6 +153,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # On service stop
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+
+        # Log service stop with stack trace info to identify caller
+        import inspect
+        caller_frame = inspect.currentframe().f_back
+        caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno}" if caller_frame else "unknown"
+        logging.warning(f"=== SERVICE STOP REQUESTED === (called from {caller_info})")
         logging.info("Service stop requested - setting machine offline in Firebase...")
         self.is_alive = False
 
@@ -169,6 +175,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         self.terminate_tray_icon()
         win32event.SetEvent(self.hWaitStop)
+
+        logging.info("=== SERVICE STOP COMPLETE ===")
 
     # While service runs
     def SvcDoRun(self):
@@ -967,8 +975,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             logging.info(f"Created scheduled task '{task_name}' to run installer in 15 seconds")
                             logging.warning("Stopping service NOW - installer will run after service stops...")
 
-                            # Stop service immediately
-                            self.stop()
+                            # Stop service immediately (use SvcStop() to properly call Windows service stop)
+                            self.SvcStop()
 
                             return "Self-update initiated: Service stopped, installer will run via scheduled task"
 
@@ -1387,6 +1395,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Main main
     def main(self):
+        logging.info("="*70)
+        logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
+        logging.info("="*70)
+
         # Process startup info
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
@@ -1396,6 +1408,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
         # Get self.environment for logged-in user
         self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+
+        logging.info("Service initialization complete")
 
         # Start Firebase client and upload local config
         if self.firebase_client:
@@ -1443,6 +1457,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
+
+        logging.info("Starting main service loop...")
+
         try:
             while self.is_alive:
                 # Check for shutdown flag from tray icon
