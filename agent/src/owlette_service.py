@@ -1048,27 +1048,67 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Launch installer as detached process
-                    # Inno Setup will handle service stop/restart automatically
-                    DETACHED_PROCESS = 0x00000008
-                    CREATE_NO_WINDOW = 0x08000000
+                    # Launch installer via Windows Task Scheduler (survives service stop)
+                    # This ensures installer keeps running even when Inno Setup kills the service
+                    silent_flags = '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS'
+                    task_name = f"OwletteUpdate_{int(time.time())}"
 
-                    silent_flags = ['/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', '/ALLUSERS']
-                    logging.info(f"Launching installer with flags: {silent_flags}")
+                    logging.info(f"Creating scheduled task: {task_name}")
+                    logging.info(f"Installer flags: {silent_flags}")
 
-                    process = subprocess.Popen(
-                        [temp_installer_path] + silent_flags,
-                        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL
+                    # Create one-time task that runs immediately as SYSTEM
+                    schtasks_cmd = [
+                        'schtasks',
+                        '/Create',
+                        '/TN', task_name,
+                        '/TR', f'"{temp_installer_path}" {silent_flags}',
+                        '/SC', 'ONCE',
+                        '/ST', '00:00',  # Start time (will be forced to run immediately)
+                        '/RU', 'SYSTEM',
+                        '/RL', 'HIGHEST',
+                        '/F'  # Force create (overwrite if exists)
+                    ]
+
+                    result = subprocess.run(
+                        schtasks_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=10
                     )
 
-                    logging.info(f"Installer launched (PID: {process.pid})")
+                    if result.returncode != 0:
+                        raise Exception(f"Failed to create scheduled task: {result.stderr}")
+
+                    logging.info(f"Scheduled task created: {task_name}")
+
+                    # Run the task immediately
+                    run_result = subprocess.run(
+                        ['schtasks', '/Run', '/TN', task_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+
+                    if run_result.returncode != 0:
+                        logging.warning(f"Task run command returned: {run_result.stderr}")
+                    else:
+                        logging.info("Installer task started successfully")
+
+                    # Delete the task after a delay (cleanup) - but don't wait for it
+                    # The task will self-clean after installer completes
+                    cleanup_cmd = f'schtasks /Delete /TN "{task_name}" /F'
+                    subprocess.Popen(
+                        f'timeout /t 300 && {cleanup_cmd}',  # Delete after 5 min
+                        shell=True,
+                        creationflags=0x00000008,  # DETACHED_PROCESS
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
                     logging.info("Installer will handle service restart automatically")
                     logging.info("="*60)
 
-                    return "Self-update initiated - installer running in background"
+                    return "Self-update initiated via Task Scheduler"
 
                 except Exception as e:
                     error_msg = f"Error initiating update: {str(e)}"
