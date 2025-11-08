@@ -26,7 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
-import { RefreshCw, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertCircle, CheckCircle2, Loader2, X } from 'lucide-react';
 import { useOwletteUpdates } from '@/hooks/useOwletteUpdates';
 import { Machine } from '@/hooks/useFirestore';
 import { toast } from 'sonner';
@@ -44,6 +44,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
     isLoading,
     updateMachines,
     updatingMachines,
+    cancelUpdate,
   } = useOwletteUpdates(machines);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -219,10 +220,30 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                             {machine.machineId}
                           </span>
                           {isUpdating && (
-                            <Badge variant="secondary" className="flex items-center gap-1">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Updating...
-                            </Badge>
+                            <>
+                              <Badge variant="secondary" className="flex items-center gap-1">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                Updating...
+                              </Badge>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  cancelUpdate(machine.machineId);
+                                  toast.info('Update status cleared', {
+                                    description: `Cleared updating status for ${machine.machineId}`,
+                                    duration: 3000,
+                                  });
+                                }}
+                              >
+                                <X className="h-3 w-3 mr-1" />
+                                Clear
+                              </Button>
+                            </>
                           )}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">

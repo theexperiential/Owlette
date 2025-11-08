@@ -371,6 +371,7 @@ export function useMachines(siteId: string) {
                 machineId: doc.id,
                 lastHeartbeat,
                 online: isOnline,
+                agent_version: data.agent_version,  // Agent version for update detection
                 metrics,
                 processes,
               });

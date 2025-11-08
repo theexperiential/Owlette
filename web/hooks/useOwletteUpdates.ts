@@ -9,7 +9,7 @@
 
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Machine } from './useFirestore';
 import { useInstallerVersion } from './useInstallerVersion';
 import { isOutdated, compareVersions } from '@/lib/versionUtils';
@@ -67,6 +67,41 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
   // Update execution state
   const [updatingMachines, setUpdatingMachines] = useState<Set<string>>(new Set());
   const [updateError, setUpdateError] = useState<string | null>(null);
+
+  // Cancel/clear updating status for a machine
+  const cancelUpdate = useCallback((machineId: string) => {
+    setUpdatingMachines(prev => {
+      const newSet = new Set(prev);
+      newSet.delete(machineId);
+      return newSet;
+    });
+  }, []);
+
+  // Auto-clear "Updating..." status when machine successfully updates
+  useEffect(() => {
+    if (updatingMachines.size === 0) return;
+
+    setUpdatingMachines(prev => {
+      const newSet = new Set(prev);
+      let changed = false;
+
+      // Check each updating machine
+      prev.forEach(machineId => {
+        const machine = machines.find(m => m.machineId === machineId);
+        if (!machine) return;
+
+        // Clear if machine is now up-to-date
+        const isUpToDate = !isOutdated(machine.agent_version, latestVersion);
+        if (isUpToDate) {
+          newSet.delete(machineId);
+          changed = true;
+          console.log(`Auto-cleared update status for ${machineId} (now at v${machine.agent_version})`);
+        }
+      });
+
+      return changed ? newSet : prev;
+    });
+  }, [machines, latestVersion, updatingMachines]);
 
   // Calculate machine update statuses
   const machineUpdateStatuses = useMemo<MachineUpdateStatus[]>(() => {
@@ -186,7 +221,8 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
     getMachineUpdateStatus,
     updateMachines,
     updatingMachines,
-    updateError
+    updateError,
+    cancelUpdate
   };
 }
 
