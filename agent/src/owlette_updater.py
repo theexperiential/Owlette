@@ -147,10 +147,44 @@ def stop_service(logger: logging.Logger) -> bool:
 
 
 def download_installer(url: str, logger: logging.Logger) -> Optional[str]:
-    """Download installer from URL to temp location"""
+    """Download installer from URL to temp location (or use local file if path provided)"""
     temp_dir = os.environ.get('TEMP', r'C:\Windows\Temp')
     temp_path = os.path.join(temp_dir, TEMP_INSTALLER_NAME)
 
+    # Check if "URL" is actually a local file path (backwards compatibility)
+    if os.path.isfile(url) or url.startswith('file:///'):
+        # Handle file:// URLs
+        if url.startswith('file:///'):
+            local_path = url.replace('file:///', '').replace('/', os.sep)
+        else:
+            local_path = url
+
+        logger.info(f"Local installer path provided: {local_path}")
+
+        if os.path.exists(local_path):
+            logger.info(f"Using existing installer at: {local_path}")
+            # If it's already in the temp location, just return it
+            if os.path.abspath(local_path) == os.path.abspath(temp_path):
+                logger.info("Installer is already in temp location")
+                return local_path
+            else:
+                # Copy to standard temp location for consistency
+                logger.info(f"Copying installer to: {temp_path}")
+                try:
+                    import shutil
+                    shutil.copy2(local_path, temp_path)
+                    file_size = os.path.getsize(temp_path)
+                    logger.info(f"Copy complete. File size: {file_size:,} bytes")
+                    return temp_path
+                except Exception as e:
+                    logger.error(f"Failed to copy installer: {e}")
+                    # Fall back to using original path
+                    return local_path
+        else:
+            logger.error(f"Local installer path does not exist: {local_path}")
+            return None
+
+    # Normal URL download
     logger.info(f"Downloading installer from: {url}")
     logger.info(f"Destination: {temp_path}")
 
@@ -197,11 +231,13 @@ def run_installer(installer_path: str, logger: logging.Logger) -> bool:
     logger.info(f"Running installer: {installer_path}")
 
     # Build command with silent flags
+    # /ALLUSERS ensures no installation mode prompt (even when run as SYSTEM)
     command = [
         installer_path,
         '/VERYSILENT',
         '/NORESTART',
-        '/SUPPRESSMSGBOXES'
+        '/SUPPRESSMSGBOXES',
+        '/ALLUSERS'
     ]
 
     logger.info(f"Command: {' '.join(command)}")

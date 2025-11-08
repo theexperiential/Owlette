@@ -1,0 +1,4 @@
+Microsoft Windows [Version 10.0.22631.6060]
+(c) Microsoft Corporation. All rights reserved.
+
+C:\Users\admin\Documents\Git\Owlette\agent>

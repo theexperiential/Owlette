@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSites } from '@/hooks/useFirestore';
+import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useDeploymentManager } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
 import { toast } from 'sonner';
 
@@ -50,6 +51,7 @@ export default function DeploymentsPage() {
     deleteDeployment,
   } = useDeploymentManager(currentSiteId);
 
+  const { machines, loading: machinesLoading } = useMachines(currentSiteId);
   const { createUninstall } = useUninstall();
 
   const handleCreateUninstall = async (softwareName: string, machineIds: string[], deploymentId?: string) => {
@@ -199,7 +201,8 @@ export default function DeploymentsPage() {
             </p>
           </div>
 
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex gap-2">
+            <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"

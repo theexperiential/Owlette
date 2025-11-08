@@ -988,14 +988,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             # Give the updater time to initialize
                             time.sleep(3)
 
-                            # Stop this service
+                            # Stop this service gracefully
                             # The updater will take over from here
                             logging.info("Stopping service for update...")
                             logging.info("Service will restart automatically after update")
                             logging.info("=" * 60)
 
-                            # Schedule service stop (will happen after this command completes)
-                            self.SvcStop()
+                            # Exit the process cleanly - NSSM will handle service state
+                            # Don't call self.SvcStop() as it doesn't work with NSSM
+                            self.is_alive = False
+
+                            # Give a moment for the return message to be processed
+                            # Then exit - the bootstrap updater will handle the rest
+                            import threading
+                            def delayed_exit():
+                                time.sleep(1)
+                                logging.info("Exiting process for update...")
+                                os._exit(0)  # Force exit without cleanup (updater will restart us)
+
+                            threading.Thread(target=delayed_exit, daemon=True).start()
 
                             return "Self-update initiated via bootstrap updater - service stopping for upgrade"
 
@@ -1109,14 +1120,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Give the updater time to initialize
                     time.sleep(3)
 
-                    # Stop this service
+                    # Stop this service gracefully
                     # The updater will take over from here
                     logging.info("Stopping service for update...")
                     logging.info("Service will restart automatically after update")
                     logging.info("="*60)
 
-                    # Schedule service stop (will happen after this command completes)
-                    self.SvcStop()
+                    # Exit the process cleanly - NSSM will handle service state
+                    # Don't call self.SvcStop() as it doesn't work with NSSM
+                    self.is_alive = False
+
+                    # Give a moment for the return message to be processed
+                    # Then exit - the bootstrap updater will handle the rest
+                    import threading
+                    def delayed_exit():
+                        time.sleep(1)
+                        logging.info("Exiting process for update...")
+                        os._exit(0)  # Force exit without cleanup (updater will restart us)
+
+                    threading.Thread(target=delayed_exit, daemon=True).start()
 
                     return "Update initiated - service stopping for upgrade"
 

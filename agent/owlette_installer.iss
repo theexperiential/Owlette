@@ -78,12 +78,15 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
+PrivilegesRequiredOverridesAllowed=commandline
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\agent\icons\normal.png
 SetupIconFile=icons\normal.ico
 DisableProgramGroupPage=yes
+; Silent mode enhancements - prevent ALL prompts when run as SYSTEM
+AlwaysShowDirOnReadyPage=no
+DisableWelcomePage=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
