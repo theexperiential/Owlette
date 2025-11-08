@@ -26,6 +26,7 @@ import json
 import datetime
 import atexit
 import subprocess
+import tempfile
 
 # Firebase integration
 FIREBASE_IMPORT_ERROR = None
