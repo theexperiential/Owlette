@@ -369,7 +369,7 @@ def monitor_status(icon):
 
                         # Update tooltip
                         hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-                        tooltip = f"Owlette ({hostname})\n{service_msg}\n{firebase_msg}"
+                        tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
                         icon.title = tooltip
 
                         # Send notification on state change (but not on first check)
@@ -502,10 +502,10 @@ def generate_menu():
         firebase_status = current_status.get('firebase', 'Checking...')
 
     return pystray.Menu(
-        item(f'Owlette: {hostname}', lambda icon, item: None, enabled=False),
-        item(f'Version: {shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
+        item(f'Owlette v{shared_utils.APP_VERSION}', lambda icon, item: None, enabled=False),
+        item(f'Hostname: {hostname}', lambda icon, item: None, enabled=False),
         item(f'{service_status}', lambda icon, item: None, enabled=False),
-        item(f'{firebase_status}', lambda icon, item: None, enabled=False),
+        item(f'Status: {firebase_status}', lambda icon, item: None, enabled=False),
         pystray.Menu.SEPARATOR,
         item('Open Config', open_config_gui),
         item('Start on Login', on_select, checked=lambda text: start_on_login),
@@ -545,7 +545,7 @@ if __name__ == "__main__":
 
         # Create the system tray icon with initial status
         hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-        tooltip = f"Owlette ({hostname})\n{service_msg}\n{firebase_msg}"
+        tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
         image = load_icon(status_code)
 
         icon = pystray.Icon(

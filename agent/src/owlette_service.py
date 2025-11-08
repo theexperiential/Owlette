@@ -26,6 +26,7 @@ import json
 import datetime
 import atexit
 import subprocess
+import tempfile
 
 # Firebase integration
 FIREBASE_IMPORT_ERROR = None
@@ -153,6 +154,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # On service stop
     def SvcStop(self):
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+
+        # Log service stop with stack trace info to identify caller
+        import inspect
+        caller_frame = inspect.currentframe().f_back
+        caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno}" if caller_frame else "unknown"
+        logging.warning(f"=== SERVICE STOP REQUESTED === (called from {caller_info})")
         logging.info("Service stop requested - setting machine offline in Firebase...")
         self.is_alive = False
 
@@ -169,6 +176,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         self.terminate_tray_icon()
         win32event.SetEvent(self.hWaitStop)
+
+        logging.info("=== SERVICE STOP COMPLETE ===")
 
     # While service runs
     def SvcDoRun(self):
@@ -915,67 +924,49 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     is_self_update = 'owlette' in installer_name.lower()
 
                     if is_self_update:
-                        # This is a self-update - we need to shut down to allow file replacement
+                        # SIMPLIFIED SELF-UPDATE:
+                        # Just launch the installer - Inno Setup handles service stop/restart automatically
                         logging.warning("=" * 60)
-                        logging.warning("SELF-UPDATE DETECTED: Owlette is updating itself")
+                        logging.warning("SELF-UPDATE DETECTED: Running installer directly")
                         logging.warning(f"Installer: {installer_name}")
-                        logging.warning("Strategy: Launch installer detached, then stop service")
+                        logging.warning("Inno Setup will handle service stop/restart automatically")
                         logging.warning("=" * 60)
-
-                        # Launch installer in detached mode (won't wait for it to complete)
-                        import subprocess
-
-                        # Build command as list (no shell=True to avoid cmd.exe intermediary)
-                        cmd_list = [temp_installer_path]
-                        if silent_flags:
-                            cmd_list.extend(silent_flags.split())
-
-                        logging.info(f"Launching detached installer: {' '.join(cmd_list)}")
-
-                        # DETACHED_PROCESS (0x00000008) + CREATE_NEW_PROCESS_GROUP (0x00000200)
-                        # CREATE_NO_WINDOW (0x08000000)
-                        DETACHED_PROCESS = 0x00000008
-                        CREATE_NEW_PROCESS_GROUP = 0x00000200
-                        CREATE_NO_WINDOW = 0x08000000
 
                         try:
-                            # Use Windows Task Scheduler to launch installer after service stops
-                            # This ensures the service is fully stopped before installer runs
-                            import subprocess
-                            import tempfile
+                            # Update status: installing
+                            if self.firebase_client:
+                                self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                            # Create a one-time scheduled task to run installer in 15 seconds
-                            task_name = "OwletteSelfUpdate"
-                            installer_cmd = f'"{temp_installer_path}"'
-                            if silent_flags:
-                                installer_cmd += f" {silent_flags}"
+                            # Launch installer as detached process
+                            # Inno Setup will:
+                            # 1. Stop this service automatically
+                            # 2. Replace files
+                            # 3. Restart service automatically
+                            DETACHED_PROCESS = 0x00000008
+                            CREATE_NO_WINDOW = 0x08000000
 
-                            # Delete any existing task first
-                            subprocess.run(f'schtasks /Delete /TN {task_name} /F', shell=True, capture_output=True)
+                            logging.info(f"Launching Owlette installer: {temp_installer_path}")
+                            logging.info(f"Flags: {silent_flags}")
 
-                            # Create new task that runs once in 15 seconds, then deletes itself
-                            create_task_cmd = (
-                                f'schtasks /Create /TN {task_name} /TR "{installer_cmd}" '
-                                f'/SC ONCE /ST {(datetime.datetime.now() + datetime.timedelta(seconds=15)).strftime("%H:%M")} '
-                                f'/RU SYSTEM /V1 /F'
+                            process = subprocess.Popen(
+                                [temp_installer_path] + silent_flags,
+                                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL
                             )
 
-                            result = subprocess.run(create_task_cmd, shell=True, capture_output=True, text=True)
-                            if result.returncode != 0:
-                                raise Exception(f"Failed to create scheduled task: {result.stderr}")
+                            logging.info(f"Installer launched (PID: {process.pid})")
+                            logging.info("Installer will handle service restart automatically")
+                            logging.info("=" * 60)
 
-                            logging.info(f"Created scheduled task '{task_name}' to run installer in 15 seconds")
-                            logging.warning("Stopping service NOW - installer will run after service stops...")
-
-                            # Stop service immediately
-                            self.stop()
-
-                            return "Self-update initiated: Service stopped, installer will run via scheduled task"
+                            return "Self-update initiated - installer running in background"
 
                         except Exception as e:
-                            error_msg = f"Failed to launch self-update installer: {e}"
+                            error_msg = f"Error launching installer: {str(e)}"
                             logging.error(error_msg)
-                            return f"Error: {error_msg}"
+                            logging.exception("Installer launch failed")
+                            return error_msg
 
                     else:
                         # Normal installation (not self-update) - wait for completion
@@ -1026,7 +1017,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version
-                # Uses bootstrap updater pattern to replace running service
+                # SIMPLIFIED: Download installer, launch it, let Inno Setup handle service restart
                 installer_url = cmd_data.get('installer_url')
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
@@ -1037,60 +1028,87 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info("OWLETTE SELF-UPDATE INITIATED")
                 logging.info("="*60)
                 logging.info(f"Installer URL: {installer_url}")
-                logging.info("This service will stop and restart automatically")
+                logging.info("Inno Setup will handle service stop/restart automatically")
 
                 try:
-                    # Update status: downloading (handled by bootstrap updater)
+                    # Update status: downloading
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
 
-                    # Get path to updater script
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    updater_script = os.path.join(script_dir, 'owlette_updater.py')
+                    # Download installer
+                    logging.info("Downloading installer...")
+                    temp_dir = tempfile.gettempdir()
+                    temp_installer_path = os.path.join(temp_dir, 'Owlette-Update.exe')
 
-                    if not os.path.exists(updater_script):
-                        return f"Error: Bootstrap updater not found at {updater_script}"
+                    import urllib.request
+                    urllib.request.urlretrieve(installer_url, temp_installer_path)
+                    logging.info(f"Installer downloaded to: {temp_installer_path}")
 
-                    # Get Python executable path
-                    python_exe = sys.executable
+                    # Update status: installing
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Spawn the bootstrap updater as a detached process
-                    # It will:
-                    # 1. Stop this service
-                    # 2. Download installer
-                    # 3. Run installer (which will upgrade and restart service)
-                    # 4. Exit
-                    logging.info(f"Spawning bootstrap updater: {updater_script}")
-                    logging.info(f"Python executable: {python_exe}")
+                    # Launch installer via Windows Task Scheduler (survives service stop)
+                    # This ensures installer keeps running even when Inno Setup kills the service
+                    silent_flags = '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS'
+                    task_name = f"OwletteUpdate_{int(time.time())}"
 
-                    # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
-                    DETACHED_PROCESS = 0x00000008
-                    CREATE_NO_WINDOW = 0x08000000
+                    logging.info(f"Creating scheduled task: {task_name}")
+                    logging.info(f"Installer flags: {silent_flags}")
 
-                    process = subprocess.Popen(
-                        [python_exe, updater_script, installer_url],
-                        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        stdin=subprocess.DEVNULL
+                    # Create one-time task that runs immediately as SYSTEM
+                    schtasks_cmd = [
+                        'schtasks',
+                        '/Create',
+                        '/TN', task_name,
+                        '/TR', f'"{temp_installer_path}" {silent_flags}',
+                        '/SC', 'ONCE',
+                        '/ST', '00:00',  # Start time (will be forced to run immediately)
+                        '/RU', 'SYSTEM',
+                        '/RL', 'HIGHEST',
+                        '/F'  # Force create (overwrite if exists)
+                    ]
+
+                    result = subprocess.run(
+                        schtasks_cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=10
                     )
 
-                    logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
-                    logging.info("Service will stop in 3 seconds...")
+                    if result.returncode != 0:
+                        raise Exception(f"Failed to create scheduled task: {result.stderr}")
 
-                    # Give the updater time to initialize
-                    time.sleep(3)
+                    logging.info(f"Scheduled task created: {task_name}")
 
-                    # Stop this service
-                    # The updater will take over from here
-                    logging.info("Stopping service for update...")
-                    logging.info("Service will restart automatically after update")
+                    # Run the task immediately
+                    run_result = subprocess.run(
+                        ['schtasks', '/Run', '/TN', task_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+
+                    if run_result.returncode != 0:
+                        logging.warning(f"Task run command returned: {run_result.stderr}")
+                    else:
+                        logging.info("Installer task started successfully")
+
+                    # Delete the task after a delay (cleanup) - but don't wait for it
+                    # The task will self-clean after installer completes
+                    cleanup_cmd = f'schtasks /Delete /TN "{task_name}" /F'
+                    subprocess.Popen(
+                        f'timeout /t 300 && {cleanup_cmd}',  # Delete after 5 min
+                        shell=True,
+                        creationflags=0x00000008,  # DETACHED_PROCESS
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+
+                    logging.info("Installer will handle service restart automatically")
                     logging.info("="*60)
 
-                    # Schedule service stop (will happen after this command completes)
-                    self.SvcStop()
-
-                    return "Update initiated - service stopping for upgrade"
+                    return "Self-update initiated via Task Scheduler"
 
                 except Exception as e:
                     error_msg = f"Error initiating update: {str(e)}"
@@ -1161,7 +1179,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Use installer_utils.execute_installer since it handles process tracking
                     # For uninstall, we don't have a file path, so we'll use subprocess directly
-                    import subprocess
+                    # (subprocess is imported at module level)
 
                     # Track process name for cancellation
                     uninstall_process_name = f"uninstall_{software_name.replace(' ', '_')}"
@@ -1387,6 +1405,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Main main
     def main(self):
+        logging.info("="*70)
+        logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
+        logging.info("="*70)
+
         # Process startup info
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
@@ -1396,6 +1418,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
         # Get self.environment for logged-in user
         self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+
+        logging.info("Service initialization complete")
 
         # Start Firebase client and upload local config
         if self.firebase_client:
@@ -1443,6 +1467,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
+
+        logging.info("Starting main service loop...")
+
         try:
             while self.is_alive:
                 # Check for shutdown flag from tray icon

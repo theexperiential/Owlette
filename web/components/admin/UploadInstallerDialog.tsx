@@ -11,6 +11,12 @@ import { Upload, FileUp, X, Loader2, CheckCircle, AlertCircle } from 'lucide-rea
 import { toast } from 'sonner';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
 
+// Extract version from filename (e.g., "Owlette-Installer-v2.0.10.exe" -> "2.0.10")
+const extractVersionFromFilename = (filename: string): string | null => {
+  const match = filename.match(/v?(\d+\.\d+\.\d+)/i);
+  return match ? match[1] : null;
+};
+
 interface UploadInstallerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -61,6 +67,12 @@ export default function UploadInstallerDialog({
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile && droppedFile.name.endsWith('.exe')) {
       setFile(droppedFile);
+
+      // Auto-detect version from filename
+      const detectedVersion = extractVersionFromFilename(droppedFile.name);
+      if (detectedVersion) {
+        setVersion(detectedVersion);
+      }
     } else {
       toast.error('Invalid File', {
         description: 'Please select a .exe file',
@@ -72,6 +84,12 @@ export default function UploadInstallerDialog({
     const selectedFile = e.target.files?.[0];
     if (selectedFile && selectedFile.name.endsWith('.exe')) {
       setFile(selectedFile);
+
+      // Auto-detect version from filename
+      const detectedVersion = extractVersionFromFilename(selectedFile.name);
+      if (detectedVersion) {
+        setVersion(detectedVersion);
+      }
     } else {
       toast.error('Invalid File', {
         description: 'Please select a .exe file',
