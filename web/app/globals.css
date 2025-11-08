@@ -114,10 +114,16 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
     /* Modern scrollbar styling (Firefox + Chromium) - Blue theme */
     scrollbar-color: oklch(0.35 0.08 250) oklch(0.145 0.03 250);
     scrollbar-width: thin;
+  }
+
+  /* Subtle focus outline - barely visible but accessible */
+  *:focus-visible {
+    outline: 1px solid oklch(0.5 0.15 250 / 0.3);
+    outline-offset: 2px;
   }
 
   /* Webkit scrollbar styling (Chrome, Safari, Edge) - Blue theme */
