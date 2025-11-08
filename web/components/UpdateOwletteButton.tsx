@@ -117,6 +117,9 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
     return null;
   }
 
+  // Count machines currently being updated
+  const inProgressCount = updatingMachines.size;
+
   return (
     <>
       <Button
@@ -124,7 +127,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         variant="outline"
         className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950 cursor-pointer"
       >
-        <RefreshCw className="h-4 w-4 mr-2" />
+        <RefreshCw className={`h-4 w-4 mr-2 ${inProgressCount > 0 ? 'animate-spin' : ''}`} />
         Update Owlette
         {latestVersion && (
           <span className="ml-2 text-xs">to v{latestVersion}</span>
@@ -132,6 +135,11 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         {totalMachinesNeedingUpdate > 0 && (
           <Badge variant="destructive" className="ml-2">
             {totalMachinesNeedingUpdate}
+          </Badge>
+        )}
+        {inProgressCount > 0 && (
+          <Badge className="ml-2 bg-blue-600 text-white">
+            In Progress: {inProgressCount}
           </Badge>
         )}
       </Button>
