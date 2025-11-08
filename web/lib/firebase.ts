@@ -47,3 +47,94 @@ if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
 }
 
 export { app, auth, db, storage, isConfigured };
+
+/**
+ * Firebase Helper Functions
+ */
+
+import { collection, getDocs, getDoc, query, orderBy, limit, doc, setDoc, Timestamp } from 'firebase/firestore';
+
+/**
+ * Get the latest Owlette agent version from installer_metadata collection
+ * @returns Latest version metadata or null if not found
+ */
+export async function getLatestOwletteVersion(): Promise<{
+  version: string;
+  downloadUrl: string;
+  sha256Checksum?: string;
+  releaseDate?: Date;
+  releaseNotes?: string;
+} | null> {
+  if (!db) {
+    throw new Error('Firestore not initialized');
+  }
+
+  try {
+    // Get the latest version from the dedicated 'latest' document
+    const latestRef = doc(db, 'installer_metadata', 'latest');
+    const latestDoc = await getDoc(latestRef);
+
+    if (!latestDoc.exists()) {
+      console.warn('No latest Owlette version found in installer_metadata/latest');
+      return null;
+    }
+
+    const data = latestDoc.data();
+
+    return {
+      version: data.version || 'Unknown',
+      downloadUrl: data.download_url || data.downloadUrl || data.url || '',
+      sha256Checksum: data.checksum_sha256 || data.sha256Checksum || data.checksum,
+      releaseDate: data.release_date?.toDate?.() || data.releaseDate?.toDate?.() || data.uploadedAt?.toDate?.(),
+      releaseNotes: data.release_notes || data.releaseNotes || data.changelog,
+    };
+  } catch (error) {
+    console.error('Error fetching latest Owlette version:', error);
+    throw error;
+  }
+}
+
+/**
+ * Send update_owlette command to a machine
+ * @param siteId Site ID
+ * @param machineId Machine ID
+ * @param installerUrl URL of the Owlette installer
+ * @param deploymentId Optional deployment ID for tracking
+ * @returns Command ID
+ */
+export async function sendOwletteUpdateCommand(
+  siteId: string,
+  machineId: string,
+  installerUrl: string,
+  deploymentId?: string
+): Promise<string> {
+  if (!db) {
+    throw new Error('Firestore not initialized');
+  }
+
+  try {
+    const commandId = `update_owlette_${Date.now()}`;
+    const commandRef = doc(
+      db,
+      'sites', siteId,
+      'machines', machineId,
+      'commands', 'pending'
+    );
+
+    await setDoc(commandRef, {
+      [commandId]: {
+        type: 'update_owlette',
+        installer_url: installerUrl,
+        deployment_id: deploymentId || null,
+        timestamp: Timestamp.now(),
+        status: 'pending',
+      }
+    }, { merge: true });
+
+    console.log(`Sent update_owlette command to ${machineId}:`, commandId);
+    return commandId;
+  } catch (error) {
+    console.error('Error sending update_owlette command:', error);
+    throw error;
+  }
+}

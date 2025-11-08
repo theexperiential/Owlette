@@ -923,67 +923,87 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     is_self_update = 'owlette' in installer_name.lower()
 
                     if is_self_update:
-                        # This is a self-update - we need to shut down to allow file replacement
+                        # BACKWARDS COMPATIBILITY REDIRECT:
+                        # Old web dashboard sends 'install_software' for Owlette updates
+                        # Redirect to bootstrap updater for reliable self-updates
                         logging.warning("=" * 60)
-                        logging.warning("SELF-UPDATE DETECTED: Owlette is updating itself")
+                        logging.warning("SELF-UPDATE DETECTED: Redirecting to bootstrap updater")
                         logging.warning(f"Installer: {installer_name}")
-                        logging.warning("Strategy: Launch installer detached, then stop service")
+                        logging.warning("Strategy: Use bootstrap updater for reliable self-update")
                         logging.warning("=" * 60)
-
-                        # Launch installer in detached mode (won't wait for it to complete)
-                        import subprocess
-
-                        # Build command as list (no shell=True to avoid cmd.exe intermediary)
-                        cmd_list = [temp_installer_path]
-                        if silent_flags:
-                            cmd_list.extend(silent_flags.split())
-
-                        logging.info(f"Launching detached installer: {' '.join(cmd_list)}")
-
-                        # DETACHED_PROCESS (0x00000008) + CREATE_NEW_PROCESS_GROUP (0x00000200)
-                        # CREATE_NO_WINDOW (0x08000000)
-                        DETACHED_PROCESS = 0x00000008
-                        CREATE_NEW_PROCESS_GROUP = 0x00000200
-                        CREATE_NO_WINDOW = 0x08000000
 
                         try:
-                            # Use Windows Task Scheduler to launch installer after service stops
-                            # This ensures the service is fully stopped before installer runs
-                            import subprocess
-                            import tempfile
+                            # Update status: using bootstrap updater
+                            if self.firebase_client:
+                                self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                            # Create a one-time scheduled task to run installer in 15 seconds
-                            task_name = "OwletteSelfUpdate"
-                            installer_cmd = f'"{temp_installer_path}"'
-                            if silent_flags:
-                                installer_cmd += f" {silent_flags}"
+                            # Get path to updater script
+                            script_dir = os.path.dirname(os.path.abspath(__file__))
+                            updater_script = os.path.join(script_dir, 'owlette_updater.py')
 
-                            # Delete any existing task first
-                            subprocess.run(f'schtasks /Delete /TN {task_name} /F', shell=True, capture_output=True)
+                            if not os.path.exists(updater_script):
+                                return f"Error: Bootstrap updater not found at {updater_script}"
 
-                            # Create new task that runs once in 15 seconds, then deletes itself
-                            create_task_cmd = (
-                                f'schtasks /Create /TN {task_name} /TR "{installer_cmd}" '
-                                f'/SC ONCE /ST {(datetime.datetime.now() + datetime.timedelta(seconds=15)).strftime("%H:%M")} '
-                                f'/RU SYSTEM /V1 /F'
+                            # Get Python executable path
+                            python_exe = sys.executable
+
+                            # Spawn the bootstrap updater as a detached process
+                            # It will:
+                            # 1. Stop this service
+                            # 2. Run installer (already downloaded at temp_installer_path)
+                            # 3. Verify service restarted
+                            logging.info(f"Spawning bootstrap updater: {updater_script}")
+                            logging.info(f"Python executable: {python_exe}")
+                            logging.info(f"Installer path: {temp_installer_path}")
+
+                            # Copy installer to a more stable temp location (in case current temp gets cleaned)
+                            import shutil
+                            stable_temp_dir = os.environ.get('TEMP', r'C:\Windows\Temp')
+                            stable_installer_path = os.path.join(stable_temp_dir, 'Owlette-Update.exe')
+
+                            if temp_installer_path != stable_installer_path:
+                                logging.info(f"Copying installer to stable location: {stable_installer_path}")
+                                shutil.copy2(temp_installer_path, stable_installer_path)
+                                temp_installer_path = stable_installer_path
+
+                            # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
+                            DETACHED_PROCESS = 0x00000008
+                            CREATE_NO_WINDOW = 0x08000000
+
+                            # Launch updater with installer path as file:// URL
+                            # (Bootstrap updater expects URL, so use file:// for local path)
+                            file_url = f"file:///{temp_installer_path.replace(os.sep, '/')}"
+
+                            process = subprocess.Popen(
+                                [python_exe, updater_script, file_url],
+                                creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL
                             )
 
-                            result = subprocess.run(create_task_cmd, shell=True, capture_output=True, text=True)
-                            if result.returncode != 0:
-                                raise Exception(f"Failed to create scheduled task: {result.stderr}")
+                            logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
+                            logging.info("Service will stop in 3 seconds...")
 
-                            logging.info(f"Created scheduled task '{task_name}' to run installer in 15 seconds")
-                            logging.warning("Stopping service NOW - installer will run after service stops...")
+                            # Give the updater time to initialize
+                            time.sleep(3)
 
-                            # Stop service immediately (use SvcStop() to properly call Windows service stop)
+                            # Stop this service
+                            # The updater will take over from here
+                            logging.info("Stopping service for update...")
+                            logging.info("Service will restart automatically after update")
+                            logging.info("=" * 60)
+
+                            # Schedule service stop (will happen after this command completes)
                             self.SvcStop()
 
-                            return "Self-update initiated: Service stopped, installer will run via scheduled task"
+                            return "Self-update initiated via bootstrap updater - service stopping for upgrade"
 
                         except Exception as e:
-                            error_msg = f"Failed to launch self-update installer: {e}"
+                            error_msg = f"Error redirecting to bootstrap updater: {str(e)}"
                             logging.error(error_msg)
-                            return f"Error: {error_msg}"
+                            logging.exception("Bootstrap updater redirect failed")
+                            return error_msg
 
                     else:
                         # Normal installation (not self-update) - wait for completion
@@ -1169,7 +1189,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Use installer_utils.execute_installer since it handles process tracking
                     # For uninstall, we don't have a file path, so we'll use subprocess directly
-                    import subprocess
+                    # (subprocess is imported at module level)
 
                     # Track process name for cancellation
                     uninstall_process_name = f"uninstall_{software_name.replace(' ', '_')}"
