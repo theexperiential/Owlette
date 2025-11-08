@@ -35,6 +35,7 @@ export interface UseOwletteUpdatesReturn {
   updateMachines: (siteId: string, machineIds: string[]) => Promise<void>;
   updatingMachines: Set<string>;
   updateError: string | null;
+  cancelUpdate: (machineId: string) => void;
 }
 
 /**
