@@ -923,97 +923,48 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     is_self_update = 'owlette' in installer_name.lower()
 
                     if is_self_update:
-                        # BACKWARDS COMPATIBILITY REDIRECT:
-                        # Old web dashboard sends 'install_software' for Owlette updates
-                        # Redirect to bootstrap updater for reliable self-updates
+                        # SIMPLIFIED SELF-UPDATE:
+                        # Just launch the installer - Inno Setup handles service stop/restart automatically
                         logging.warning("=" * 60)
-                        logging.warning("SELF-UPDATE DETECTED: Redirecting to bootstrap updater")
+                        logging.warning("SELF-UPDATE DETECTED: Running installer directly")
                         logging.warning(f"Installer: {installer_name}")
-                        logging.warning("Strategy: Use bootstrap updater for reliable self-update")
+                        logging.warning("Inno Setup will handle service stop/restart automatically")
                         logging.warning("=" * 60)
 
                         try:
-                            # Update status: using bootstrap updater
+                            # Update status: installing
                             if self.firebase_client:
                                 self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                            # Get path to updater script
-                            script_dir = os.path.dirname(os.path.abspath(__file__))
-                            updater_script = os.path.join(script_dir, 'owlette_updater.py')
-
-                            if not os.path.exists(updater_script):
-                                return f"Error: Bootstrap updater not found at {updater_script}"
-
-                            # Get Python executable path
-                            python_exe = sys.executable
-
-                            # Spawn the bootstrap updater as a detached process
-                            # It will:
-                            # 1. Stop this service
-                            # 2. Run installer (already downloaded at temp_installer_path)
-                            # 3. Verify service restarted
-                            logging.info(f"Spawning bootstrap updater: {updater_script}")
-                            logging.info(f"Python executable: {python_exe}")
-                            logging.info(f"Installer path: {temp_installer_path}")
-
-                            # Copy installer to a more stable temp location (in case current temp gets cleaned)
-                            import shutil
-                            stable_temp_dir = os.environ.get('TEMP', r'C:\Windows\Temp')
-                            stable_installer_path = os.path.join(stable_temp_dir, 'Owlette-Update.exe')
-
-                            if temp_installer_path != stable_installer_path:
-                                logging.info(f"Copying installer to stable location: {stable_installer_path}")
-                                shutil.copy2(temp_installer_path, stable_installer_path)
-                                temp_installer_path = stable_installer_path
-
-                            # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
+                            # Launch installer as detached process
+                            # Inno Setup will:
+                            # 1. Stop this service automatically
+                            # 2. Replace files
+                            # 3. Restart service automatically
                             DETACHED_PROCESS = 0x00000008
                             CREATE_NO_WINDOW = 0x08000000
 
-                            # Launch updater with installer path as file:// URL
-                            # (Bootstrap updater expects URL, so use file:// for local path)
-                            file_url = f"file:///{temp_installer_path.replace(os.sep, '/')}"
+                            logging.info(f"Launching Owlette installer: {temp_installer_path}")
+                            logging.info(f"Flags: {silent_flags}")
 
                             process = subprocess.Popen(
-                                [python_exe, updater_script, file_url],
+                                [temp_installer_path] + silent_flags,
                                 creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL,
                                 stdin=subprocess.DEVNULL
                             )
 
-                            logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
-                            logging.info("Service will stop in 3 seconds...")
-
-                            # Give the updater time to initialize
-                            time.sleep(3)
-
-                            # Stop this service gracefully
-                            # The updater will take over from here
-                            logging.info("Stopping service for update...")
-                            logging.info("Service will restart automatically after update")
+                            logging.info(f"Installer launched (PID: {process.pid})")
+                            logging.info("Installer will handle service restart automatically")
                             logging.info("=" * 60)
 
-                            # Exit the process cleanly - NSSM will handle service state
-                            # Don't call self.SvcStop() as it doesn't work with NSSM
-                            self.is_alive = False
-
-                            # Give a moment for the return message to be processed
-                            # Then exit - the bootstrap updater will handle the rest
-                            import threading
-                            def delayed_exit():
-                                time.sleep(1)
-                                logging.info("Exiting process for update...")
-                                os._exit(0)  # Force exit without cleanup (updater will restart us)
-
-                            threading.Thread(target=delayed_exit, daemon=True).start()
-
-                            return "Self-update initiated via bootstrap updater - service stopping for upgrade"
+                            return "Self-update initiated - installer running in background"
 
                         except Exception as e:
-                            error_msg = f"Error redirecting to bootstrap updater: {str(e)}"
+                            error_msg = f"Error launching installer: {str(e)}"
                             logging.error(error_msg)
-                            logging.exception("Bootstrap updater redirect failed")
+                            logging.exception("Installer launch failed")
                             return error_msg
 
                     else:
@@ -1065,7 +1016,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             elif cmd_type == 'update_owlette':
                 # Self-update command: Downloads and installs new Owlette version
-                # Uses bootstrap updater pattern to replace running service
+                # SIMPLIFIED: Download installer, launch it, let Inno Setup handle service restart
                 installer_url = cmd_data.get('installer_url')
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
@@ -1076,71 +1027,47 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info("OWLETTE SELF-UPDATE INITIATED")
                 logging.info("="*60)
                 logging.info(f"Installer URL: {installer_url}")
-                logging.info("This service will stop and restart automatically")
+                logging.info("Inno Setup will handle service stop/restart automatically")
 
                 try:
-                    # Update status: downloading (handled by bootstrap updater)
+                    # Update status: downloading
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
 
-                    # Get path to updater script
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    updater_script = os.path.join(script_dir, 'owlette_updater.py')
+                    # Download installer
+                    logging.info("Downloading installer...")
+                    temp_dir = tempfile.gettempdir()
+                    temp_installer_path = os.path.join(temp_dir, 'Owlette-Update.exe')
 
-                    if not os.path.exists(updater_script):
-                        return f"Error: Bootstrap updater not found at {updater_script}"
+                    import urllib.request
+                    urllib.request.urlretrieve(installer_url, temp_installer_path)
+                    logging.info(f"Installer downloaded to: {temp_installer_path}")
 
-                    # Get Python executable path
-                    python_exe = sys.executable
+                    # Update status: installing
+                    if self.firebase_client:
+                        self.firebase_client.update_command_progress(cmd_id, 'installing', deployment_id)
 
-                    # Spawn the bootstrap updater as a detached process
-                    # It will:
-                    # 1. Stop this service
-                    # 2. Download installer
-                    # 3. Run installer (which will upgrade and restart service)
-                    # 4. Exit
-                    logging.info(f"Spawning bootstrap updater: {updater_script}")
-                    logging.info(f"Python executable: {python_exe}")
-
-                    # Use CREATE_NO_WINDOW and DETACHED_PROCESS flags
+                    # Launch installer as detached process
+                    # Inno Setup will handle service stop/restart automatically
                     DETACHED_PROCESS = 0x00000008
                     CREATE_NO_WINDOW = 0x08000000
 
+                    silent_flags = ['/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', '/ALLUSERS']
+                    logging.info(f"Launching installer with flags: {silent_flags}")
+
                     process = subprocess.Popen(
-                        [python_exe, updater_script, installer_url],
+                        [temp_installer_path] + silent_flags,
                         creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         stdin=subprocess.DEVNULL
                     )
 
-                    logging.info(f"Bootstrap updater spawned (PID: {process.pid})")
-                    logging.info("Service will stop in 3 seconds...")
-
-                    # Give the updater time to initialize
-                    time.sleep(3)
-
-                    # Stop this service gracefully
-                    # The updater will take over from here
-                    logging.info("Stopping service for update...")
-                    logging.info("Service will restart automatically after update")
+                    logging.info(f"Installer launched (PID: {process.pid})")
+                    logging.info("Installer will handle service restart automatically")
                     logging.info("="*60)
 
-                    # Exit the process cleanly - NSSM will handle service state
-                    # Don't call self.SvcStop() as it doesn't work with NSSM
-                    self.is_alive = False
-
-                    # Give a moment for the return message to be processed
-                    # Then exit - the bootstrap updater will handle the rest
-                    import threading
-                    def delayed_exit():
-                        time.sleep(1)
-                        logging.info("Exiting process for update...")
-                        os._exit(0)  # Force exit without cleanup (updater will restart us)
-
-                    threading.Thread(target=delayed_exit, daemon=True).start()
-
-                    return "Update initiated - service stopping for upgrade"
+                    return "Self-update initiated - installer running in background"
 
                 except Exception as e:
                     error_msg = f"Error initiating update: {str(e)}"

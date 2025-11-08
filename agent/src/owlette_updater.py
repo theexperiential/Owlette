@@ -36,7 +36,7 @@ DEFAULT_LOG_FILE = "owlette_updater.log"
 TEMP_INSTALLER_NAME = "Owlette-Update.exe"
 DOWNLOAD_TIMEOUT = 300  # 5 minutes
 INSTALL_TIMEOUT = 300    # 5 minutes
-SERVICE_STOP_WAIT = 5    # seconds
+SERVICE_STOP_WAIT = 10   # seconds (increased to handle graceful shutdown)
 SERVICE_START_WAIT = 10  # seconds
 
 
@@ -110,14 +110,18 @@ def stop_service(logger: logging.Logger) -> bool:
             timeout=30
         )
 
+        # Don't fail immediately - SERVICE_STOP_PENDING is a normal transitional state
+        # We'll verify the actual status after waiting
         if stop_result.returncode != 0:
-            logger.error(f"Failed to stop service: {stop_result.stderr}")
-            return False
+            logger.warning(f"Stop command returned non-zero: {stop_result.stderr}")
+            logger.info("This may be normal (e.g., SERVICE_STOP_PENDING). Verifying status...")
+        else:
+            logger.info("Service stop command sent successfully")
 
-        logger.info(f"Service stop command sent. Waiting {SERVICE_STOP_WAIT} seconds...")
+        logger.info(f"Waiting {SERVICE_STOP_WAIT} seconds for service to stop...")
         time.sleep(SERVICE_STOP_WAIT)
 
-        # Verify service stopped
+        # Verify service stopped (or stopping)
         verify_result = subprocess.run(
             [NSSM_PATH, 'status', SERVICE_NAME],
             capture_output=True,
@@ -130,9 +134,26 @@ def stop_service(logger: logging.Logger) -> bool:
             if status == "SERVICE_STOPPED":
                 logger.info("Service stopped successfully")
                 return True
+            elif status == "SERVICE_STOP_PENDING":
+                logger.info("Service is stopping (STOP_PENDING)")
+                logger.info("Waiting a bit more for graceful shutdown...")
+                time.sleep(5)  # Give it more time
+                # Check one more time
+                final_check = subprocess.run(
+                    [NSSM_PATH, 'status', SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if final_check.returncode == 0:
+                    final_status = final_check.stdout.strip()
+                    logger.info(f"Final service status: {final_status}")
+                # Proceed regardless - installer will handle service reinstallation
+                logger.info("Proceeding with update...")
+                return True
             else:
                 logger.warning(f"Service status after stop: {status}")
-                logger.info("Proceeding anyway...")
+                logger.info("Proceeding anyway (installer will handle service reinstallation)...")
                 return True
         else:
             logger.info("Service appears to be stopped")
