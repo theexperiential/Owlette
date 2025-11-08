@@ -40,7 +40,7 @@ export function Footer() {
       <div className="container mx-auto px-4 pointer-events-auto">
         <p className="text-center text-xs text-slate-500 flex items-center justify-center gap-1">
           <span>Made with</span>
-          <span className="text-base leading-none">{emoji}</span>
+          <span className="text-base leading-none -translate-y-0.4">{emoji}</span>
           <span>in California by</span>
           <Link
             href="https://tec.design"
