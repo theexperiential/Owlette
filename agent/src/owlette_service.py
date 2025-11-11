@@ -531,7 +531,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             try:
                 # Kill the process
                 psutil.Process(pid).terminate()
-                
+
+                # Log process kill event
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_killed',
+                        level='warning',
+                        process_name=process_name,
+                        details=f'Terminated PID {pid} for restart'
+                    )
+
                 # Launch new process
                 new_pid = self.launch_process_as_user(process)
 
@@ -549,6 +558,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     process,
                     f"Could not kill and restart process {pid}. Error: {e}"
                 )
+                # Log process crash/failure
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_crash',
+                        level='error',
+                        process_name=process_name,
+                        details=f'Failed to kill and restart PID {pid}: {str(e)}'
+                    )
                 return None
 
     # Attempt to launch the process if not running
@@ -586,10 +603,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     pid = self.launch_process_as_user(process)
                 except Exception as e:
                     logging.error(f"Could not start process {Util.get_process_name(process)}.\n {e}")
+                    # Log process start failure
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        self.firebase_client.log_event(
+                            action='process_start_failed',
+                            level='error',
+                            process_name=Util.get_process_name(process),
+                            details=str(e)
+                        )
+                    return None
 
                 # Update the last started time and PID
                 self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
                 logging.info(f"PID {pid} started")
+
+                # Log process start event
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_started',
+                        level='info',
+                        process_name=Util.get_process_name(process),
+                        details=f'PID {pid}'
+                    )
 
                 return pid  # Return the new PID
 
@@ -816,9 +851,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
                             new_pid = self.kill_and_relaunch_process(last_pid, process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Restart process command - Old PID: {last_pid}, New PID: {new_pid}'
+                                )
                             return f"Process {process_name} restarted with new PID {new_pid}"
                         else:
                             new_pid = self.handle_process_launch(process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Start process command - PID: {new_pid}'
+                                )
                             return f"Process {process_name} started with PID {new_pid}"
                 return f"Process {process_name} not found in configuration"
 
@@ -835,6 +886,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             psutil.Process(last_pid).terminate()
                             # Update status and sync to Firebase immediately
                             shared_utils.update_process_status_in_json(last_pid, 'STOPPED', self.firebase_client)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='warning',
+                                    process_name=process_name,
+                                    details=f'Kill process command - PID: {last_pid}'
+                                )
                             return f"Process {process_name} (PID {last_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"

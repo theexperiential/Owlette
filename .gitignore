@@ -27,6 +27,7 @@ agent/.venv/
 # Logs
 *.log
 logs/
+!web/app/logs/
 tmp/
 agent/logs/
 agent/tmp/

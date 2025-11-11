@@ -206,6 +206,25 @@ service cloud.firestore {
         allow update: if canAccessSite(siteId);
         allow delete: if canAccessSite(siteId);
       }
+
+      // ----------------------------------------
+      // Logs Subcollection
+      // ----------------------------------------
+
+      match /logs/{logId} {
+        // Event logs (process starts, crashes, kills, commands)
+        // Agents write logs when events occur
+        // Web dashboard reads logs for monitoring
+        // Users can read logs for their sites, delete old logs
+        allow read: if canAccessSite(siteId) ||
+                       isServiceAccount() ||
+                       agentCanAccessSite(siteId);
+        allow create: if (canAccessSite(siteId) ||
+                          isServiceAccount() ||
+                          agentCanAccessSite(siteId)) &&
+                         hasRequiredFields(['timestamp', 'action', 'level', 'machineId']);
+        allow delete: if canAccessSite(siteId); // Users can delete old logs
+      }
     }
 
     // ============================================

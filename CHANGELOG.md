@@ -5,6 +5,38 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.15] - 2025-11-11
+
+### Added
+
+#### Web Dashboard Enhancements
+- **Event Logs Page** - New dedicated logs page for monitoring process events and system activities
+  - Real-time event tracking: process starts, kills, crashes, and command executions
+  - Compact list view with color-coded severity badges (info: blue, warning: yellow, error: red)
+  - Advanced filtering by action type, machine, and log level
+  - Pagination support (50 logs per page) with next/previous navigation
+  - Accessible via navigation menu dropdown
+  - Responsive design matching dashboard and deployments page layouts
+
+#### Agent Enhancements
+- **Event Logging to Firestore** - Automatic logging of critical process events to Firestore
+  - Process start events (successful and failed)
+  - Process termination events (kills and crashes)
+  - Command execution tracking
+  - Non-blocking implementation to prevent service interruption
+  - Detailed event metadata (timestamp, machine ID, process name, details)
+
+#### Firestore Security Rules
+- **Logs Collection Rules** - Secure read/write permissions for event logs
+  - Users can read logs for their assigned sites
+  - Agents can create logs for their machines
+  - Users can delete old logs for cleanup
+
+### Changed
+
+#### Web Dashboard
+- **Consistent Page Layouts** - Logs page follows same layout patterns as Dashboard and Deployments pages
+
 ## [Unreleased] - 2025-02-01
 
 ### Added

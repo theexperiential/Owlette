@@ -724,6 +724,51 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to upload config to Firestore: {e}")
 
+    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None):
+        """
+        Log a process event to Firestore for dashboard monitoring.
+        Non-blocking - failures are silently ignored to prevent logging from crashing the app.
+
+        Args:
+            action: Event action (process_start, process_killed, process_crash, command_executed, etc.)
+            level: Log level (info, warning, error)
+            process_name: Name of the process involved (optional)
+            details: Additional details about the event (optional)
+            user_id: User ID if action was triggered by a user (optional)
+        """
+        if not self.connected or not self.db:
+            return
+
+        try:
+            logs_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('logs')
+
+            event_data = {
+                'timestamp': SERVER_TIMESTAMP,
+                'action': action,
+                'level': level,
+                'machineId': self.machine_id,
+                'machineName': self.machine_id,  # For display - could be enhanced with friendly name
+            }
+
+            # Add optional fields
+            if process_name:
+                event_data['processName'] = process_name
+            if details:
+                event_data['details'] = details
+            if user_id:
+                event_data['userId'] = user_id
+
+            # Create document with auto-generated ID
+            doc_ref = logs_ref.document()
+            doc_ref.set(event_data)
+
+            self.logger.debug(f"Logged event: {action} (level: {level}, process: {process_name})")
+
+        except Exception as e:
+            # Silently ignore failures to prevent logging from crashing the app
+            self.logger.debug(f"Failed to log event to Firestore: {e}")
+
     def ship_logs(self, log_entries: list):
         """
         Ship log entries to Firestore for centralized monitoring.
