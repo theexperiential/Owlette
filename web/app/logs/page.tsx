@@ -87,12 +87,23 @@ export default function LogsPage() {
     }
   }, [user, loading, router]);
 
-  // Set current site when sites load
+  // Set current site when sites load (restore from localStorage if available)
   useEffect(() => {
-    if (sites.length > 0 && !currentSiteId) {
-      setCurrentSiteId(sites[0].id);
+    if (!sitesLoading && sites.length > 0 && !currentSiteId) {
+      const savedSite = localStorage.getItem('owlette_current_site');
+      if (savedSite && sites.find(s => s.id === savedSite)) {
+        setCurrentSiteId(savedSite);
+      } else {
+        setCurrentSiteId(sites[0].id);
+      }
     }
-  }, [sites, currentSiteId]);
+  }, [sites, sitesLoading, currentSiteId]);
+
+  // Save site selection to localStorage
+  const handleSiteChange = (siteId: string) => {
+    setCurrentSiteId(siteId);
+    localStorage.setItem('owlette_current_site', siteId);
+  };
 
   // Fetch logs when site or filters change
   useEffect(() => {
@@ -213,7 +224,7 @@ export default function LogsPage() {
         currentPage="Logs"
         sites={sites}
         currentSiteId={currentSiteId}
-        onSiteChange={setCurrentSiteId}
+        onSiteChange={handleSiteChange}
       />
 
       {/* Main content */}
