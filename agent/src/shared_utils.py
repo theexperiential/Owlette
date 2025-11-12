@@ -608,29 +608,14 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     Returns:
         Dictionary from JSON file, or None if error/not found
     """
-    # FORENSIC LOGGING: Track who's reading config
-    import traceback
-    import inspect
-    caller = inspect.stack()[1]
-    caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}"
-
-    if "config.json" in file_path:
-        file_exists = os.path.exists(file_path)
-        logging.info(f"[FORENSIC] READ attempt: {file_path} | exists={file_exists} | called_from={caller_info}")
-
     with json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
                     data = json.load(f)
-                    if "config.json" in file_path:
-                        has_firebase = 'firebase' in data if data else False
-                        logging.info(f"[FORENSIC] READ success: {file_path} | has_firebase={has_firebase}")
                     return data
 
             except FileNotFoundError:
-                if "config.json" in file_path:
-                    logging.warning(f"[FORENSIC] READ failed: {file_path} NOT FOUND | called_from={caller_info}")
                 logging.info(f"{file_path} not found.")
                 return None
 
