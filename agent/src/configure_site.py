@@ -214,12 +214,16 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         global web_app_url
         # Use the global web_app_url set in main(), or fall back to env var + default
         url_to_check = web_app_url or os.environ.get("OWLETTE_SETUP_URL", DEFAULT_URL)
+
+        # Determine environment from URL
         if 'dev.owlette.app' in url_to_check:
+            environment = 'development'
             api_base = "https://dev.owlette.app/api"
             project_id = "owlette-dev-3838a"
         else:
+            environment = 'production'
             api_base = "https://owlette.app/api"
-            project_id = "owlette-prod"  # Update this with actual prod project ID
+            project_id = "owlette-prod-90a12"
 
         print(f"  API Base: {api_base}")
         print(f"  Project ID: {project_id}")
@@ -262,7 +266,7 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         else:
             config = {
                 "_comment": "Owlette Configuration - Edit this file to add processes to monitor",
-                "version": "2.0.3",
+                "version": shared_utils.CONFIG_VERSION,
                 "processes": [],
                 "logging": {
                     "level": "INFO",
@@ -287,6 +291,9 @@ class ConfigCallbackHandler(http.server.BaseHTTPRequestHandler):
         config['firebase']['site_id'] = site_id
         config['firebase']['project_id'] = project_id
         config['firebase']['api_base'] = api_base
+
+        # Save environment setting (production or development)
+        config['environment'] = environment
 
         # DO NOT store tokens in config.json - they are encrypted in C:\ProgramData\Owlette\.tokens.enc
         # Remove old token field if it exists (from previous versions)
@@ -391,6 +398,8 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
         print(f"Starting configuration server on http://localhost:{CALLBACK_PORT}...")
 
     try:
+        # Enable socket reuse to avoid "Address already in use" errors
+        socketserver.TCPServer.allow_reuse_address = True
         with socketserver.TCPServer(("localhost", CALLBACK_PORT), ConfigCallbackHandler) as httpd:
             if show_prompts:
                 print(f"✓ Server started successfully")

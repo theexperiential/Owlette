@@ -111,8 +111,8 @@ class OwletteConfigApp:
 
                 if self.config.get('firebase', {}).get('enabled', False):
                     site_id = self.config.get('firebase', {}).get('site_id', 'default_site')
-                    project_id = self.config.get('firebase', {}).get('project_id') or "owlette-dev-3838a"
-                    api_base = self.config.get('firebase', {}).get('api_base') or "https://owlette.app/api"
+                    project_id = self.config.get('firebase', {}).get('project_id') or shared_utils.get_project_id()
+                    api_base = self.config.get('firebase', {}).get('api_base') or shared_utils.get_api_base_url()
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
                     # Initialize OAuth authentication manager
@@ -1117,7 +1117,7 @@ class OwletteConfigApp:
         if firebase_enabled:
             try:
                 from auth_manager import AuthManager
-                api_base = self.config.get('firebase', {}).get('api_base', 'https://owlette.app/api')
+                api_base = self.config.get('firebase', {}).get('api_base') or shared_utils.get_api_base_url()
                 auth = AuthManager(api_base=api_base)
 
                 # Try to get valid token - this will return None if no tokens exist or if refresh fails
@@ -1286,13 +1286,8 @@ class OwletteConfigApp:
         if response.get() != "Join Site":
             return
 
-        # Determine setup URL based on current config or default to dev
-        current_api_base = self.config.get('firebase', {}).get('api_base', '')
-        if 'dev.owlette.app' in current_api_base:
-            setup_url = "https://dev.owlette.app/setup"
-        else:
-            # Default to dev for testing (can change to production later)
-            setup_url = "https://dev.owlette.app/setup"
+        # Get setup URL based on environment setting
+        setup_url = shared_utils.get_setup_url()
 
         # Show loading dialog
         loading_dialog = CTkMessagebox(
@@ -1400,8 +1395,8 @@ class OwletteConfigApp:
                 from firebase_client import FirebaseClient
                 from auth_manager import AuthManager
 
-                api_base = self.config['firebase'].get('api_base', 'https://owlette.app/api')
-                project_id = self.config['firebase'].get('project_id', 'owlette-prod')
+                api_base = self.config['firebase'].get('api_base') or shared_utils.get_api_base_url()
+                project_id = self.config['firebase'].get('project_id') or shared_utils.get_project_id()
                 site_id = self.config['firebase'].get('site_id', '')
 
                 auth_manager = AuthManager(api_base=api_base)

@@ -39,7 +39,7 @@ def get_app_version():
 # GLOBAL VARS
 
 APP_VERSION = get_app_version()
-CONFIG_VERSION = '1.4.0'  # Added logging configuration
+CONFIG_VERSION = '1.5.0'  # Added environment configuration
 # Color scheme matching web app (Tailwind slate palette)
 WINDOW_COLOR = '#020617'      # slate-950 - main background
 FRAME_COLOR = '#0f172a'       # slate-900 - panels/cards
@@ -101,6 +101,36 @@ def get_path(filename=None):
 
     return path
 
+def get_python_exe_path():
+    """
+    Get path to the bundled Python interpreter executable.
+    Returns pythonw.exe (GUI, no console) if available, otherwise python.exe.
+
+    Returns:
+        str: Full path to pythonw.exe or python.exe
+
+    Raises:
+        FileNotFoundError: If neither pythonw.exe nor python.exe can be found
+    """
+    # Get installation root (C:\Owlette or wherever installed)
+    # src is at C:\Owlette\agent\src, so go up 2 levels to get C:\Owlette
+    install_root = os.path.dirname(os.path.dirname(get_path()))
+
+    # Try pythonw.exe first (for GUI scripts, no console window)
+    pythonw_path = os.path.join(install_root, 'python', 'pythonw.exe')
+    if os.path.exists(pythonw_path):
+        return pythonw_path
+
+    # Fall back to python.exe
+    python_path = os.path.join(install_root, 'python', 'python.exe')
+    if os.path.exists(python_path):
+        return python_path
+
+    # If neither found, raise error
+    raise FileNotFoundError(
+        f"Python interpreter not found. Searched in: {os.path.join(install_root, 'python')}"
+    )
+
 def get_data_path(filename=None):
     """
     Get path in ProgramData for Owlette application data.
@@ -156,6 +186,78 @@ def ensure_data_directories():
     except Exception as e:
         logging.error(f"Failed to create data directories: {e}")
         return False
+
+def get_environment():
+    """
+    Get the current environment setting from config.
+
+    Returns:
+        str: 'production' or 'development' (defaults to 'production')
+    """
+    try:
+        config = read_config()
+        if config:
+            return config.get('environment', 'production')
+    except:
+        pass
+    return 'production'
+
+def get_api_base_url(environment=None):
+    """
+    Get API base URL based on environment.
+
+    Args:
+        environment: Optional environment override ('production' or 'development')
+                    If None, reads from config
+
+    Returns:
+        str: API base URL (e.g., 'https://owlette.app/api')
+    """
+    if environment is None:
+        environment = get_environment()
+
+    if environment == 'development':
+        return 'https://dev.owlette.app/api'
+    else:
+        return 'https://owlette.app/api'
+
+def get_setup_url(environment=None):
+    """
+    Get setup URL based on environment.
+
+    Args:
+        environment: Optional environment override ('production' or 'development')
+                    If None, reads from config
+
+    Returns:
+        str: Setup URL (e.g., 'https://owlette.app/setup')
+    """
+    if environment is None:
+        environment = get_environment()
+
+    if environment == 'development':
+        return 'https://dev.owlette.app/setup'
+    else:
+        return 'https://owlette.app/setup'
+
+def get_project_id(environment=None):
+    """
+    Get Firebase project ID based on environment.
+
+    Args:
+        environment: Optional environment override ('production' or 'development')
+                    If None, reads from config
+
+    Returns:
+        str: Firebase project ID
+    """
+    if environment is None:
+        environment = get_environment()
+
+    if environment == 'development':
+        return 'owlette-dev-3838a'
+    else:
+        return 'owlette-prod-90a12'
 
 def is_script_running(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
@@ -458,6 +560,17 @@ def upgrade_config():
                 }
                 logging.info("Added logging configuration to config.json (v1.4.0)")
 
+            # Add environment configuration if missing (v1.5.0+)
+            # Detect current environment from existing api_base if set
+            if 'environment' not in config:
+                # Auto-detect from existing firebase config
+                existing_api_base = config.get('firebase', {}).get('api_base', '')
+                if 'dev.owlette.app' in existing_api_base:
+                    config['environment'] = 'development'
+                else:
+                    config['environment'] = 'production'
+                logging.info(f"Added environment configuration to config.json (v1.5.0): {config['environment']}")
+
             # Reorder the keys so that 'version' is at the top
             ordered_config = {'version': config['version']}
             for key in config:
@@ -575,6 +688,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
 def generate_config_file(existing_config=None):
     default_config = {
         "version": CONFIG_VERSION,
+        "environment": "production",  # Default to production environment
         "processes": [],
         "logging": {
             "level": "INFO",
@@ -585,7 +699,7 @@ def generate_config_file(existing_config=None):
             }
         }
     }
-    
+
     if existing_config is None:
         return default_config
 

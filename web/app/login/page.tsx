@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,12 +11,22 @@ import { toast } from 'sonner';
 import { sanitizeError } from '@/lib/errorHandler';
 import Image from 'next/image';
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [redirectUrl, setRedirectUrl] = useState('/dashboard');
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Read redirect parameter from URL
+  useEffect(() => {
+    const redirect = searchParams.get('redirect');
+    if (redirect) {
+      setRedirectUrl(redirect);
+    }
+  }, [searchParams]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +35,7 @@ export default function LoginPage() {
     try {
       await signIn(email, password);
       toast.success('Logged in successfully!');
-      router.push('/dashboard');
+      router.push(redirectUrl);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
@@ -39,7 +49,7 @@ export default function LoginPage() {
     try {
       await signInWithGoogle();
       toast.success('Logged in with Google!');
-      router.push('/dashboard');
+      router.push(redirectUrl);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
@@ -147,5 +157,37 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
+        <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
+          <CardHeader className="space-y-4 flex flex-col items-center">
+            <Image
+              src="/owlette-icon.png"
+              alt="Owlette"
+              width={96}
+              height={96}
+              className="rounded-full"
+              priority
+            />
+            <div className="space-y-1 text-center">
+              <CardTitle className="text-2xl font-bold text-white">Owlette</CardTitle>
+              <CardDescription className="text-slate-400">
+                Always Watching
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-center text-slate-400">Loading...</div>
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
