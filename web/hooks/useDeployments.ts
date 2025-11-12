@@ -210,8 +210,13 @@ export function useDeployments(siteId: string) {
           for (const [commandId, commandData] of Object.entries(completedCommands)) {
             const command = commandData as any;
 
-            // Skip if we've already processed this command
-            if (processedCommands.has(commandId)) {
+            // Skip if we've already processed this command TO COMPLETION
+            // (but allow intermediate status updates like downloading/installing)
+            const isTerminalState = command.status === 'completed' ||
+                                   command.status === 'failed' ||
+                                   command.status === 'cancelled';
+
+            if (processedCommands.has(commandId) && isTerminalState) {
               continue;
             }
 
@@ -373,9 +378,13 @@ export function useDeployments(siteId: string) {
                     targets: updatedTargets,
                     status: 'in_progress',
                   }, { merge: true });
+
+                  // Don't mark intermediate states as processed - allow future updates
+                  continue;
                 }
 
-                // Mark this command as processed to prevent reprocessing
+                // Mark this command as processed ONLY for terminal states
+                // (completed, failed, cancelled handled above)
                 processedCommands.add(commandId);
               } catch (error: any) {
                 // Handle Firestore write errors gracefully

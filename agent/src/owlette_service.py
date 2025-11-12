@@ -1236,9 +1236,9 @@ Set WshShell = Nothing'''
 
                     # Trigger immediate software inventory sync after installation completes
                     try:
-                        if firebase_client and firebase_client.is_connected():
+                        if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after installation")
-                            firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client._sync_software_inventory(force=True)
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
                         # Don't fail the installation if sync fails
