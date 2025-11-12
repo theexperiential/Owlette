@@ -312,32 +312,43 @@ export default function SetupPage() {
             <div className="space-y-4">
               <Label htmlFor="site-select" className="text-slate-200">Select Site</Label>
               {sites.length > 0 ? (
-                <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-                  <SelectTrigger id="site-select" className="bg-slate-800/50 border-slate-700 text-white">
-                    <SelectValue placeholder="Choose a site..." />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-slate-700">
-                    {sites.map((site) => (
-                      <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
-                        {site.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-2">
+                  <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+                    <SelectTrigger id="site-select" className="bg-slate-800/50 border-slate-700 text-white flex-1">
+                      <SelectValue placeholder="Choose a site..." />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-slate-700">
+                      {sites.map((site) => (
+                        <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
+                          {site.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    onClick={() => setCreatingNewSite(true)}
+                    className="bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white whitespace-nowrap"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create New Site
+                  </Button>
+                </div>
               ) : (
-                <p className="text-sm text-slate-400">
-                  No sites available. Create a new site to get started.
-                </p>
+                <>
+                  <p className="text-sm text-slate-400">
+                    No sites available. Create a new site to get started.
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => setCreatingNewSite(true)}
+                    className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create New Site
+                  </Button>
+                </>
               )}
-
-              <Button
-                variant="outline"
-                onClick={() => setCreatingNewSite(true)}
-                className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Create New Site
-              </Button>
             </div>
           )}
 
