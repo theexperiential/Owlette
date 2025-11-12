@@ -414,40 +414,25 @@ class FirestoreRestClient:
             # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
             _UNINITIALIZED = object()
             last_data = _UNINITIALIZED
-            poll_count = 0
 
             while True:
                 try:
-                    poll_count += 1
                     # Get current document
                     current_data = self.get_document(path)
-
-                    # DETAILED LOGGING for config.json
-                    if "config/" in path:
-                        has_firebase = 'firebase' in current_data if current_data else False
-                        logger.info(f"[LISTENER POLL #{poll_count}] Got document: has_firebase={has_firebase}, data_keys={list(current_data.keys()) if current_data else None}")
 
                     # Check if changed (including first run where last_data is sentinel)
                     if current_data != last_data:
                         # Skip callback on first run if document doesn't exist
                         if last_data is not _UNINITIALIZED or current_data is not None:
-                            if "config/" in path:
-                                logger.warning(f"[LISTENER] Document CHANGED, calling callback...")
                             logger.debug(f"Document changed: {path}")
                             callback(current_data)
-                            if "config/" in path:
-                                logger.warning(f"[LISTENER] Callback completed")
                         last_data = current_data
-                    else:
-                        if "config/" in path:
-                            logger.info(f"[LISTENER POLL #{poll_count}] No change detected")
 
                     # Poll every 2 seconds (configurable)
                     time.sleep(2)
 
                 except Exception as e:
                     logger.error(f"Error in document listener for {path}: {e}")
-                    logger.error(f"[LISTENER] Full error: {traceback.format_exc()}")
                     time.sleep(5)  # Back off on error
 
         thread = threading.Thread(target=poll_document, daemon=True)

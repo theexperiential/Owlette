@@ -514,14 +514,8 @@ def save_config(config=None, emails_to_entry=None):
   
 # Maintain compatibility from JSON config versions < 1.1.0
 def upgrade_config():
-    # DETAILED LOGGING
-    import inspect
-    caller = inspect.stack()[1]
-    logging.critical(f"[UPGRADE_CONFIG] Called from {caller.filename}:{caller.lineno} in {caller.function}")
-
     # Directly read the original config file
     config = read_json_from_file(CONFIG_PATH)
-    logging.critical(f"[UPGRADE_CONFIG] read_json_from_file returned: {config is not None}, has_firebase={('firebase' in config) if config else 'N/A'}")
     if config:
         # Check if 'version' key exists and its value
         current_version = config.get('version', '0.0.0')
@@ -672,37 +666,6 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
         max_retries: Maximum number of retry attempts (default: 3)
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
     """
-    # FORENSIC LOGGING: Track who's writing config and if it has firebase section
-    import inspect
-    caller = inspect.stack()[1]
-    caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}"
-
-    if "config.json" in file_path:
-        has_firebase = 'firebase' in data if data else False
-        firebase_enabled = data.get('firebase', {}).get('enabled') if (data and 'firebase' in data) else None
-        logging.warning(f"[FORENSIC] WRITE: {file_path} | has_firebase={has_firebase} | enabled={firebase_enabled} | called_from={caller_info}")
-
-        # HARD-BLOCK: If current config has firebase section, REFUSE to write config without it
-        if not has_firebase and os.path.exists(file_path):
-            try:
-                with open(file_path, 'r') as f:
-                    current_config = json.load(f)
-                    if 'firebase' in current_config:
-                        logging.critical(f"[FIREBASE PROTECTION] BLOCKED write that would delete firebase section!")
-                        logging.critical(f"[FIREBASE PROTECTION] Caller: {caller_info}")
-                        import traceback
-                        logging.critical(f"[FIREBASE PROTECTION] Stack:\n{''.join(traceback.format_stack())}")
-                        # REFUSE to write - this would delete authentication
-                        raise RuntimeError("BLOCKED: Attempted to write config without firebase section when firebase exists in current config")
-            except json.JSONDecodeError:
-                pass  # If current file is corrupted, allow the write
-
-        # FORENSIC WARNING if firebase section is missing (but allow write if hard-block didn't trigger)
-        if not has_firebase:
-            logging.critical(f"[FORENSIC] ⚠️  FIREBASE SECTION MISSING IN WRITE! | called_from={caller_info}")
-            import traceback
-            logging.critical(f"[FORENSIC] Stack trace:\n{''.join(traceback.format_stack())}")
-
     with json_lock:
         # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
@@ -716,9 +679,6 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                 # Atomic rename (replaces existing file)
                 # os.replace is atomic on Windows (unlike os.rename)
                 os.replace(temp_path, file_path)
-
-                if "config.json" in file_path:
-                    logging.info(f"[FORENSIC] WRITE success: {file_path}")
 
                 return  # Success - exit function
 
@@ -750,12 +710,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
 
 # Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):
-    # DETAILED LOGGING
-    import inspect
-    caller = inspect.stack()[1]
-    logging.critical(f"[GENERATE_CONFIG] Called from {caller.filename}:{caller.lineno} in {caller.function}, existing_config={existing_config is not None}")
-
-    # CRITICAL: Try to preserve firebase section from existing config file
+    # Try to preserve firebase section from existing config file
     # This prevents losing authentication when config is regenerated
     preserved_firebase = None
     if existing_config is None and os.path.exists(CONFIG_PATH):
@@ -764,9 +719,9 @@ def generate_config_file(existing_config=None):
                 file_config = json.load(f)
                 if 'firebase' in file_config:
                     preserved_firebase = file_config['firebase']
-                    logging.critical("[GENERATE_CONFIG] Preserving firebase section from existing config file")
+                    logging.debug("Preserving firebase section from existing config file")
         except Exception as e:
-            logging.critical(f"[GENERATE_CONFIG] Could not read existing config to preserve firebase: {e}")
+            logging.debug(f"Could not read existing config to preserve firebase: {e}")
             pass  # Continue with default generation
 
     default_config = {
@@ -787,7 +742,7 @@ def generate_config_file(existing_config=None):
         # If we preserved a firebase section, add it to default config
         if preserved_firebase:
             default_config['firebase'] = preserved_firebase
-            logging.info("[CONFIG GEN] Added preserved firebase section to generated config")
+            logging.debug("Added preserved firebase section to generated config")
         return default_config
 
     # Update only missing keys
