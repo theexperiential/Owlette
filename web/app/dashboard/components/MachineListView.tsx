@@ -34,10 +34,10 @@ const MemoizedTableHeader = memo(() => {
         <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Hostname</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Status</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>CPU</TableHead>
+        <TableHead className="text-slate-200 w-[140px]" style={{ willChange: 'auto' }}>CPU</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>GPU</TableHead>
+        <TableHead className="text-slate-200 w-[160px]" style={{ willChange: 'auto' }}>GPU</TableHead>
         <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
         <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
       </TableRow>
@@ -108,7 +108,7 @@ export function MachineListView({
                     {machine.online ? 'Online' : 'Offline'}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-white max-w-[140px]">
+                <TableCell className="text-white overflow-hidden">
                   {machine.metrics?.cpu ? (
                     <>
                       <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
@@ -138,7 +138,7 @@ export function MachineListView({
                     </>
                   ) : '-'}
                 </TableCell>
-                <TableCell className="text-white max-w-[160px]">
+                <TableCell className="text-white overflow-hidden">
                   {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                     <>
                       <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>
