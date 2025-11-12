@@ -608,13 +608,29 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     Returns:
         Dictionary from JSON file, or None if error/not found
     """
+    # FORENSIC LOGGING: Track who's reading config
+    import traceback
+    import inspect
+    caller = inspect.stack()[1]
+    caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}"
+
+    if "config.json" in file_path:
+        file_exists = os.path.exists(file_path)
+        logging.info(f"[FORENSIC] READ attempt: {file_path} | exists={file_exists} | called_from={caller_info}")
+
     with json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    if "config.json" in file_path:
+                        has_firebase = 'firebase' in data if data else False
+                        logging.info(f"[FORENSIC] READ success: {file_path} | has_firebase={has_firebase}")
+                    return data
 
             except FileNotFoundError:
+                if "config.json" in file_path:
+                    logging.warning(f"[FORENSIC] READ failed: {file_path} NOT FOUND | called_from={caller_info}")
                 logging.info(f"{file_path} not found.")
                 return None
 
@@ -650,6 +666,23 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
         max_retries: Maximum number of retry attempts (default: 3)
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
     """
+    # FORENSIC LOGGING: Track who's writing config and if it has firebase section
+    import inspect
+    caller = inspect.stack()[1]
+    caller_info = f"{caller.filename}:{caller.lineno} in {caller.function}"
+
+    if "config.json" in file_path:
+        has_firebase = 'firebase' in data if data else False
+        firebase_enabled = data.get('firebase', {}).get('enabled') if (data and 'firebase' in data) else None
+        logging.warning(f"[FORENSIC] WRITE: {file_path} | has_firebase={has_firebase} | enabled={firebase_enabled} | called_from={caller_info}")
+
+        # CRITICAL WARNING if firebase section is missing
+        if not has_firebase:
+            logging.critical(f"[FORENSIC] ⚠️  FIREBASE SECTION MISSING IN WRITE! | called_from={caller_info}")
+            # Log full stack trace for this critical case
+            import traceback
+            logging.critical(f"[FORENSIC] Stack trace:\n{''.join(traceback.format_stack())}")
+
     with json_lock:
         # Use atomic write pattern: write to temp file, then rename
         temp_path = file_path + '.tmp'
@@ -663,6 +696,10 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                 # Atomic rename (replaces existing file)
                 # os.replace is atomic on Windows (unlike os.rename)
                 os.replace(temp_path, file_path)
+
+                if "config.json" in file_path:
+                    logging.info(f"[FORENSIC] WRITE success: {file_path}")
+
                 return  # Success - exit function
 
             except PermissionError as e:
