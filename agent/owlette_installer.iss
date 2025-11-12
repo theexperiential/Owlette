@@ -219,7 +219,16 @@ procedure RestoreConfigIfBackedUp;
 var
   ConfigPath: String;
 begin
-  // For upgrades: restore the old config to preserve processes and Firebase settings
+  // IMPORTANT: DO NOT restore config during silent mode (self-updates)
+  // The service will sync processes/settings from Firestore automatically
+  // Restoring the backup can delete the firebase authentication section!
+  if WizardSilent() then
+  begin
+    Log('Silent mode - SKIPPING config restore (service will sync from Firestore)');
+    Exit;  // Skip restore entirely for self-updates
+  end;
+
+  // For interactive upgrades: restore the old config to preserve processes and Firebase settings
   // This ensures "Leave Site" (enabled=false) is preserved across upgrades
   if ConfigBackupPath <> '' then
   begin
@@ -227,7 +236,7 @@ begin
     begin
       ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
       FileCopy(ConfigBackupPath, ConfigPath, False);
-      Log('Restored config from backup to preserve settings');
+      Log('Restored config from backup to preserve settings (interactive upgrade)');
     end;
   end;
 end;

@@ -289,6 +289,10 @@ class FirebaseClient:
                 """Handle config document changes."""
                 nonlocal first_snapshot
 
+                # DETAILED LOGGING
+                has_firebase = 'firebase' in config_data if config_data else False
+                self.logger.warning(f"[CALLBACK] on_config_changed called: has_firebase={has_firebase}, first_snapshot={first_snapshot}")
+
                 # Skip the first snapshot (initial load)
                 if first_snapshot:
                     first_snapshot = False
@@ -298,13 +302,14 @@ class FirebaseClient:
                 if config_data:
                     # Calculate hash of incoming config
                     incoming_hash = hashlib.md5(json.dumps(config_data, sort_keys=True).encode()).hexdigest()
+                    self.logger.warning(f"[CALLBACK] Config hash: {incoming_hash[:8]}..., last_uploaded: {self._last_uploaded_config_hash[:8] if self._last_uploaded_config_hash else 'None'}...")
 
                     # Skip if this is our own write (prevents feedback loop)
                     if incoming_hash == self._last_uploaded_config_hash:
-                        self.logger.debug(f"Skipping self-originated config change (hash: {incoming_hash[:8]}...)")
+                        self.logger.info(f"[CALLBACK] Skipping self-originated config change (hash: {incoming_hash[:8]}...)")
                         return
 
-                    self.logger.info(f"Config change detected in Firestore (hash: {incoming_hash[:8]}...)")
+                    self.logger.critical(f"[CALLBACK] ⚠️ Config change detected in Firestore! hash={incoming_hash[:8]}..., has_firebase={has_firebase}")
 
                     # Cache the new config
                     self._save_cached_config(config_data)
@@ -313,12 +318,15 @@ class FirebaseClient:
                     # Call the registered callback
                     if self.config_update_callback:
                         try:
+                            self.logger.critical(f"[CALLBACK] About to call config_update_callback (handle_config_update)...")
                             self.config_update_callback(config_data)
-                            self.logger.info("Config update applied successfully")
+                            self.logger.critical(f"[CALLBACK] config_update_callback completed")
                         except Exception as e:
-                            self.logger.error(f"Error in config update callback: {e}")
+                            self.logger.error(f"[CALLBACK] Error in config update callback: {e}")
+                            import traceback
+                            self.logger.error(f"[CALLBACK] Traceback: {traceback.format_exc()}")
                     else:
-                        self.logger.warning("No config update callback registered")
+                        self.logger.warning("[CALLBACK] No config update callback registered")
 
             # Start listener (runs in separate thread, polls every 2 seconds)
             self.db.listen_to_document(config_path, on_config_changed)
