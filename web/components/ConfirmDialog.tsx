@@ -52,7 +52,7 @@ export default function ConfirmDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            variant={variant}
+            className={variant === 'destructive' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
           >
             {confirmText}
           </Button>

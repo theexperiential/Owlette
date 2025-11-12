@@ -78,7 +78,7 @@ export default function DashboardPage() {
     file_path: '',
     cwd: '',
     priority: 'Normal',
-    visibility: 'Show',
+    visibility: 'Normal',
     time_delay: '0',
     time_to_init: '10',
     relaunch_attempts: '3',
@@ -300,13 +300,22 @@ export default function DashboardPage() {
     setProcessDialogMode('edit');
     setEditingMachineId(machineId);
     setEditingProcessId(process.id);
+
+    // Map legacy visibility values to new options (backward compatibility)
+    let visibilityValue = process.visibility || 'Normal';
+    if (visibilityValue === 'Show') {
+      visibilityValue = 'Normal';
+    } else if (visibilityValue === 'Hide') {
+      visibilityValue = 'Hidden';
+    }
+
     setEditProcessForm({
       name: process.name || '',
       exe_path: process.exe_path || '',
       file_path: process.file_path || '',
       cwd: process.cwd || '',
       priority: process.priority || 'Normal',
-      visibility: process.visibility || 'Show',
+      visibility: visibilityValue,
       time_delay: process.time_delay || '0',
       time_to_init: process.time_to_init || '10',
       relaunch_attempts: process.relaunch_attempts || '3',
@@ -326,7 +335,7 @@ export default function DashboardPage() {
       file_path: '',
       cwd: '',
       priority: 'Normal',
-      visibility: 'Show',
+      visibility: 'Normal',
       time_delay: '0',
       time_to_init: '10',
       relaunch_attempts: '3',

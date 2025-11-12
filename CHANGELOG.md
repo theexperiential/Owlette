@@ -5,6 +5,48 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.26] - 2025-11-11
+
+### Added
+
+#### Agent Enhancements
+- **Process Launch via Task Scheduler** - Complete rewrite of process launching using Windows Task Scheduler (schtasks)
+  - **Service Restart Resilience**: Processes now survive service restarts (no longer killed by NSSM job objects)
+  - **Implementation**: Creates one-time scheduled task, runs it, finds PID, then deletes task
+  - **User Context**: Launches processes under logged-in user account (not SYSTEM)
+  - **Working Directory Support**: Respects process working directory settings
+  - **Auto Cleanup**: Temporary tasks are automatically removed after launch
+- **Enhanced Event Logging** - Improved visibility and reliability of event logging to Firestore
+  - **Agent Lifecycle Events**: Logs agent_started and agent_stopped events with version info
+  - **Process Crash Detection**: Automatically logs process crashes (distinguishes from manual kills)
+  - **GUI Kill Tracking**: Manual process terminations from GUI are logged to Firestore
+  - **Better Log Visibility**: Event logs now use INFO level instead of DEBUG for production monitoring
+  - **UUID Document IDs**: Uses explicit UUIDs for Firestore log documents (REST client compatibility)
+
+### Changed
+
+#### Agent Service
+- **Event Log Messages** - Improved event log format with clearer action indicators (e.g., "[EVENT LOGGED]", "[EVENT LOG FAILED]")
+- **Process Kill Events** - Dashboard process kills now log as "process_killed" instead of "command_executed" for better clarity
+
+### Fixed
+
+#### Agent Service
+- **Agent Stopped Logging** - Fixed regression where agent_stopped events were not logged during service restarts
+  - **Root cause**: NSSM kills the process within ~4 seconds of receiving stop signal, preventing finally blocks from executing
+  - **Solution**: Implemented restart flag mechanism for graceful shutdown logging
+  - **How it works**:
+    1. Tray menu "Restart" writes `restart.flag` file
+    2. Tray waits 2 seconds for service to detect flag
+    3. Service main loop checks for flag on every iteration
+    4. Service logs agent_stopped event to Firestore when flag detected
+    5. Tray proceeds with restart commands after delay
+  - **Benefits**: Reliable event logging without race conditions or process timing dependencies
+  - **Backward compatible**: Existing SvcStop() logging still works for normal Windows service shutdown
+- **Process Crash False Positives** - Crash events no longer logged for manually killed processes
+  - Checks process status before logging crash event
+  - Prevents duplicate/misleading logs in event viewer
+
 ## [2.0.15] - 2025-11-11
 
 ### Added
@@ -19,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Responsive design matching dashboard and deployments page layouts
 
 #### Agent Enhancements
+- **Hidden Process Launch** - Launch console applications without visible windows
+  - **Hidden mode for console apps**: Uses VBScript wrapper with window style 0 for truly invisible launches
+  - **Supported applications**: Node.js servers, Python scripts, Java applications, and other console-based processes
+  - **Normal mode**: Standard visible window launch for all application types
+  - **VBScript implementation**: Creates temporary VBScript files that launch processes with `WshShell.Run(..., 0, False)`
+  - **Backward compatible**: Legacy "Show"/"Hide" settings automatically mapped to Normal/Hidden
+  - **Limitation**: Hidden mode works reliably for console applications only; GUI applications will still show windows
 - **Event Logging to Firestore** - Automatic logging of critical process events to Firestore
   - Process start events (successful and failed)
   - Process termination events (kills and crashes)
@@ -36,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Web Dashboard
 - **Consistent Page Layouts** - Logs page follows same layout patterns as Dashboard and Deployments pages
+- **Simplified Visibility Options** - Reduced visibility dropdown to Normal and Hidden only (removed Minimized/Maximized which were not reliably supported)
 
 ## [Unreleased] - 2025-02-01
 

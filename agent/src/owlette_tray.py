@@ -191,17 +191,32 @@ def open_config_gui(icon, item):
 # Function to restart the service (using UAC elevation)
 def restart_service(icon, item):
     """
-    Restart the Owlette service using elevated command prompt.
-    Prompts for UAC to get admin privileges, then restarts service and tray icon.
+    Restart the Owlette service and tray icon.
     """
     try:
-        logging.info("Starting service restart procedure with UAC elevation...")
+        logging.info("Starting service restart procedure...")
+
+        # CRITICAL: Write restart flag for service to detect
+        # Service will log agent_stopped when it sees this flag
+        try:
+            restart_flag = shared_utils.get_data_path('tmp/restart.flag')
+            os.makedirs(os.path.dirname(restart_flag), exist_ok=True)
+            with open(restart_flag, 'w') as f:
+                f.write('restart_requested')
+            logging.info("Restart flag written - waiting for service to log agent_stopped...")
+
+            # Wait 2 seconds for service to detect flag and log agent_stopped
+            time.sleep(2)
+            logging.info("Proceeding with restart commands...")
+        except Exception as flag_error:
+            logging.error(f"Failed to write restart flag: {flag_error}")
+            # Continue with restart anyway
 
         # Show notification immediately for user feedback
         try:
             icon.notify(
                 title="🔄 Restarting Owlette",
-                message="UAC prompt will appear - approve to restart service"
+                message="Restarting service - will return momentarily"
             )
         except:
             pass

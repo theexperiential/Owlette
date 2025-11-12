@@ -759,15 +759,17 @@ class FirebaseClient:
             if user_id:
                 event_data['userId'] = user_id
 
-            # Create document with auto-generated ID
-            doc_ref = logs_ref.document()
+            # Create document with UUID as ID (REST client requires explicit ID)
+            import uuid
+            doc_id = str(uuid.uuid4())
+            doc_ref = logs_ref.document(doc_id)
             doc_ref.set(event_data)
 
-            self.logger.debug(f"Logged event: {action} (level: {level}, process: {process_name})")
+            self.logger.info(f"[EVENT LOGGED] {action} - {process_name} ({level})")
 
         except Exception as e:
-            # Silently ignore failures to prevent logging from crashing the app
-            self.logger.debug(f"Failed to log event to Firestore: {e}")
+            # Log failures at INFO level for debugging
+            self.logger.info(f"[EVENT LOG FAILED] {action}: {e}")
 
     def ship_logs(self, log_entries: list):
         """
