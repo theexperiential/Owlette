@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,8 +15,18 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [redirectUrl, setRedirectUrl] = useState('/dashboard');
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Read redirect parameter from URL
+  useEffect(() => {
+    const redirect = searchParams.get('redirect');
+    if (redirect) {
+      setRedirectUrl(redirect);
+    }
+  }, [searchParams]);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +35,7 @@ export default function LoginPage() {
     try {
       await signIn(email, password);
       toast.success('Logged in successfully!');
-      router.push('/dashboard');
+      router.push(redirectUrl);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
@@ -39,7 +49,7 @@ export default function LoginPage() {
     try {
       await signInWithGoogle();
       toast.success('Logged in with Google!');
-      router.push('/dashboard');
+      router.push(redirectUrl);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
