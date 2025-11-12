@@ -32,33 +32,37 @@ def signal_handler(signum, frame):
         print("[SIGNAL HANDLER] ERROR: _service_instance is None", file=sys.stderr, flush=True)
         sys.exit(0)
 
-    # CRITICAL: Stop Firebase client IMMEDIATELY to set machine offline
-    # This ensures online=false is written to Firestore before process terminates
-    if hasattr(_service_instance, 'firebase_client'):
-        if _service_instance.firebase_client:
-            try:
-                logging.critical("[SIGNAL HANDLER] Setting machine offline in Firestore...")
-                print("[SIGNAL HANDLER] Setting machine offline...", file=sys.stderr, flush=True)
-                _service_instance.firebase_client.stop()
-                logging.critical("[SIGNAL HANDLER] Firebase client stopped - machine marked offline")
-                print("[SIGNAL HANDLER] Machine marked offline", file=sys.stderr, flush=True)
-            except Exception as e:
-                logging.critical(f"[SIGNAL HANDLER] Error stopping Firebase client: {e}")
-                print(f"[SIGNAL HANDLER] Error: {e}", file=sys.stderr, flush=True)
-        else:
-            logging.critical("[SIGNAL HANDLER] firebase_client is None - cannot mark offline")
-            print("[SIGNAL HANDLER] firebase_client is None", file=sys.stderr, flush=True)
-    else:
-        logging.critical("[SIGNAL HANDLER] _service_instance has no firebase_client attribute")
-        print("[SIGNAL HANDLER] No firebase_client attribute", file=sys.stderr, flush=True)
+    # CRITICAL: NSSM kills the process ~4 seconds after this signal
+    # The main loop can't exit fast enough to hit the finally block
+    # So we MUST log agent_stopped HERE before we're killed
+    if _service_instance.firebase_client:
+        try:
+            logging.info("[SIGNAL HANDLER] Logging agent_stopped event to Firestore")
+            _service_instance.firebase_client.log_event(
+                event_type='agent_stopped',
+                details={'reason': 'service_restart'}
+            )
+            logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
+            print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)
+        except Exception as e:
+            logging.error(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}")
+            print(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}", file=sys.stderr, flush=True)
 
-    # Signal main loop to exit
+        # Stop Firebase client now
+        try:
+            _service_instance.firebase_client.stop()
+            logging.info("[SIGNAL HANDLER] Firebase client stopped")
+        except Exception as e:
+            logging.error(f"[SIGNAL HANDLER] Error stopping Firebase: {e}")
+    else:
+        logging.warning("[SIGNAL HANDLER] No Firebase client - cannot log agent_stopped")
+
+    # Signal main loop to exit gracefully (if we get time)
     if hasattr(_service_instance, 'is_alive'):
         _service_instance.is_alive = False
-        logging.info("[SIGNAL HANDLER] is_alive set to False - main loop will exit")
-    else:
-        logging.warning("[SIGNAL HANDLER] _service_instance has no is_alive attribute")
+        logging.info("[SIGNAL HANDLER] is_alive set to False")
 
+    # Exit immediately - NSSM will kill us anyway
     sys.exit(0)
 
 # Initialize Firebase and Auth imports

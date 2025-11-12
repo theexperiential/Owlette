@@ -373,11 +373,11 @@ class OwletteConfigApp:
         # Create Visibility dropdown
         self.visibility_label = ctk.CTkLabel(self.master, text="Visibility:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
         self.visibility_label.grid(row=7, column=6, sticky='e', padx=5, pady=5)
-        self.visibility_options = ["Show", "Hide"]
+        self.visibility_options = ["Normal", "Hidden"]
         self.visibility_menu = ctk.CTkOptionMenu(self.master, values=self.visibility_options, command=self.update_selected_process)
         self.visibility_menu.configure(width=140, fg_color=shared_utils.BUTTON_COLOR, bg_color=shared_utils.FRAME_COLOR, button_color=shared_utils.BUTTON_IMPORTANT_COLOR, button_hover_color=shared_utils.BUTTON_HOVER_COLOR, dropdown_fg_color=shared_utils.BUTTON_COLOR, corner_radius=6)
         self.visibility_menu.grid(row=7, column=7, sticky='w', padx=(5, 20), pady=5)
-        self.visibility_menu.set('Show')
+        self.visibility_menu.set('Normal')
 
         # Create a label and entry for "Restart Attempts"
         self.relaunch_attempts_label = ctk.CTkLabel(self.master, text="Attempts:", fg_color=shared_utils.FRAME_COLOR, bg_color=shared_utils.FRAME_COLOR, text_color=shared_utils.TEXT_COLOR)
@@ -854,10 +854,32 @@ class OwletteConfigApp:
         if self.selected_process:
             os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
             killed = False
+
+            # Get process name for logging
+            process_name = None
+            for process in self.config.get('processes', []):
+                if process.get('id') == self.selected_process:
+                    process_name = process.get('name')
+                    break
+
             if os_pid:
                 try:
                     os.kill(os_pid, signal.SIGTERM)  # or signal.SIGKILL
                     killed = True
+
+                    # Log process kill event to Firebase
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        try:
+                            self.firebase_client.log_event(
+                                action='process_killed',
+                                level='warning',
+                                process_name=process_name,
+                                details=f'Manual kill from GUI - PID: {os_pid}'
+                            )
+                            logging.info(f"Logged process kill event for {process_name} (PID {os_pid})")
+                        except Exception as log_err:
+                            logging.error(f"Failed to log kill event: {log_err}")
+
                 except Exception as e:
                     CTkMessagebox(master=self.master, title="Error", message=f"Failed to kill the process: {e}", icon="cancel")
             else:
@@ -1049,7 +1071,15 @@ class OwletteConfigApp:
         self.name_entry.insert(0, process.get('name', ''))
         self.exe_path_entry.delete(0, tk.END)
         self.exe_path_entry.insert(0, process.get('exe_path', ''))
-        self.visibility_menu.set(process.get('visibility', 'Show'))
+
+        # Map legacy visibility values to new options (backward compatibility)
+        visibility_value = process.get('visibility', 'Normal')
+        if visibility_value == 'Show':
+            visibility_value = 'Normal'
+        elif visibility_value == 'Hide':
+            visibility_value = 'Hidden'
+        self.visibility_menu.set(visibility_value)
+
         self.priority_menu.set(process.get('priority', 'Normal'))
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, process.get('file_path', ''))

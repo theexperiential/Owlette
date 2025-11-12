@@ -139,8 +139,8 @@ export function ProcessDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="border-slate-700 bg-slate-900 text-white">
-                  <SelectItem value="Show">Show</SelectItem>
-                  <SelectItem value="Hide">Hide</SelectItem>
+                  <SelectItem value="Normal">Normal</SelectItem>
+                  <SelectItem value="Hidden">Hidden (console apps only)</SelectItem>
                 </SelectContent>
               </Select>
             </div>

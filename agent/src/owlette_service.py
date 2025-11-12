@@ -153,7 +153,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # On service stop
     def SvcStop(self):
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        # Try to report service status (may fail when running under NSSM)
+        try:
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        except AttributeError:
+            # Running under NSSM - service control handler not fully initialized
+            logging.info("SvcStop called under NSSM mode (service control handler not available)")
 
         # Log service stop with stack trace info to identify caller
         import inspect
@@ -162,6 +167,29 @@ class OwletteService(win32serviceutil.ServiceFramework):
         logging.warning(f"=== SERVICE STOP REQUESTED === (called from {caller_info})")
         logging.info("Service stop requested - setting machine offline in Firebase...")
         self.is_alive = False
+
+        # Log Agent Stopped event to Firestore BEFORE stopping client
+        firebase_connected = self.firebase_client and self.firebase_client.is_connected()
+        logging.info(f"SvcStop - Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
+
+        if firebase_connected:
+            try:
+                version = shared_utils.get_app_version()
+                logging.info(f"SvcStop - Logging agent_stopped event (version: {version})...")
+                self.firebase_client.log_event(
+                    action='agent_stopped',
+                    level='info',
+                    process_name=None,
+                    details=f'Owlette agent v{version} shutting down gracefully'
+                )
+                logging.warning("[OK] SvcStop - Logged agent_stopped event to Firestore")
+                # Give Firebase a moment to write the event
+                time.sleep(0.5)
+            except Exception as log_err:
+                logging.error(f"SvcStop - Failed to log agent_stopped event: {log_err}")
+                logging.exception("Full traceback:")
+        else:
+            logging.warning("SvcStop - Firebase client not available - cannot log agent_stopped event")
 
         # Stop Firebase client (this sets machine offline)
         if self.firebase_client:
@@ -371,18 +399,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Map process priority, default is normal
         priority = process.get('priority', 'Normal')
-        priority_mapping = {
-            "Low": win32con.IDLE_PRIORITY_CLASS,
-            #"Below Normal": win32con.BELOW_NORMAL_PRIORITY_CLASS, # doesn't seem to work?
-            "Normal": win32con.NORMAL_PRIORITY_CLASS,
-            #"Above Normal": win32con.ABOVE_NORMAL_PRIORITY_CLASS, # doesn't seem to work?
-            "High": win32con.HIGH_PRIORITY_CLASS,
-            "Realtime": win32con.REALTIME_PRIORITY_CLASS
-        }
-        priority_class = priority_mapping.get((priority), win32con.NORMAL_PRIORITY_CLASS)
-
-        # Show or hide window!
-        self.startup_info.wShowWindow = win32con.SW_SHOW if visibility == 'Show' else win32con.SW_HIDE
 
         # Fetch and verify executable path
         exe_path = process.get('exe_path', '')
@@ -404,9 +420,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
         file_path = f"{file_path}" if os.path.isfile(file_path) else file_path
         logging.info(f"Starting {exe_path}{' ' if file_path else ''}{file_path}...")
 
-        # Build the command line - always quote exe_path for paths with spaces
-        command_line = f'"{exe_path}" {file_path}' if file_path else f'"{exe_path}"'
-
         # Fetch working directory (convert empty string to None)
         cwd = process.get('cwd', None)
         if cwd == '':
@@ -415,26 +428,172 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Working directory {cwd} does not exist.")
             return None
 
-        # Start the process
-        try:
-            process_info = win32process.CreateProcessAsUser(
-                self.console_user_token,
-                None,  # Application Name
-                command_line,  # Command Line
-                None, # Process Attributes
-                None, # Thread Attributes
-                0, # Inherit handles
-                priority_class, # Creation flags
-                self.environment,  # To open in user's environment
-                cwd, # Current directory
-                self.startup_info
-            )
-        except Exception as e:
-            logging.error(f"Failed to start process: {e}")
-            return None
+        # Start the process via Windows Task Scheduler (schtasks)
+        # CRITICAL: This approach launches the process with svchost.exe (Task Scheduler) as parent,
+        # not the Owlette service. This completely bypasses NSSM's job object management and ensures
+        # the process survives service restarts.
+        #
+        # This is the same proven approach used in the self-update mechanism (lines 1123-1189)
 
-        # Get PID
-        pid = process_info[2]
+        # Normalize visibility (backward compatible with Show/Hide)
+        if visibility == 'Show':
+            visibility = 'Normal'
+        elif visibility == 'Hide':
+            visibility = 'Hidden'
+
+        # For Hidden mode, use VBScript wrapper to launch without window
+        # This is the most reliable method for truly hidden launches (works for console apps)
+        if visibility == 'Hidden':
+            # Create VBScript that launches process with window style 0 (hidden)
+            # Use Chr(34) for quotes to avoid escaping issues
+            if file_path:
+                # Build command with proper quote escaping: "exe_path" "file_path"
+                vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run Chr(34) & "{exe_path}" & Chr(34) & " " & Chr(34) & "{file_path}" & Chr(34), 0, False
+Set WshShell = Nothing'''
+            else:
+                vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run Chr(34) & "{exe_path}" & Chr(34), 0, False
+Set WshShell = Nothing'''
+
+            # Write VBS to temp file
+            import tempfile
+            vbs_file = tempfile.NamedTemporaryFile(mode='w', suffix='.vbs', delete=False, dir=shared_utils.get_data_path('tmp'))
+            vbs_file.write(vbs_content)
+            vbs_path = vbs_file.name
+            vbs_file.close()
+
+            command = f'cscript.exe //nologo "{vbs_path}"'
+            logging.info(f"Launching with Hidden visibility via VBScript wrapper")
+        else:
+            # Normal launch
+            if file_path:
+                command = f'"{exe_path}" "{file_path}"'
+            else:
+                command = f'"{exe_path}"'
+
+        logging.info(f"Launching: {command}")
+        if visibility not in ['Normal', 'Hidden']:
+            logging.warning(f"Visibility mode '{visibility}' is not yet supported - using Normal visibility")
+        if priority != 'Normal':
+            logging.warning(f"Priority '{priority}' is not yet supported - using Normal priority")
+
+        # Generate unique task name
+        task_name = f"OwletteProcess_{process.get('id', 'unknown')}_{int(time.time())}"
+
+        # Get the logged-in user from console session
+        try:
+            # Query the username from the active console session
+            username = win32ts.WTSQuerySessionInformation(
+                win32ts.WTS_CURRENT_SERVER_HANDLE,
+                self.console_session_id,
+                win32ts.WTSUserName
+            )
+            domain = win32ts.WTSQuerySessionInformation(
+                win32ts.WTS_CURRENT_SERVER_HANDLE,
+                self.console_session_id,
+                win32ts.WTSDomainName
+            )
+
+            if domain and username:
+                user_context = f"{domain}\\{username}"
+                logging.info(f"Task will run as: {user_context}")
+            else:
+                user_context = None
+                logging.warning("Could not determine user context - task will run as SYSTEM")
+        except Exception as e:
+            logging.error(f"Failed to query user session info: {e}")
+            user_context = None
+
+        try:
+            # Step 1: Create scheduled task
+            create_cmd = [
+                'schtasks', '/Create',
+                '/TN', task_name,
+                '/TR', command,
+                '/SC', 'ONCE',
+                '/ST', '00:00',  # Required but overridden by /Run
+                '/F'  # Force create
+            ]
+
+            # Only add /RU if we successfully got user context
+            if user_context:
+                create_cmd.extend(['/RU', user_context, '/RL', 'LIMITED'])
+
+            # Add working directory if specified
+            if cwd:
+                create_cmd.extend(['/SD', cwd])
+
+            logging.info(f"Creating scheduled task: {task_name}")
+            logging.info(f"Command: {command}")
+
+            result = subprocess.run(
+                create_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode != 0:
+                logging.error(f"Failed to create task: {result.stderr}")
+                return None
+
+            logging.info(f"Task created successfully")
+
+            # Step 2: Run the task immediately
+            run_cmd = ['schtasks', '/Run', '/TN', task_name]
+            run_result = subprocess.run(
+                run_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if run_result.returncode != 0:
+                logging.warning(f"Task run warning: {run_result.stderr}")
+            else:
+                logging.info(f"Task started successfully")
+
+            # Step 3: Wait for process to launch
+            time.sleep(2)
+
+            # Step 4: Find the launched process by matching executable
+            pid = None
+            exe_name = os.path.basename(exe_path)
+            newest_time = time.time() - 10  # Look for processes created in last 10 seconds
+
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'create_time']):
+                try:
+                    if proc.info['exe'] and proc.info['exe'].lower() == exe_path.lower():
+                        if proc.info['create_time'] > newest_time:
+                            pid = proc.info['pid']
+                            logging.info(f"Found launched process: PID {pid}")
+                            break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            # Step 5: Clean up the scheduled task
+            delete_cmd = ['schtasks', '/Delete', '/TN', task_name, '/F']
+            subprocess.run(
+                delete_cmd,
+                capture_output=True,
+                timeout=10
+            )
+            logging.info(f"Cleaned up task: {task_name}")
+
+            if not pid:
+                logging.error(f"Could not find PID for newly launched process")
+                return None
+
+            logging.info(f"Process launched with PID {pid} (via schtasks - survives service restarts)")
+
+        except subprocess.TimeoutExpired:
+            logging.error("schtasks operation timed out")
+            return None
+        except Exception as e:
+            logging.error(f"Failed to launch via schtasks: {e}")
+            logging.exception("Full traceback:")
+            return None
 
         # Get the current Unix timestamp
         self.current_timestamp = int(time.time())
@@ -531,7 +690,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             try:
                 # Kill the process
                 psutil.Process(pid).terminate()
-                
+
+                # Log process kill event
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_killed',
+                        level='warning',
+                        process_name=process_name,
+                        details=f'Terminated PID {pid} for restart'
+                    )
+
                 # Launch new process
                 new_pid = self.launch_process_as_user(process)
 
@@ -549,6 +717,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     process,
                     f"Could not kill and restart process {pid}. Error: {e}"
                 )
+                # Log process crash/failure
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_crash',
+                        level='error',
+                        process_name=process_name,
+                        details=f'Failed to kill and restart PID {pid}: {str(e)}'
+                    )
                 return None
 
     # Attempt to launch the process if not running
@@ -586,10 +762,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     pid = self.launch_process_as_user(process)
                 except Exception as e:
                     logging.error(f"Could not start process {Util.get_process_name(process)}.\n {e}")
+                    # Log process start failure
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        self.firebase_client.log_event(
+                            action='process_start_failed',
+                            level='error',
+                            process_name=Util.get_process_name(process),
+                            details=str(e)
+                        )
+                    return None
 
                 # Update the last started time and PID
                 self.last_started[process_list_id] = {'time': self.current_time, 'pid': pid}
                 logging.info(f"PID {pid} started")
+
+                # Log process start event
+                if self.firebase_client and self.firebase_client.is_connected():
+                    self.firebase_client.log_event(
+                        action='process_started',
+                        level='info',
+                        process_name=Util.get_process_name(process),
+                        details=f'PID {pid}'
+                    )
 
                 return pid  # Return the new PID
 
@@ -654,6 +848,29 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     shared_utils.update_process_status_in_json(last_pid, 'RUNNING', self.firebase_client)
 
             else:
+                # Process crashed or was manually closed
+                if last_pid:
+                    # Check if process was manually killed (don't log crash if it was)
+                    try:
+                        results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                        process_status = results.get(str(last_pid), {}).get('status', '')
+                        was_manually_killed = (process_status == 'KILLED')
+                    except:
+                        was_manually_killed = False
+
+                    # Only log crash if it wasn't manually killed
+                    if not was_manually_killed:
+                        process_name = Util.get_process_name(process)
+                        if self.firebase_client and self.firebase_client.is_connected():
+                            self.firebase_client.log_event(
+                                action='process_crash',
+                                level='error',
+                                process_name=process_name,
+                                details=f'Process stopped unexpectedly (PID {last_pid} no longer running)'
+                            )
+                    else:
+                        logging.info(f"Process {last_pid} was manually killed - skipping crash log")
+
                 # Launch the process again if it isn't running
                 new_pid = self.handle_process_launch(process)
         
@@ -816,9 +1033,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
                             new_pid = self.kill_and_relaunch_process(last_pid, process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Restart process command - Old PID: {last_pid}, New PID: {new_pid}'
+                                )
                             return f"Process {process_name} restarted with new PID {new_pid}"
                         else:
                             new_pid = self.handle_process_launch(process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Start process command - PID: {new_pid}'
+                                )
                             return f"Process {process_name} started with PID {new_pid}"
                 return f"Process {process_name} not found in configuration"
 
@@ -835,6 +1068,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             psutil.Process(last_pid).terminate()
                             # Update status and sync to Firebase immediately
                             shared_utils.update_process_status_in_json(last_pid, 'STOPPED', self.firebase_client)
+                            # Log process kill event (manual kill from dashboard)
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='process_killed',
+                                    level='warning',
+                                    process_name=process_name,
+                                    details=f'Manual kill via dashboard - PID: {last_pid}'
+                                )
                             return f"Process {process_name} (PID {last_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"
@@ -995,9 +1236,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     # Trigger immediate software inventory sync after installation completes
                     try:
-                        if firebase_client and firebase_client.is_connected():
+                        if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after installation")
-                            firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client._sync_software_inventory(force=True)
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
                         # Don't fail the installation if sync fails
@@ -1483,6 +1724,32 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     self.is_alive = False
                     break
 
+                # Check for restart flag from tray icon
+                restart_flag = shared_utils.get_data_path('tmp/restart.flag')
+                if os.path.exists(restart_flag):
+                    logging.info("Restart flag detected - logging agent_stopped before restart")
+                    try:
+                        os.remove(restart_flag)
+                    except:
+                        pass
+
+                    # Log agent_stopped to Firestore
+                    if self.firebase_client:
+                        try:
+                            version = shared_utils.get_app_version()
+                            logging.info(f"Logging agent_stopped event (restart requested, version: {version})...")
+                            self.firebase_client.log_event(
+                                action='agent_stopped',
+                                level='info',
+                                process_name=None,
+                                details=f'Owlette agent v{version} restarting (user initiated)'
+                            )
+                            logging.info("[OK] agent_stopped event logged to Firestore")
+                        except Exception as log_err:
+                            logging.error(f"Failed to log agent_stopped: {log_err}")
+                    else:
+                        logging.warning("No Firebase client - cannot log agent_stopped")
+
                 # Start the tray icon script as a process (if it isn't running)
                 tray_script = 'owlette_tray.py'
                 if not shared_utils.is_script_running(tray_script):
@@ -1504,6 +1771,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 if self.first_start:
                     logging.info('Owlette initialized')
+
+                    # Log Agent Started event to Firestore
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        try:
+                            version = shared_utils.get_app_version()
+                            self.firebase_client.log_event(
+                                action='agent_started',
+                                level='info',
+                                process_name=None,
+                                details=f'Owlette agent v{version} started successfully'
+                            )
+                            logging.info("Logged agent_started event to Firestore")
+                        except Exception as log_err:
+                            logging.error(f"Failed to log agent_started event: {log_err}")
 
                 self.first_start = False
 
@@ -1530,7 +1811,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
         finally:
             # CRITICAL: Cleanup when loop exits (graceful shutdown or signal handler)
             # This ensures machine is marked offline even when running in NSSM mode
-            logging.info("Main loop exiting - performing cleanup...")
+            logging.warning("=== MAIN LOOP EXITING - PERFORMING CLEANUP ===")
+
+            # Log Agent Stopped event to Firestore
+            firebase_connected = self.firebase_client and self.firebase_client.is_connected()
+            logging.info(f"Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
+
+            if firebase_connected:
+                try:
+                    version = shared_utils.get_app_version()
+                    logging.info(f"Attempting to log agent_stopped event (version: {version})...")
+                    self.firebase_client.log_event(
+                        action='agent_stopped',
+                        level='info',
+                        process_name=None,
+                        details=f'Owlette agent v{version} shutting down gracefully'
+                    )
+                    logging.warning("[OK] Logged agent_stopped event to Firestore")
+                    # Give Firebase time to write the event
+                    time.sleep(1)
+                except Exception as log_err:
+                    logging.error(f"Failed to log agent_stopped event: {log_err}")
+                    logging.exception("Full traceback:")
+            else:
+                logging.warning("Firebase client not available - cannot log agent_stopped event")
 
             # Mark machine offline in Firestore
             if self.firebase_client:
