@@ -65,22 +65,56 @@ def get_hostname():
 
 def get_cpu_name():
     """
-    Get the CPU model name from Windows Registry.
-    This is fast, reliable, and works on all Windows versions without admin rights.
+    Get CPU model name with multi-layered fallback for maximum reliability.
+
+    Tries methods in order of speed and reliability:
+    1. Windows Registry (fastest, most reliable)
+    2. PowerShell Get-CimInstance (Windows 11 compatible, modern)
+    3. platform.processor() (last resort, incomplete but always works)
 
     Returns:
         str: CPU model name (e.g., "Intel(R) Core(TM) i9-9900X CPU @ 3.50GHz")
-             or "Unknown CPU" if unable to read registry
+             or "Unknown CPU" if all methods fail
     """
+    # Method 1: Windows Registry (BEST - fast, reliable, no admin rights)
     try:
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r'HARDWARE\DESCRIPTION\System\CentralProcessor\0')
         cpu_name = winreg.QueryValueEx(key, 'ProcessorNameString')[0].strip()
         winreg.CloseKey(key)
-        return cpu_name
+        if cpu_name:
+            return cpu_name
     except Exception as e:
-        logging.warning(f"Unable to get CPU name from registry: {e}")
-        return "Unknown CPU"
+        logging.debug(f"Registry CPU detection failed: {e}")
+
+    # Method 2: PowerShell Get-CimInstance (GOOD - Windows 11 compatible)
+    try:
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             'Get-CimInstance -ClassName Win32_Processor | Select-Object -ExpandProperty Name'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW  # No console flash
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            cpu_name = result.stdout.strip()
+            if cpu_name:
+                return cpu_name
+    except Exception as e:
+        logging.debug(f"PowerShell CPU detection failed: {e}")
+
+    # Method 3: platform.processor() (LAST RESORT - incomplete but always works)
+    try:
+        cpu_name = platform.processor()
+        if cpu_name:
+            return cpu_name
+    except Exception as e:
+        logging.debug(f"platform.processor() failed: {e}")
+
+    # All methods failed
+    logging.warning("All CPU detection methods failed")
+    return "Unknown CPU"
 
 def get_path(filename=None):
     """
@@ -858,14 +892,6 @@ def center_window(root, width, height):
     root.minsize(width, height)
 
 # METRICS
-def get_cpu_name():
-    try:
-        cpu_name = subprocess.check_output('wmic cpu get name', shell=True, text=True, stderr=subprocess.STDOUT).strip().split('\n')[-1]
-        return cpu_name
-    except Exception as e:
-        logging.debug(f"Error getting CPU name: {e}")
-        return None
-
 def get_system_info():
     # Get system information
     cpu_info = get_cpu_name()
