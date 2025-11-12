@@ -1113,8 +1113,15 @@ Set WshShell = Nothing'''
                 # Update configuration from Firebase
                 new_config = cmd_data.get('config')
                 if new_config:
+                    # CRITICAL: Preserve local firebase authentication config
+                    # The firebase section should never come from remote commands
+                    old_config = shared_utils.read_config()
+                    if old_config and 'firebase' in old_config:
+                        new_config['firebase'] = old_config['firebase']
+                        logging.debug("Preserved firebase section during update_config command")
+
                     shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
-                    logging.info("Configuration updated from Firebase")
+                    logging.info("Configuration updated from Firebase command")
                     return "Configuration updated successfully"
                 else:
                     return "No configuration data provided"
