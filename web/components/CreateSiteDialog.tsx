@@ -15,7 +15,8 @@ import { doc, getDoc } from 'firebase/firestore';
 interface CreateSiteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSite: (siteId: string, siteName: string, userId: string) => Promise<void>;
+  onCreateSite: (siteId: string, siteName: string, userId: string) => Promise<string>;
+  onSiteCreated?: (siteId: string) => void;
 }
 
 type AvailabilityStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -24,6 +25,7 @@ export function CreateSiteDialog({
   open,
   onOpenChange,
   onCreateSite,
+  onSiteCreated,
 }: CreateSiteDialogProps) {
   const { user } = useAuth();
   const [newSiteName, setNewSiteName] = useState('');
@@ -126,7 +128,7 @@ export function CreateSiteDialog({
 
     setIsCreating(true);
     try {
-      await onCreateSite(newSiteId, newSiteName, user.uid);
+      const createdSiteId = await onCreateSite(newSiteId, newSiteName, user.uid);
       toast.success(`Site "${newSiteName}" created successfully!`);
       setNewSiteId('');
       setNewSiteName('');
@@ -134,6 +136,11 @@ export function CreateSiteDialog({
       setValidationError('');
       setSuggestedId('');
       onOpenChange(false);
+
+      // Notify parent to auto-switch to the newly created site
+      if (onSiteCreated) {
+        onSiteCreated(createdSiteId);
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to create site');
     } finally {

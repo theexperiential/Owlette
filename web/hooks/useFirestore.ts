@@ -153,7 +153,7 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
     }
   }, [userSites, isAdmin]);
 
-  const createSite = async (siteId: string, name: string, userId: string) => {
+  const createSite = async (siteId: string, name: string, userId: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
 
     // Validate site ID format
@@ -200,6 +200,9 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
         createdAt: new Date(),
       });
     }
+
+    // Return the created site ID so caller can auto-switch to it
+    return siteId;
   };
 
   const renameSite = async (siteId: string, newName: string) => {

@@ -504,6 +504,7 @@ export default function DashboardPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
+        onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
       />
 
       {/* Main content */}

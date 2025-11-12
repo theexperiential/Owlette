@@ -189,6 +189,7 @@ export default function DeploymentsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
+        onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
       />
 
       {/* Main content */}
