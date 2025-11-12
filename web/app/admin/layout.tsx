@@ -139,7 +139,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
 
           {/* Navigation Links */}
-          <nav className="flex-1 p-4 lg:p-2 xl:p-4 space-y-3">
+          <nav className="flex-1 p-4 lg:p-2 xl:p-4">
             {navItems.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
@@ -150,7 +150,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <Link href={item.href} onClick={() => setMobileMenuOpen(false)}>
                       <div
                         className={`
-                          flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors
+                          flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors mb-2
                           ${
                             isActive
                               ? 'bg-blue-600 text-white'
