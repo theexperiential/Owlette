@@ -99,7 +99,7 @@ export default function DownloadButton() {
             {isLoading ? (
               <p>Loading version info...</p>
             ) : (
-              <p>Download v{version} installer</p>
+              <p>Download Owlette Agent v{version}</p>
             )}
           </TooltipContent>
         </Tooltip>
@@ -121,7 +121,11 @@ export default function DownloadButton() {
             side="bottom"
             className="bg-slate-800 border-slate-700 text-white"
           >
-            <p>Copy download link</p>
+            {isLoading ? (
+              <p>Loading version info...</p>
+            ) : (
+              <p>Copy download link for Owlette Agent v{version}</p>
+            )}
           </TooltipContent>
         </Tooltip>
       </div>
