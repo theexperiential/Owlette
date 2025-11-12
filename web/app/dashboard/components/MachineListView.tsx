@@ -108,10 +108,10 @@ export function MachineListView({
                     {machine.online ? 'Online' : 'Offline'}
                   </Badge>
                 </TableCell>
-                <TableCell className="text-white">
+                <TableCell className="text-white max-w-[140px]">
                   {machine.metrics?.cpu ? (
                     <>
-                      <div className="text-xs text-slate-400 truncate max-w-[150px]" title={machine.metrics.cpu.name || 'Unknown CPU'}>
+                      <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
                         {machine.metrics.cpu.name || 'Unknown CPU'}
                       </div>
                       <div className="text-sm">{machine.metrics.cpu.percent}%</div>
@@ -138,10 +138,10 @@ export function MachineListView({
                     </>
                   ) : '-'}
                 </TableCell>
-                <TableCell className="text-white">
+                <TableCell className="text-white max-w-[160px]">
                   {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                     <>
-                      <div className="text-xs text-slate-400 truncate max-w-[150px]" title={machine.metrics.gpu.name}>
+                      <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>
                         {machine.metrics.gpu.name}
                       </div>
                       <div className="text-sm">
