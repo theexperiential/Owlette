@@ -582,10 +582,17 @@ def upgrade_config():
 
 
     else:
-        # if there are problems, just regenerate the config file
+        # CRITICAL: If config file exists but couldn't be read (file locking, etc.),
+        # DO NOT regenerate it - this would wipe the firebase section!
+        # Just skip the upgrade and let the service use what's there.
+        if os.path.exists(CONFIG_PATH):
+            logging.warning(f"Config file exists but couldn't be read (file lock?). Skipping upgrade.")
+            logging.warning("If this persists, check file permissions and locks.")
+            return  # Skip upgrade, don't overwrite
+
+        # Only generate new config if file truly doesn't exist
+        logging.info("Config file doesn't exist, generating default...")
         new_config = generate_config_file()
-        
-        # Write the updated config back to the file
         write_json_to_file(new_config, CONFIG_PATH)
 
 # Read a JSON file and returns its content as a Python dictionary with retry logic
