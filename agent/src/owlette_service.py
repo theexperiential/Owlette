@@ -372,8 +372,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
     # Start a python script as a user
     def launch_python_script_as_user(self, script_name, args=None):
         try:
+            # Get full path to Python interpreter (handles bundled Python installations)
+            try:
+                python_exe = shared_utils.get_python_exe_path()
+            except FileNotFoundError as e:
+                logging.error(f"Cannot launch script {script_name}: {e}")
+                return False
+
             self.startup_info.wShowWindow = win32con.SW_HIDE
-            command_line = f'python "{shared_utils.get_path(script_name)}" {args}' if args else f'python "{shared_utils.get_path(script_name)}"'
+            command_line = f'"{python_exe}" "{shared_utils.get_path(script_name)}" {args}' if args else f'"{python_exe}" "{shared_utils.get_path(script_name)}"'
             #logging.info(command_line)
             _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name

@@ -5,6 +5,49 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.29] - 2025-11-12
+
+### Fixed
+
+#### Configuration System
+- **Config Version for New Installs** - Fixed new installations getting incorrect config version
+  - Changed hardcoded `"version": "2.0.3"` to use `CONFIG_VERSION` constant in configure_site.py
+  - Added `"environment": "production"` to default config template in generate_config_file()
+  - New installs now correctly get `"version": "1.5.0"` with proper environment setting
+  - Prevents version mismatch that blocked auto-upgrade system
+
+## [2.0.28] - 2025-11-12
+
+### Added
+
+#### Configuration System
+- **Environment Configuration** - New `environment` setting in config.json (v1.5.0)
+  - Defaults to `"production"` (owlette.app)
+  - Can be set to `"development"` (dev.owlette.app) for testing
+  - Environment setting determines which URL "Join Site" opens
+  - Auto-saved during OAuth callback to confirm environment
+  - New helper functions: `get_environment()`, `get_api_base_url()`, `get_setup_url()`, `get_project_id()`
+
+### Fixed
+
+#### Agent Service
+- **Tray Icon Launch Failure** - Fixed "Windows cannot find 'pythonw'" error on agent restart
+  - Added `get_python_exe_path()` helper to locate bundled Python interpreter at `C:\Owlette\python\pythonw.exe`
+  - Updated `launch_python_script_as_user()` to use full Python path instead of assuming PATH
+  - Resolves issue where system tray icon wouldn't start after service restart
+
+#### Agent GUI
+- **Incorrect Server URL** - Fixed "Join Site" defaulting to dev.owlette.app instead of production
+  - Now correctly defaults to `https://owlette.app/setup` for production
+  - Uses new environment-based helper functions for URL determination
+  - Honors `environment` setting in config.json
+
+#### OAuth Configuration
+- **Port Conflict on Retry** - Fixed "Port 8765 already in use" error when retrying site join
+  - Enabled `allow_reuse_address` on OAuth callback server
+  - Prevents WinError 10048 when configuration is attempted multiple times
+  - Server port now releases immediately after use
+
 ## [2.0.27] - 2025-11-11
 
 ### Fixed
