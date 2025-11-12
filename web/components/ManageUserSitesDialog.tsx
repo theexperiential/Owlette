@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Plus, X, Loader2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Plus, X, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSites } from '@/hooks/useFirestore';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,6 +15,7 @@ interface ManageUserSitesDialogProps {
   onOpenChange: (open: boolean) => void;
   userId: string;
   userEmail: string;
+  userRole: 'user' | 'admin';
   userSites: string[];
   onAssignSite: (userId: string, siteId: string) => Promise<void>;
   onRemoveSite: (userId: string, siteId: string) => Promise<void>;
@@ -24,6 +26,7 @@ export function ManageUserSitesDialog({
   onOpenChange,
   userId,
   userEmail,
+  userRole,
   userSites,
   onAssignSite,
   onRemoveSite,
@@ -32,6 +35,14 @@ export function ManageUserSitesDialog({
   const { sites, loading: sitesLoading } = useSites(adminSites, isAdmin);
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Reset search when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setSearchQuery('');
+    }
+  }, [open]);
 
   const handleAssignSite = async (siteId: string) => {
     setAssigningTo(siteId);
@@ -65,8 +76,18 @@ export function ManageUserSitesDialog({
     }
   };
 
-  const assignedSites = sites.filter((site) => userSites.includes(site.id));
-  const availableSites = sites.filter((site) => !userSites.includes(site.id));
+  // Filter sites based on search query
+  const filterSites = (siteList: typeof sites) => {
+    if (!searchQuery.trim()) return siteList;
+    const query = searchQuery.toLowerCase();
+    return siteList.filter(site =>
+      site.name.toLowerCase().includes(query) ||
+      site.id.toLowerCase().includes(query)
+    );
+  };
+
+  const assignedSites = filterSites(sites.filter((site) => userSites.includes(site.id)));
+  const availableSites = filterSites(sites.filter((site) => !userSites.includes(site.id)));
 
   // Find orphaned site IDs (in user's array but don't exist in sites collection)
   const validSiteIds = sites.map(s => s.id);
@@ -82,13 +103,35 @@ export function ManageUserSitesDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Admin Notice */}
+        {userRole === 'admin' && (
+          <div className="bg-blue-950/30 border border-blue-700/50 rounded-lg p-3 mt-4">
+            <p className="text-blue-300 text-sm">
+              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The "Assigned Sites" list only controls which sites appear in this user's site dropdown for convenience.
+            </p>
+          </div>
+        )}
+
+        {/* Search Filter */}
+        {!sitesLoading && sites.length > 0 && (
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
+              placeholder="Search sites by name or ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 border-slate-700 bg-slate-900 text-white placeholder:text-slate-500"
+            />
+          </div>
+        )}
+
         {sitesLoading ? (
           <div className="flex justify-center items-center py-8">
             <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
             <span className="ml-2 text-slate-400">Loading sites...</span>
           </div>
         ) : (
-          <div className="space-y-6 py-4">
+          <div className="space-y-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
             {/* Assigned Sites */}
             <div>
               <h3 className="text-sm font-semibold text-white mb-3">
@@ -96,7 +139,7 @@ export function ManageUserSitesDialog({
               </h3>
               {assignedSites.length === 0 ? (
                 <div className="text-center py-6 text-slate-400 bg-slate-900 rounded-lg border border-slate-700">
-                  No sites assigned yet
+                  {searchQuery ? 'No assigned sites match your search' : 'No sites assigned yet'}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -167,11 +210,15 @@ export function ManageUserSitesDialog({
             )}
 
             {/* Available Sites */}
-            {availableSites.length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-white mb-3">
-                  Available Sites ({availableSites.length})
-                </h3>
+            <div>
+              <h3 className="text-sm font-semibold text-white mb-3">
+                Available Sites ({availableSites.length})
+              </h3>
+              {availableSites.length === 0 && searchQuery ? (
+                <div className="text-center py-6 text-slate-400 bg-slate-900 rounded-lg border border-slate-700">
+                  No available sites match your search
+                </div>
+              ) : availableSites.length > 0 ? (
                 <div className="space-y-2">
                   {availableSites.map((site) => (
                     <div
@@ -204,8 +251,8 @@ export function ManageUserSitesDialog({
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : null}
+            </div>
           </div>
         )}
 
