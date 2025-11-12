@@ -932,7 +932,14 @@ Set WshShell = Nothing'''
             # Read old config before overwriting (for diffing)
             old_config = shared_utils.read_config()
 
-            # Write the new config to local config.json
+            # CRITICAL: Preserve local firebase authentication config
+            # The firebase section contains local authentication settings (site_id, OAuth tokens, api_base)
+            # and should NEVER be overwritten by Firestore config updates
+            if old_config and 'firebase' in old_config:
+                new_config['firebase'] = old_config['firebase']
+                logging.debug("Preserved local firebase authentication config during Firestore sync")
+
+            # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
 
             logging.info("Local config.json updated from Firestore")
@@ -1699,8 +1706,10 @@ Set WshShell = Nothing'''
                 # Upload local config to Firebase on first run
                 local_config = shared_utils.read_config()
                 if local_config:
-                    self.firebase_client.upload_config(local_config)
-                    logging.info("Local config uploaded to Firebase")
+                    # Create a copy without the firebase section (local auth config, not for Firestore)
+                    config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
+                    self.firebase_client.upload_config(config_for_firestore)
+                    logging.info("Local config uploaded to Firebase (firebase auth section excluded)")
 
                 # Add Firebase log shipping if enabled
                 shared_utils.add_firebase_log_handler(self.firebase_client)
