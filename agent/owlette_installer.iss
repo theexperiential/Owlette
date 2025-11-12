@@ -159,6 +159,7 @@ Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; F
 var
   ConfigBackupPath: String;
   DidUninstallExisting: Boolean;
+  DidRunOAuth: Boolean;  // Track if we ran OAuth configuration
 
 function GetServerEnvironment(Param: String): String;
 var
@@ -187,11 +188,13 @@ begin
   if WizardSilent() and FileExists(ConfigPath) then
   begin
     Log('Silent mode + config exists - skipping OAuth (self-update)');
+    DidRunOAuth := False;
     Result := False;
   end
   else
   begin
     Log('Will run OAuth configuration (fresh install or interactive)');
+    DidRunOAuth := True;  // Track that OAuth will run
     Result := True;
   end;
 end;
@@ -219,7 +222,23 @@ procedure RestoreConfigIfBackedUp;
 var
   ConfigPath: String;
 begin
-  // For upgrades: restore the old config to preserve processes and Firebase settings
+  // CRITICAL: NEVER restore backup if OAuth just ran
+  // OAuth creates a fresh config with firebase authentication - we must preserve it!
+  if DidRunOAuth then
+  begin
+    Log('OAuth ran - SKIPPING config restore to preserve fresh authentication');
+    Exit;
+  end;
+
+  // IMPORTANT: DO NOT restore config during silent mode (self-updates)
+  // The service will sync processes/settings from Firestore automatically
+  if WizardSilent() then
+  begin
+    Log('Silent mode - SKIPPING config restore (service will sync from Firestore)');
+    Exit;
+  end;
+
+  // For interactive upgrades without OAuth: restore the old config to preserve processes and Firebase settings
   // This ensures "Leave Site" (enabled=false) is preserved across upgrades
   if ConfigBackupPath <> '' then
   begin
@@ -227,7 +246,7 @@ begin
     begin
       ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
       FileCopy(ConfigBackupPath, ConfigPath, False);
-      Log('Restored config from backup to preserve settings');
+      Log('Restored config from backup to preserve settings (interactive upgrade without OAuth)');
     end;
   end;
 end;
@@ -314,6 +333,7 @@ var
 begin
   Result := True;
   DidUninstallExisting := False;  // Initialize flag
+  DidRunOAuth := False;  // Initialize OAuth tracking flag
 
   // Check if running as admin
   if not IsAdmin then

@@ -18,6 +18,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import DownloadButton from '@/components/DownloadButton';
 
 interface LogEvent {
   id: string;
@@ -398,6 +399,7 @@ export default function LogsPage() {
         onSiteChange={handleSiteChange}
         onManageSites={() => setManageDialogOpen(true)}
         onAccountSettings={() => setAccountSettingsOpen(true)}
+        actionButton={<DownloadButton />}
       />
 
       {/* Site Management Dialogs */}

@@ -182,6 +182,13 @@ class OwletteConfigApp:
             logging.debug(f"Could not apply Windows 11 theme: {e}")
             pass  # Silently fail if not on Windows 11 or if it doesn't work
 
+    def _get_config_for_firestore(self):
+        """
+        Get config dict for uploading to Firestore, excluding the firebase section.
+        The firebase section contains local authentication config and should never be synced to Firestore.
+        """
+        return {k: v for k, v in self.config.items() if k != 'firebase'}
+
     def setup_ui(self):
         # Apply Windows 11 dark theme directly
         self._apply_windows11_theme()
@@ -508,7 +515,7 @@ class OwletteConfigApp:
             if self.firebase_client:
                 def upload_in_background():
                     try:
-                        self.firebase_client.upload_config(self.config)
+                        self.firebase_client.upload_config(self._get_config_for_firestore())
                         logging.info("Config uploaded to Firestore immediately after toggle")
 
                         # Push metrics so web app sees the change immediately
@@ -557,7 +564,7 @@ class OwletteConfigApp:
         if self.firebase_client:
             def upload_in_background():
                 try:
-                    self.firebase_client.upload_config(self.config)
+                    self.firebase_client.upload_config(self._get_config_for_firestore())
                     logging.info("Config uploaded to Firestore immediately after new process")
 
                     # Push metrics so web app sees the change immediately
@@ -705,7 +712,7 @@ class OwletteConfigApp:
             if self.firebase_client:
                 def upload_in_background():
                     try:
-                        self.firebase_client.upload_config(self.config)
+                        self.firebase_client.upload_config(self._get_config_for_firestore())
                         logging.info("Config uploaded to Firestore immediately after process update")
 
                         # Push metrics so web app sees the change immediately
@@ -976,7 +983,7 @@ class OwletteConfigApp:
                             def upload_in_background():
                                 try:
                                     # Upload config first
-                                    self.firebase_client.upload_config(self.config)
+                                    self.firebase_client.upload_config(self._get_config_for_firestore())
                                     logging.info("Config uploaded to Firestore immediately after process removal")
 
                                     # Then push metrics so web app sees the change immediately
@@ -1007,7 +1014,7 @@ class OwletteConfigApp:
                 if self.firebase_client:
                     def upload_in_background():
                         try:
-                            self.firebase_client.upload_config(self.config)
+                            self.firebase_client.upload_config(self._get_config_for_firestore())
                             logging.info("Config uploaded to Firestore immediately after move up")
 
                             # Push metrics so web app sees the change immediately
@@ -1037,7 +1044,7 @@ class OwletteConfigApp:
                 if self.firebase_client:
                     def upload_in_background():
                         try:
-                            self.firebase_client.upload_config(self.config)
+                            self.firebase_client.upload_config(self._get_config_for_firestore())
                             logging.info("Config uploaded to Firestore immediately after move down")
 
                             # Push metrics so web app sees the change immediately

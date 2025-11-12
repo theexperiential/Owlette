@@ -172,7 +172,7 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
       const versionData = await getLatestOwletteVersion();
 
       if (!versionData || !versionData.downloadUrl) {
-        throw new Error('No Owlette installer uploaded yet. Please upload an installer via Admin → Installer Versions first.');
+        throw new Error('No Owlette installer uploaded yet. Please upload an installer via Admin → Installers first.');
       }
 
       // Mark machines as updating

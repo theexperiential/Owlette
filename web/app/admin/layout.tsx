@@ -23,7 +23,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const navItems = [
     {
-      name: 'Installer Versions',
+      name: 'Installers',
       href: '/admin/installers',
       icon: Package,
       description: 'Manage agent installer versions',
@@ -41,6 +41,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       description: 'Manage user roles and permissions',
     },
   ];
+
+  // Determine back button destination based on current page
+  const getBackHref = () => {
+    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
+      return '/deployments';
+    }
+    return '/dashboard';
+  };
+
+  const getBackLabel = () => {
+    if (pathname === '/admin/installers' || pathname === '/admin/presets') {
+      return 'Back to Deployments';
+    }
+    return 'Back to Dashboard';
+  };
 
   return (
     <RequireAdmin>
@@ -103,28 +118,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
             </div>
 
-            {/* Back to Dashboard */}
+            {/* Back Button */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <Link href="/dashboard">
+                <Link href={getBackHref()}>
                   <Button
                     variant="outline"
                     size="sm"
                     className="w-full border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer lg:px-2 xl:px-3"
                   >
                     <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
-                    <span className="lg:hidden xl:inline">Back to Dashboard</span>
+                    <span className="lg:hidden xl:inline">{getBackLabel()}</span>
                   </Button>
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right" className="hidden lg:block xl:hidden">
-                <p>Back to Dashboard</p>
+                <p>{getBackLabel()}</p>
               </TooltipContent>
             </Tooltip>
           </div>
 
           {/* Navigation Links */}
-          <nav className="flex-1 p-4 lg:p-2 xl:p-4 space-y-3">
+          <nav className="flex-1 p-4 lg:p-2 xl:p-4">
             {navItems.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
@@ -135,7 +150,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <Link href={item.href} onClick={() => setMobileMenuOpen(false)}>
                       <div
                         className={`
-                          flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors
+                          flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors mb-2
                           ${
                             isActive
                               ? 'bg-blue-600 text-white'

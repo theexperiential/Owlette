@@ -111,7 +111,9 @@ export function MachineListView({
                 <TableCell className="text-white">
                   {machine.metrics?.cpu ? (
                     <>
-                      <div className="text-xs text-slate-400">{machine.metrics.cpu.name || 'Unknown CPU'}</div>
+                      <div className="text-xs text-slate-400 truncate max-w-[200px]" title={machine.metrics.cpu.name || 'Unknown CPU'}>
+                        {machine.metrics.cpu.name || 'Unknown CPU'}
+                      </div>
                       <div className="text-sm">{machine.metrics.cpu.percent}%</div>
                     </>
                   ) : '-'}
@@ -139,7 +141,9 @@ export function MachineListView({
                 <TableCell className="text-white">
                   {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                     <>
-                      <div className="text-xs text-slate-400">{machine.metrics.gpu.name}</div>
+                      <div className="text-xs text-slate-400 truncate max-w-[200px]" title={machine.metrics.gpu.name}>
+                        {machine.metrics.gpu.name}
+                      </div>
                       <div className="text-sm">
                         {machine.metrics.gpu.usage_percent}%
                         {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (

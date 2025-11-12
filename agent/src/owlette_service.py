@@ -932,7 +932,22 @@ Set WshShell = Nothing'''
             # Read old config before overwriting (for diffing)
             old_config = shared_utils.read_config()
 
-            # Write the new config to local config.json
+            # CRITICAL: Preserve local firebase authentication config
+            # The firebase section contains local authentication settings (site_id, OAuth tokens, api_base)
+            # and should NEVER be overwritten by Firestore config updates
+            if old_config and 'firebase' in old_config:
+                new_config['firebase'] = old_config['firebase']
+                logging.debug("Preserved local firebase authentication config during Firestore sync")
+            else:
+                # SAFETY CHECK: If we somehow failed to read the old config or it's missing firebase section,
+                # DO NOT proceed with the write - this would wipe out authentication
+                if old_config is None:
+                    logging.error("CRITICAL: Cannot read old config - aborting Firestore config sync to prevent data loss")
+                    return
+                else:
+                    logging.warning("Old config exists but has no firebase section - proceeding with Firestore sync")
+
+            # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
 
             logging.info("Local config.json updated from Firestore")
@@ -1106,8 +1121,15 @@ Set WshShell = Nothing'''
                 # Update configuration from Firebase
                 new_config = cmd_data.get('config')
                 if new_config:
+                    # CRITICAL: Preserve local firebase authentication config
+                    # The firebase section should never come from remote commands
+                    old_config = shared_utils.read_config()
+                    if old_config and 'firebase' in old_config:
+                        new_config['firebase'] = old_config['firebase']
+                        logging.debug("Preserved firebase section during update_config command")
+
                     shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
-                    logging.info("Configuration updated from Firebase")
+                    logging.info("Configuration updated from Firebase command")
                     return "Configuration updated successfully"
                 else:
                     return "No configuration data provided"
@@ -1678,7 +1700,27 @@ Set WshShell = Nothing'''
                 # Register config update callback
                 self.firebase_client.register_config_update_callback(self.handle_config_update)
 
-                # Start Firebase background threads
+                # CRITICAL: Upload local config to Firestore BEFORE starting the config listener
+                # This prevents a race condition where the listener processes an empty/old Firestore config
+                # before we upload the local config, which would wipe out the firebase auth section
+                local_config = shared_utils.read_config()
+                if local_config:
+                    # Create a copy without the firebase section (local auth config, not for Firestore)
+                    config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
+
+                    # Pre-set the hash BEFORE uploading to prevent listener from processing this upload
+                    import hashlib
+                    import json
+                    config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
+                    self.firebase_client._last_uploaded_config_hash = config_hash
+                    logging.info(f"Pre-set config hash to prevent listener loop: {config_hash[:8]}...")
+
+                    # Now upload
+                    self.firebase_client.upload_config(config_for_firestore)
+                    logging.info("Local config uploaded to Firebase (firebase auth section excluded)")
+
+                # NOW start Firebase background threads (including config listener)
+                # At this point, Firestore has our local config, and the hash is set
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
 
@@ -1695,12 +1737,6 @@ Set WshShell = Nothing'''
 
                 atexit.register(emergency_offline_handler)
                 logging.info("Emergency offline handler registered")
-
-                # Upload local config to Firebase on first run
-                local_config = shared_utils.read_config()
-                if local_config:
-                    self.firebase_client.upload_config(local_config)
-                    logging.info("Local config uploaded to Firebase")
 
                 # Add Firebase log shipping if enabled
                 shared_utils.add_firebase_log_handler(self.firebase_client)

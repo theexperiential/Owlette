@@ -42,14 +42,14 @@ export default function UserManagementPage() {
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
   const [deleteConfirmDialogOpen, setDeleteConfirmDialogOpen] = useState(false);
   const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; sites: string[] } | null>(null);
+  const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: 'user' | 'admin'; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: 'user' | 'admin'; newRole: 'user' | 'admin' } | null>(null);
 
   const counts = getUserCounts();
 
-  const handleOpenManageSites = (userId: string, email: string, sites: string[]) => {
-    setSelectedUser({ uid: userId, email, sites });
+  const handleOpenManageSites = (userId: string, email: string, role: 'user' | 'admin', sites: string[]) => {
+    setSelectedUser({ uid: userId, email, role, sites });
     setManageSitesDialogOpen(true);
   };
 
@@ -277,7 +277,7 @@ export default function UserManagementPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="bg-slate-800 border-slate-700">
                             <DropdownMenuItem
-                              onClick={() => handleOpenManageSites(user.uid, user.email, user.sites || [])}
+                              onClick={() => handleOpenManageSites(user.uid, user.email, user.role, user.sites || [])}
                               className="text-slate-200 hover:bg-slate-700 cursor-pointer focus:bg-slate-700 focus:text-white"
                             >
                               <Settings className="h-4 w-4 mr-2" />
@@ -353,6 +353,7 @@ export default function UserManagementPage() {
           onOpenChange={setManageSitesDialogOpen}
           userId={selectedUser.uid}
           userEmail={selectedUser.email}
+          userRole={selectedUser.role}
           userSites={selectedUser.sites}
           onAssignSite={assignSiteToUser}
           onRemoveSite={removeSiteFromUser}

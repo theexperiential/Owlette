@@ -65,22 +65,56 @@ def get_hostname():
 
 def get_cpu_name():
     """
-    Get the CPU model name from Windows Registry.
-    This is fast, reliable, and works on all Windows versions without admin rights.
+    Get CPU model name with multi-layered fallback for maximum reliability.
+
+    Tries methods in order of speed and reliability:
+    1. Windows Registry (fastest, most reliable)
+    2. PowerShell Get-CimInstance (Windows 11 compatible, modern)
+    3. platform.processor() (last resort, incomplete but always works)
 
     Returns:
         str: CPU model name (e.g., "Intel(R) Core(TM) i9-9900X CPU @ 3.50GHz")
-             or "Unknown CPU" if unable to read registry
+             or "Unknown CPU" if all methods fail
     """
+    # Method 1: Windows Registry (BEST - fast, reliable, no admin rights)
     try:
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r'HARDWARE\DESCRIPTION\System\CentralProcessor\0')
         cpu_name = winreg.QueryValueEx(key, 'ProcessorNameString')[0].strip()
         winreg.CloseKey(key)
-        return cpu_name
+        if cpu_name:
+            return cpu_name
     except Exception as e:
-        logging.warning(f"Unable to get CPU name from registry: {e}")
-        return "Unknown CPU"
+        logging.debug(f"Registry CPU detection failed: {e}")
+
+    # Method 2: PowerShell Get-CimInstance (GOOD - Windows 11 compatible)
+    try:
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             'Get-CimInstance -ClassName Win32_Processor | Select-Object -ExpandProperty Name'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW  # No console flash
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            cpu_name = result.stdout.strip()
+            if cpu_name:
+                return cpu_name
+    except Exception as e:
+        logging.debug(f"PowerShell CPU detection failed: {e}")
+
+    # Method 3: platform.processor() (LAST RESORT - incomplete but always works)
+    try:
+        cpu_name = platform.processor()
+        if cpu_name:
+            return cpu_name
+    except Exception as e:
+        logging.debug(f"platform.processor() failed: {e}")
+
+    # All methods failed
+    logging.warning("All CPU detection methods failed")
+    return "Unknown CPU"
 
 def get_path(filename=None):
     """
@@ -582,10 +616,17 @@ def upgrade_config():
 
 
     else:
-        # if there are problems, just regenerate the config file
+        # CRITICAL: If config file exists but couldn't be read (file locking, etc.),
+        # DO NOT regenerate it - this would wipe the firebase section!
+        # Just skip the upgrade and let the service use what's there.
+        if os.path.exists(CONFIG_PATH):
+            logging.warning(f"Config file exists but couldn't be read (file lock?). Skipping upgrade.")
+            logging.warning("If this persists, check file permissions and locks.")
+            return  # Skip upgrade, don't overwrite
+
+        # Only generate new config if file truly doesn't exist
+        logging.info("Config file doesn't exist, generating default...")
         new_config = generate_config_file()
-        
-        # Write the updated config back to the file
         write_json_to_file(new_config, CONFIG_PATH)
 
 # Read a JSON file and returns its content as a Python dictionary with retry logic
@@ -605,7 +646,8 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    return data
 
             except FileNotFoundError:
                 logging.info(f"{file_path} not found.")
@@ -656,6 +698,7 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
                 # Atomic rename (replaces existing file)
                 # os.replace is atomic on Windows (unlike os.rename)
                 os.replace(temp_path, file_path)
+
                 return  # Success - exit function
 
             except PermissionError as e:
@@ -686,6 +729,20 @@ def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
 
 # Generate a default configuration file, optionally merging with an existing one
 def generate_config_file(existing_config=None):
+    # Try to preserve firebase section from existing config file
+    # This prevents losing authentication when config is regenerated
+    preserved_firebase = None
+    if existing_config is None and os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, 'r') as f:
+                file_config = json.load(f)
+                if 'firebase' in file_config:
+                    preserved_firebase = file_config['firebase']
+                    logging.debug("Preserving firebase section from existing config file")
+        except Exception as e:
+            logging.debug(f"Could not read existing config to preserve firebase: {e}")
+            pass  # Continue with default generation
+
     default_config = {
         "version": CONFIG_VERSION,
         "environment": "production",  # Default to production environment
@@ -701,6 +758,10 @@ def generate_config_file(existing_config=None):
     }
 
     if existing_config is None:
+        # If we preserved a firebase section, add it to default config
+        if preserved_firebase:
+            default_config['firebase'] = preserved_firebase
+            logging.debug("Added preserved firebase section to generated config")
         return default_config
 
     # Update only missing keys
@@ -831,14 +892,6 @@ def center_window(root, width, height):
     root.minsize(width, height)
 
 # METRICS
-def get_cpu_name():
-    try:
-        cpu_name = subprocess.check_output('wmic cpu get name', shell=True, text=True, stderr=subprocess.STDOUT).strip().split('\n')[-1]
-        return cpu_name
-    except Exception as e:
-        logging.debug(f"Error getting CPU name: {e}")
-        return None
-
 def get_system_info():
     # Get system information
     cpu_info = get_cpu_name()

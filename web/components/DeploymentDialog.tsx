@@ -27,6 +27,12 @@ interface DeploymentDialogProps {
   onDeleteTemplate: (templateId: string) => Promise<void>;
 }
 
+// Helper function to truncate text in the middle, preserving start and end
+const truncateMiddle = (text: string, startChars: number = 12, endChars: number = 12, maxLength: number = 28): string => {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, startChars)}...${text.slice(-endChars)}`;
+};
+
 export default function DeploymentDialog({
   open,
   onOpenChange,
@@ -52,6 +58,7 @@ export default function DeploymentDialog({
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [editingTemplate, setEditingTemplate] = useState<string>('');  // ID of template being edited
   const [selectedPreset, setSelectedPreset] = useState<string>('');  // ID of selected system preset
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
@@ -128,21 +135,26 @@ export default function DeploymentDialog({
 
   const handleEditTemplate = () => {
     if (selectedTemplate) {
-      setEditingTemplate(selectedTemplate);
-      setSaveAsTemplate(false);
-      toast.info('Edit the template fields below and deploy to save changes');
+      if (editingTemplate === selectedTemplate) {
+        // Toggle off - cancel editing
+        setEditingTemplate('');
+        toast.info('Edit mode cancelled');
+      } else {
+        // Toggle on - start editing
+        setEditingTemplate(selectedTemplate);
+        setSaveAsTemplate(false);
+        toast.info('Edit the template fields below and deploy to save changes');
+      }
     }
   };
 
-  const handleDeleteTemplate = async () => {
+  const handleDeleteTemplate = () => {
     if (!selectedTemplate) return;
+    setShowDeleteConfirm(true);
+  };
 
-    const template = templates.find(t => t.id === selectedTemplate);
-    if (!template) return;
-
-    if (!confirm(`Delete template "${template.name}"? This cannot be undone.`)) {
-      return;
-    }
+  const confirmDeleteTemplate = async () => {
+    if (!selectedTemplate) return;
 
     try {
       await onDeleteTemplate(selectedTemplate);
@@ -156,8 +168,10 @@ export default function DeploymentDialog({
       setInstallerUrl('');
       setSilentFlags('');
       setVerifyPath('');
+      setShowDeleteConfirm(false);
     } catch (error: any) {
       toast.error(error.message || 'Failed to delete template');
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -290,7 +304,7 @@ export default function DeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-white">Deploy Software</DialogTitle>
           <DialogDescription className="text-slate-400">
@@ -298,7 +312,7 @@ export default function DeploymentDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-4 pr-2">
           {/* Template Selections - Side by Side */}
           {(templates.length > 0 || presets.length > 0) && (
             <div className="flex gap-4">
@@ -307,8 +321,14 @@ export default function DeploymentDialog({
                 <div className="flex-1 space-y-2">
                   <Label htmlFor="system-preset" className="text-white">Template Library</Label>
                   <Select value={selectedPreset} onValueChange={handlePresetSelect}>
-                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white">
-                      <SelectValue placeholder="Select a template..." />
+                    <SelectTrigger className="border-slate-700 bg-slate-900 text-white overflow-hidden">
+                      {selectedPreset ? (
+                        <span className="truncate">
+                          {truncateMiddle(presets.find(p => p.id === selectedPreset)?.name || '')}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">Select a template...</span>
+                      )}
                     </SelectTrigger>
                     <SelectContent className="border-slate-700 bg-slate-800">
                       <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
@@ -355,8 +375,14 @@ export default function DeploymentDialog({
                   <Label htmlFor="template" className="text-white">My Templates</Label>
                   <div className="flex gap-2">
                     <Select value={selectedTemplate} onValueChange={handleTemplateSelect}>
-                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1">
-                        <SelectValue placeholder="Select a template..." />
+                      <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1 overflow-hidden">
+                        {selectedTemplate ? (
+                          <span className="truncate">
+                            {truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '', 7, 8, 20)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">Select a template...</span>
+                        )}
                       </SelectTrigger>
                       <SelectContent className="border-slate-700 bg-slate-800">
                         <SelectItem value="none" className="text-white focus:bg-slate-700 focus:text-white">
@@ -571,6 +597,33 @@ export default function DeploymentDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="border-slate-700 bg-slate-800 text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white">Delete Template</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Delete template "{templates.find(t => t.id === selectedTemplate)?.name}"? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(false)}
+              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmDeleteTemplate}
+              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

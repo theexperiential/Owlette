@@ -314,9 +314,10 @@ class FirebaseClient:
                     if self.config_update_callback:
                         try:
                             self.config_update_callback(config_data)
-                            self.logger.info("Config update applied successfully")
                         except Exception as e:
                             self.logger.error(f"Error in config update callback: {e}")
+                            import traceback
+                            self.logger.error(f"Traceback: {traceback.format_exc()}")
                     else:
                         self.logger.warning("No config update callback registered")
 
