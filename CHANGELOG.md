@@ -5,6 +5,22 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.27] - 2025-11-11
+
+### Fixed
+
+#### Agent Service
+- **Software Inventory Sync Error** - Fixed `NameError: name 'firebase_client' is not defined`
+  - Changed `firebase_client` to `self.firebase_client` in post-installation inventory sync
+  - Resolves warning: "Failed to sync software inventory after installation"
+
+#### Web Dashboard
+- **Real-Time Deployment Status Updates** - Fixed deployment status staying on "downloading" until manual refresh
+  - Modified `processedCommands` logic to allow intermediate state updates
+  - Commands only marked as "processed" when reaching terminal states (completed/failed/cancelled)
+  - Status now transitions in real-time: downloading → installing → completed
+  - Users no longer need to refresh page to see deployment completion
+
 ## [2.0.26] - 2025-11-11
 
 ### Added
