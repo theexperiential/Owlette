@@ -239,12 +239,18 @@ def restart_service(icon, item):
         # 4. Wait 2 seconds
         # 5. Restart the tray icon
         tray_path = shared_utils.get_path('owlette_tray.py')
+
+        # Get pythonw.exe path from installation directory
+        # Assumes structure: C:\Owlette\python\pythonw.exe
+        python_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        pythonw_path = os.path.join(python_dir, 'python', 'pythonw.exe')
+
         restart_cmd = (
             f'net stop OwletteService && '
             f'timeout /t 3 /nobreak >nul && '
             f'net start OwletteService && '
             f'timeout /t 2 /nobreak >nul && '
-            f'start "" pythonw "{tray_path}" --restarted'
+            f'start "" "{pythonw_path}" "{tray_path}" --restarted'
         )
 
         logging.info(f"Launching elevated restart command: {restart_cmd}")

@@ -414,19 +414,29 @@ class FirestoreRestClient:
             # Use a sentinel value to detect first run (different from None which means "document doesn't exist")
             _UNINITIALIZED = object()
             last_data = _UNINITIALIZED
+            last_hash = None
 
             while True:
                 try:
                     # Get current document
                     current_data = self.get_document(path)
 
-                    # Check if changed (including first run where last_data is sentinel)
-                    if current_data != last_data:
+                    # Calculate hash for reliable comparison (handles dict ordering, float precision, etc.)
+                    import hashlib
+                    import json
+                    if current_data is not None:
+                        current_hash = hashlib.md5(json.dumps(current_data, sort_keys=True).encode()).hexdigest()
+                    else:
+                        current_hash = None
+
+                    # Check if changed using hash comparison (more reliable than dict comparison)
+                    if current_hash != last_hash:
                         # Skip callback on first run if document doesn't exist
                         if last_data is not _UNINITIALIZED or current_data is not None:
                             logger.debug(f"Document changed: {path}")
                             callback(current_data)
                         last_data = current_data
+                        last_hash = current_hash
 
                     # Poll every 2 seconds (configurable)
                     time.sleep(2)
