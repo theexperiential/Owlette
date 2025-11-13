@@ -37,6 +37,14 @@ export function ManageUserSitesDialog({
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Local state for optimistic UI updates
+  const [localUserSites, setLocalUserSites] = useState<string[]>(userSites);
+
+  // Sync local state with prop changes (when dialog reopens with fresh data)
+  useEffect(() => {
+    setLocalUserSites(userSites);
+  }, [userSites]);
+
   // Reset search when dialog closes
   useEffect(() => {
     if (!open) {
@@ -46,12 +54,18 @@ export function ManageUserSitesDialog({
 
   const handleAssignSite = async (siteId: string) => {
     setAssigningTo(siteId);
+
+    // Optimistically update UI immediately
+    setLocalUserSites(prev => [...prev, siteId]);
+
     try {
       await onAssignSite(userId, siteId);
       toast.success('Site Assigned', {
         description: `${userEmail} now has access to this site.`,
       });
     } catch (err: any) {
+      // Revert optimistic update on error
+      setLocalUserSites(prev => prev.filter(id => id !== siteId));
       toast.error('Assignment Failed', {
         description: err.message || 'Failed to assign site to user.',
       });
@@ -62,12 +76,18 @@ export function ManageUserSitesDialog({
 
   const handleRemoveSite = async (siteId: string) => {
     setRemovingFrom(siteId);
+
+    // Optimistically update UI immediately
+    setLocalUserSites(prev => prev.filter(id => id !== siteId));
+
     try {
       await onRemoveSite(userId, siteId);
       toast.success('Site Removed', {
         description: `${userEmail} no longer has access to this site.`,
       });
     } catch (err: any) {
+      // Revert optimistic update on error
+      setLocalUserSites(prev => [...prev, siteId]);
       toast.error('Removal Failed', {
         description: err.message || 'Failed to remove site from user.',
       });
@@ -86,12 +106,12 @@ export function ManageUserSitesDialog({
     );
   };
 
-  const assignedSites = filterSites(sites.filter((site) => userSites.includes(site.id)));
-  const availableSites = filterSites(sites.filter((site) => !userSites.includes(site.id)));
+  const assignedSites = filterSites(sites.filter((site) => localUserSites.includes(site.id)));
+  const availableSites = filterSites(sites.filter((site) => !localUserSites.includes(site.id)));
 
   // Find orphaned site IDs (in user's array but don't exist in sites collection)
   const validSiteIds = sites.map(s => s.id);
-  const orphanedSiteIds = userSites.filter((siteId) => !validSiteIds.includes(siteId));
+  const orphanedSiteIds = localUserSites.filter((siteId) => !validSiteIds.includes(siteId));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
