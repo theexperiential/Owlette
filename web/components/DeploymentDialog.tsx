@@ -378,7 +378,10 @@ export default function DeploymentDialog({
                       <SelectTrigger className="border-slate-700 bg-slate-900 text-white flex-1 overflow-hidden">
                         {selectedTemplate ? (
                           <span className="truncate">
-                            {truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '', 7, 8, 20)}
+                            {/* Use more relaxed truncation when Template Library isn't shown (full width available) */}
+                            {presets.length > 0
+                              ? truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '', 7, 8, 20)
+                              : truncateMiddle(templates.find(t => t.id === selectedTemplate)?.name || '')}
                           </span>
                         ) : (
                           <span className="text-slate-400">Select a template...</span>
