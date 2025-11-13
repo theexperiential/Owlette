@@ -37,10 +37,13 @@ def signal_handler(signum, frame):
     # So we MUST log agent_stopped HERE before we're killed
     if _service_instance.firebase_client:
         try:
+            import shared_utils
+            version = shared_utils.get_app_version()
             logging.info("[SIGNAL HANDLER] Logging agent_stopped event to Firestore")
             _service_instance.firebase_client.log_event(
-                event_type='agent_stopped',
-                details={'reason': 'service_restart'}
+                action='agent_stopped',
+                level='info',
+                details=f'Owlette agent v{version} shutting down gracefully'
             )
             logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
             print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)

@@ -174,16 +174,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         if firebase_connected:
             try:
-                version = shared_utils.get_app_version()
-                logging.info(f"SvcStop - Logging agent_stopped event (version: {version})...")
-                self.firebase_client.log_event(
-                    action='agent_stopped',
-                    level='info',
-                    process_name=None,
-                    details=f'Owlette agent v{version} shutting down gracefully'
-                )
-                logging.warning("[OK] SvcStop - Logged agent_stopped event to Firestore")
-                # Give Firebase a moment to write the event
+                # Note: agent_stopped is logged by signal handler in owlette_runner.py
+                # (most reliable - always executes even if service is killed quickly)
+                # No need to log here to avoid duplicate events
+                logging.info("SvcStop - agent_stopped will be logged by signal handler")
+                # Give Firebase a moment to flush any pending writes
                 time.sleep(0.5)
             except Exception as log_err:
                 logging.error(f"SvcStop - Failed to log agent_stopped event: {log_err}")
@@ -479,6 +474,39 @@ Set WshShell = Nothing'''
             else:
                 command = f'"{exe_path}"'
 
+        # Wrap command with working directory if specified
+        vbs_cleanup_path = None
+        if cwd:
+            # Create a VBScript wrapper to launch with zero window visibility
+            # VBScript's Run method with windowStyle=0 (vbHide) completely suppresses windows
+            import tempfile
+
+            # Escape quotes in command for VBScript
+            vbs_command = command.replace('"', '""')
+
+            vbs_content = f'''Set WshShell = CreateObject("WScript.Shell")
+WshShell.CurrentDirectory = "{cwd}"
+WshShell.Run "{vbs_command}", 0, False
+'''
+
+            # Create temp VBS file (in ProgramData, not install directory)
+            tmp_dir = shared_utils.get_data_path('tmp')
+            vbs_fd, vbs_path = tempfile.mkstemp(suffix='.vbs', dir=tmp_dir)
+            try:
+                with os.fdopen(vbs_fd, 'w') as f:
+                    f.write(vbs_content)
+                vbs_cleanup_path = vbs_path
+                # Update command to execute VBS with hidden window
+                command = f'wscript.exe //nologo "{vbs_path}"'
+                logging.info(f"Command will run in directory: {cwd}")
+            except Exception as e:
+                logging.error(f"Failed to create VBS wrapper: {e}")
+                if os.path.exists(vbs_path):
+                    os.unlink(vbs_path)
+                vbs_cleanup_path = None
+                # Fall back to cmd approach
+                command = f'cmd /c start /b /d "{cwd}" "" {command}'
+
         logging.info(f"Launching: {command}")
         if visibility not in ['Normal', 'Hidden']:
             logging.warning(f"Visibility mode '{visibility}' is not yet supported - using Normal visibility")
@@ -514,11 +542,15 @@ Set WshShell = Nothing'''
 
         try:
             # Step 1: Create scheduled task
+            from datetime import datetime
+            start_date = datetime.now().strftime('%m/%d/%Y')  # Format: mm/dd/yyyy (required by schtasks)
+
             create_cmd = [
                 'schtasks', '/Create',
                 '/TN', task_name,
                 '/TR', command,
                 '/SC', 'ONCE',
+                '/SD', start_date,  # Start date in mm/dd/yyyy format
                 '/ST', '00:00',  # Required but overridden by /Run
                 '/F'  # Force create
             ]
@@ -526,10 +558,6 @@ Set WshShell = Nothing'''
             # Only add /RU if we successfully got user context
             if user_context:
                 create_cmd.extend(['/RU', user_context, '/RL', 'LIMITED'])
-
-            # Add working directory if specified
-            if cwd:
-                create_cmd.extend(['/SD', cwd])
 
             logging.info(f"Creating scheduled task: {task_name}")
             logging.info(f"Command: {command}")
@@ -587,6 +615,14 @@ Set WshShell = Nothing'''
                 timeout=10
             )
             logging.info(f"Cleaned up task: {task_name}")
+
+            # Clean up VBS wrapper if it was created
+            if vbs_cleanup_path and os.path.exists(vbs_cleanup_path):
+                try:
+                    os.unlink(vbs_cleanup_path)
+                    logging.debug(f"Cleaned up VBS wrapper: {vbs_cleanup_path}")
+                except Exception as e:
+                    logging.warning(f"Failed to clean up VBS wrapper: {e}")
 
             if not pid:
                 logging.error(f"Could not find PID for newly launched process")
@@ -1776,20 +1812,11 @@ Set WshShell = Nothing'''
                     except:
                         pass
 
-                    # Log agent_stopped to Firestore
+                    # Note: agent_stopped is logged by signal handler in owlette_runner.py
+                    # (most reliable - always executes even if service is killed quickly)
+                    # No need to log here to avoid duplicate events
                     if self.firebase_client:
-                        try:
-                            version = shared_utils.get_app_version()
-                            logging.info(f"Logging agent_stopped event (restart requested, version: {version})...")
-                            self.firebase_client.log_event(
-                                action='agent_stopped',
-                                level='info',
-                                process_name=None,
-                                details=f'Owlette agent v{version} restarting (user initiated)'
-                            )
-                            logging.info("[OK] agent_stopped event logged to Firestore")
-                        except Exception as log_err:
-                            logging.error(f"Failed to log agent_stopped: {log_err}")
+                        logging.info("Restart requested - agent_stopped will be logged by signal handler")
                     else:
                         logging.warning("No Firebase client - cannot log agent_stopped")
 
@@ -1860,24 +1887,15 @@ Set WshShell = Nothing'''
             firebase_connected = self.firebase_client and self.firebase_client.is_connected()
             logging.info(f"Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
 
+            # Note: agent_stopped is logged by signal handler in owlette_runner.py
+            # (most reliable - always executes even if service is killed quickly)
+            # No need to log here to avoid duplicate events
             if firebase_connected:
-                try:
-                    version = shared_utils.get_app_version()
-                    logging.info(f"Attempting to log agent_stopped event (version: {version})...")
-                    self.firebase_client.log_event(
-                        action='agent_stopped',
-                        level='info',
-                        process_name=None,
-                        details=f'Owlette agent v{version} shutting down gracefully'
-                    )
-                    logging.warning("[OK] Logged agent_stopped event to Firestore")
-                    # Give Firebase time to write the event
-                    time.sleep(1)
-                except Exception as log_err:
-                    logging.error(f"Failed to log agent_stopped event: {log_err}")
-                    logging.exception("Full traceback:")
+                logging.info("Main loop exiting - agent_stopped will be logged by signal handler")
+                # Give Firebase time to flush any pending writes
+                time.sleep(0.5)
             else:
-                logging.warning("Firebase client not available - cannot log agent_stopped event")
+                logging.warning("Firebase client not available")
 
             # Mark machine offline in Firestore
             if self.firebase_client:
