@@ -5,6 +5,77 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.44] - 2025-11-13
+
+### Added
+
+#### Agent GUI
+- **Config and Logs Buttons** - Added quick access buttons in footer
+  - "Config" button opens config.json in default text editor
+  - "Logs" button opens logs folder in Windows Explorer
+  - Both buttons positioned to the left of version label in footer
+  - Provides easy access to troubleshooting tools without navigating file system
+
+- **Custom Messagebox Implementation** - New `custom_messagebox.py` wrapper
+  - Improved text wrapping at 92% width (vs 50% default) for better readability
+  - Compact layout with reduced button heights (24px) and narrower buttons
+  - Matches Owlette dark slate theme colors automatically
+  - Fixes layout issues with default CTkMessagebox component
+
+#### Agent Service
+- **Firebase Reconnection Auto-Detection** - Service now detects when Firebase is re-enabled
+  - Periodic check every minute for Firebase state changes
+  - Automatically restarts Firebase client when re-enabled via GUI
+  - Detects site_id changes and reinitializes for new site
+  - New `_initialize_or_restart_firebase_client()` method for cleaner reinitialization
+  - Eliminates need for manual service restart when rejoining sites
+
+### Changed
+
+#### Agent GUI
+- **Unified Site Management Button** - Consolidated Join/Leave Site into single dynamic button
+  - Button text and action changes based on connection state
+  - "Join Site" when disconnected or disabled
+  - "Leave Site" when connected
+  - Cleaner, more intuitive interface
+  - Window width reduced from 290px to 270px for tighter collapsed state
+
+- **Improved Status Feedback** - Better UX during join/leave operations
+  - Status updates immediately before blocking operations ("Connecting...", "Disabling...")
+  - GUI force-updates before service restart to show progress
+  - Prevents user confusion during operations that may take several seconds
+
+- **Console Window Suppression** - Added `CREATE_NO_WINDOW` flag to subprocess calls
+  - Prevents black console windows from flashing during service start/stop
+  - Affects NSSM commands for service management
+  - Cleaner user experience without technical popups
+
+#### Agent Service
+- **Increased Deployment Timeout** - Extended from 20 to 40 minutes (1200→2400 seconds)
+  - Accommodates larger installer downloads on slower connections
+  - Prevents premature timeout failures for complex installations
+  - More reliable remote deployment success rate
+
+#### Registry Utils
+- **Force Close Applications on Uninstall** - Added `/FORCECLOSEAPPLICATIONS` flag
+  - Inno Setup uninstalls now automatically close running applications
+  - Prevents "application is running" errors during uninstall
+  - Reduces manual intervention needed for successful uninstalls
+
+### Fixed
+
+#### Agent Service
+- **Firebase Client Reference Errors** - Fixed incorrect global variable usage
+  - Changed `firebase_client` to `self.firebase_client` in uninstall handler
+  - Fixed software inventory sync calls after uninstall operations
+  - Prevents AttributeError when triggering inventory refresh
+
+- **Firebase Client Not Restarting** - Fixed issue where Firebase wouldn't reconnect after re-enabling
+  - Added detection in config update callback for Firebase enable/disable transitions
+  - Service now automatically reinitializes Firebase client when site is rejoined
+  - Handles both local config changes (GUI) and Firestore config updates
+  - Resolves issue where agents stayed offline after rejoining sites
+
 ## [2.0.29] - 2025-11-12
 
 ### Fixed
