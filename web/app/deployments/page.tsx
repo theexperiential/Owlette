@@ -8,8 +8,9 @@ import { useDeploymentManager } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical } from 'lucide-react';
+import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical, RefreshCw } from 'lucide-react';
 import DeploymentDialog from '@/components/DeploymentDialog';
 import UninstallDialog from '@/components/UninstallDialog';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -76,6 +77,35 @@ export default function DeploymentsPage() {
     }
   };
 
+  const handleRetryDeployment = async (deployment: any) => {
+    try {
+      // Find all failed targets
+      const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed');
+
+      if (failedTargets.length === 0) {
+        toast.error('No failed targets to retry');
+        return;
+      }
+
+      // Create a new deployment with the same parameters but only for failed machines
+      const machineIds = failedTargets.map((t: any) => t.machineId);
+
+      await createDeployment({
+        name: `${deployment.name} (Retry)`,
+        installer_name: deployment.installer_name,
+        installer_url: deployment.installer_url,
+        silent_flags: deployment.silent_flags,
+        verify_path: deployment.verify_path,
+        targets: [], // Will be initialized by createDeployment
+      }, machineIds);
+
+      toast.success(`Retrying deployment for ${failedTargets.length} failed machine(s)`);
+    } catch (error: any) {
+      console.error('Failed to retry deployment:', error);
+      toast.error(error.message || 'Failed to retry deployment');
+    }
+  };
+
   // Load saved site from localStorage or use first available
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
@@ -131,7 +161,7 @@ export default function DeploymentsPage() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, error?: string) => {
     const colors: Record<string, string> = {
       completed: 'bg-green-600 hover:bg-green-700',
       uninstalled: 'bg-purple-600 hover:bg-purple-700',
@@ -144,16 +174,33 @@ export default function DeploymentsPage() {
       installing: 'bg-purple-600 hover:bg-purple-700',
     };
 
-    return (
+    const badge = (
       <Badge className={`select-none ${colors[status] || colors.pending}`}>
         {status.replace('_', ' ')}
       </Badge>
     );
+
+    // Wrap in tooltip if there's an error message
+    if (error && (status === 'failed' || status === 'partial')) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {badge}
+          </TooltipTrigger>
+          <TooltipContent className="max-w-md whitespace-pre-wrap">
+            <p className="text-sm">{error}</p>
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    return badge;
   };
 
   const selectedDeployment = deployments.find(d => d.id === selectedDeploymentId);
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="min-h-screen bg-slate-950 pb-8">
       {/* Header */}
       <PageHeader
@@ -321,7 +368,14 @@ export default function DeploymentsPage() {
               <Card
                 key={deployment.id}
                 className="border-slate-800 bg-slate-900 cursor-pointer hover:border-slate-700 transition-colors"
-                onClick={() => setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id)}
+                onClick={() => {
+                  // Don't collapse/expand if user is selecting text
+                  const selection = window.getSelection();
+                  if (selection && selection.toString().length > 0) {
+                    return;
+                  }
+                  setSelectedDeploymentId(deployment.id === selectedDeploymentId ? null : deployment.id);
+                }}
               >
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -335,7 +389,12 @@ export default function DeploymentsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusBadge(deployment.status)}
+                      {(() => {
+                        // Collect error messages from all failed targets
+                        const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
+                        const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
+                        return getStatusBadge(deployment.status, errorMessages || undefined);
+                      })()}
                       <span className="text-xs text-slate-500">
                         {new Date(deployment.createdAt).toLocaleString()}
                       </span>
@@ -351,18 +410,32 @@ export default function DeploymentsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="border-slate-700 bg-slate-800">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setInitialSoftwareName(deployment.installer_name);
-                              setUninstallDeploymentId(deployment.id);
-                              setUninstallDialogOpen(true);
-                            }}
-                            className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Uninstall Software
-                          </DropdownMenuItem>
+                          {deployment.targets.some((t: any) => t.status === 'failed') && (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRetryDeployment(deployment);
+                              }}
+                              className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                            >
+                              <RefreshCw className="h-4 w-4 mr-2" />
+                              Retry Failed
+                            </DropdownMenuItem>
+                          )}
+                          {deployment.status !== 'uninstalled' && (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setInitialSoftwareName(deployment.installer_name);
+                                setUninstallDeploymentId(deployment.id);
+                                setUninstallDialogOpen(true);
+                              }}
+                              className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Uninstall Software
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.stopPropagation();
@@ -409,7 +482,7 @@ export default function DeploymentsPage() {
                               {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
                                 <span className="text-xs text-slate-400">{target.progress}%</span>
                               )}
-                              {getStatusBadge(target.status)}
+                              {getStatusBadge(target.status, target.error)}
                               {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (
                                 <Button
                                   size="sm"
@@ -446,5 +519,6 @@ export default function DeploymentsPage() {
         onOpenChange={setAccountSettingsOpen}
       />
     </div>
+    </TooltipProvider>
   );
 }

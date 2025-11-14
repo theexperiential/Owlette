@@ -54,7 +54,7 @@ export function PageHeader({
               <ChevronRight className="h-3 w-3 sm:h-4 sm:w-4 text-slate-600 flex-shrink-0 hidden lg:block" />
               <div className="flex items-stretch border border-slate-700 bg-slate-800 rounded-md overflow-hidden flex-shrink-0 min-w-0">
                 <Select value={currentSiteId} onValueChange={onSiteChange}>
-                  <SelectTrigger className="w-[100px] sm:w-[120px] md:w-[160px] lg:w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer text-xs sm:text-xs md:text-sm">
+                  <SelectTrigger className="w-[100px] sm:w-[120px] md:w-[160px] lg:w-[200px] border-0 bg-transparent text-white font-semibold cursor-pointer text-xs sm:text-xs md:text-sm focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none">
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
                   <SelectContent className="border-slate-700 bg-slate-800">
