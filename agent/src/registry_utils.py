@@ -263,7 +263,7 @@ def get_silent_uninstall_flags(installer_type: str) -> str:
         String of silent uninstall flags
     """
     flags_map = {
-        'inno': '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES',
+        'inno': '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /FORCECLOSEAPPLICATIONS',
         'nsis': '/S',
         'msi': '/quiet /norestart',
         'custom': ''  # No standard flags for custom installers

@@ -151,6 +151,95 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     logging.exception("Firebase initialization error details:")
                     self.firebase_client = None
 
+    def _initialize_or_restart_firebase_client(self):
+        """
+        Initialize or reinitialize Firebase client based on current config.
+        Called during startup and when Firebase is re-enabled after being disabled.
+
+        Returns:
+            bool: True if Firebase client is successfully initialized/restarted, False otherwise
+        """
+        try:
+            # Check if Firebase is available and enabled
+            if not FIREBASE_AVAILABLE:
+                logging.warning("Firebase module not available - cannot initialize client")
+                return False
+
+            firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
+            if not firebase_enabled:
+                logging.info("Firebase is disabled in config - skipping initialization")
+                return False
+
+            # Get Firebase configuration
+            site_id = shared_utils.read_config(['firebase', 'site_id'])
+            if not site_id:
+                logging.warning("No site_id configured - cannot initialize Firebase client")
+                return False
+
+            project_id = shared_utils.read_config(['firebase', 'project_id']) or "owlette-dev-3838a"
+            api_base = shared_utils.read_config(['firebase', 'api_base']) or "https://owlette.app/api"
+            cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
+
+            logging.info(f"Initializing Firebase client - site: {site_id}, project: {project_id}")
+
+            # Initialize OAuth authentication manager
+            from auth_manager import AuthManager
+            auth_manager = AuthManager(api_base=api_base)
+
+            # Check if authenticated
+            if not auth_manager.is_authenticated():
+                logging.error("Agent not authenticated - no refresh token found")
+                logging.error("Please run the installer or re-authenticate via web dashboard")
+                return False
+
+            # Stop existing Firebase client if running
+            if self.firebase_client:
+                logging.info("Stopping existing Firebase client before reinitialization...")
+                try:
+                    self.firebase_client.stop()
+                    logging.info("Existing Firebase client stopped")
+                except Exception as e:
+                    logging.warning(f"Error stopping existing Firebase client: {e}")
+
+            # Initialize new Firebase client
+            self.firebase_client = FirebaseClient(
+                auth_manager=auth_manager,
+                project_id=project_id,
+                site_id=site_id,
+                config_cache_path=cache_path
+            )
+
+            # Register callbacks
+            self.firebase_client.register_command_callback(self.handle_firebase_command)
+            self.firebase_client.register_config_update_callback(self.handle_config_update)
+
+            # Upload local config before starting listeners
+            local_config = shared_utils.read_config()
+            if local_config:
+                config_for_firestore = {k: v for k, v in local_config.items() if k != 'firebase'}
+
+                # Pre-set hash to prevent listener loop
+                import hashlib
+                import json
+                config_hash = hashlib.md5(json.dumps(config_for_firestore, sort_keys=True).encode()).hexdigest()
+                self.firebase_client._last_uploaded_config_hash = config_hash
+                logging.info(f"Pre-set config hash: {config_hash[:8]}...")
+
+                self.firebase_client.upload_config(config_for_firestore)
+                logging.info("Local config uploaded to Firebase")
+
+            # Start Firebase client background threads
+            self.firebase_client.start()
+            logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
+
+            return True
+
+        except Exception as e:
+            logging.error(f"Failed to initialize Firebase client: {e}")
+            logging.exception("Firebase initialization error details:")
+            self.firebase_client = None
+            return False
+
     # On service stop
     def SvcStop(self):
         # Try to report service status (may fail when running under NSSM)
@@ -988,6 +1077,43 @@ WshShell.Run "{vbs_command}", 0, False
 
             logging.info("Local config.json updated from Firestore")
 
+            # Check for Firebase enable/disable changes (site rejoining detection)
+            if old_config:
+                old_firebase_config = old_config.get('firebase', {})
+                new_firebase_config = new_config.get('firebase', {})
+
+                old_firebase_enabled = old_firebase_config.get('enabled', False)
+                new_firebase_enabled = new_firebase_config.get('enabled', False)
+                old_site_id = old_firebase_config.get('site_id')
+                new_site_id = new_firebase_config.get('site_id')
+
+                # Detect if Firebase was disabled and is now re-enabled, or site_id changed
+                if not old_firebase_enabled and new_firebase_enabled:
+                    logging.info("=" * 60)
+                    logging.info("Firebase has been RE-ENABLED - reinitializing Firebase client")
+                    logging.info(f"Site ID: {new_site_id}")
+                    logging.info("=" * 60)
+
+                    # Reinitialize Firebase client
+                    success = self._initialize_or_restart_firebase_client()
+                    if success:
+                        logging.info("[OK] Firebase client restarted successfully after being re-enabled")
+                    else:
+                        logging.error("[ERROR] Failed to restart Firebase client after being re-enabled")
+
+                elif old_firebase_enabled and new_firebase_enabled and old_site_id != new_site_id:
+                    logging.info("=" * 60)
+                    logging.info(f"Site ID CHANGED: {old_site_id} -> {new_site_id}")
+                    logging.info("Reinitializing Firebase client for new site")
+                    logging.info("=" * 60)
+
+                    # Reinitialize Firebase client for new site
+                    success = self._initialize_or_restart_firebase_client()
+                    if success:
+                        logging.info("[OK] Firebase client restarted successfully for new site")
+                    else:
+                        logging.error("[ERROR] Failed to restart Firebase client for new site")
+
             # Perform config diffing if old config exists
             if old_config:
                 old_processes = old_config.get('processes', [])
@@ -1176,7 +1302,7 @@ WshShell.Run "{vbs_command}", 0, False
                 installer_name = cmd_data.get('installer_name', 'installer.exe')
                 silent_flags = cmd_data.get('silent_flags', '')
                 verify_path = cmd_data.get('verify_path')  # Optional verification path
-                timeout_seconds = cmd_data.get('timeout_seconds', 1200)  # Default: 20 minutes
+                timeout_seconds = cmd_data.get('timeout_seconds', 2400)  # Default: 40 minutes
                 expected_sha256 = cmd_data.get('sha256_checksum')  # Optional but recommended
                 deployment_id = cmd_data.get('deployment_id')  # For tracking deployment progress
 
@@ -1557,9 +1683,9 @@ WshShell.Run "{vbs_command}", 0, False
 
                     # Trigger immediate software inventory sync after uninstall completes
                     try:
-                        if firebase_client and firebase_client.is_connected():
+                        if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after uninstall")
-                            firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client._sync_software_inventory(force=True)
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after uninstall: {sync_error}")
                         # Don't fail the uninstall if sync fails
@@ -1600,8 +1726,8 @@ WshShell.Run "{vbs_command}", 0, False
                 # Force immediate refresh of software inventory
                 logging.info("Refreshing software inventory on demand")
                 try:
-                    if firebase_client and firebase_client.is_connected():
-                        firebase_client._sync_software_inventory(force=True)
+                    if self.firebase_client and self.firebase_client.is_connected():
+                        self.firebase_client._sync_software_inventory(force=True)
                         return "Software inventory refreshed successfully"
                     else:
                         return "Error: Not connected to Firebase"
@@ -1787,6 +1913,11 @@ WshShell.Run "{vbs_command}", 0, False
         # The heart of Owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
+        firebase_check_counter = 0  # Counter for Firebase state check (runs every minute)
+        last_firebase_state = {
+            'enabled': self.firebase_client is not None,
+            'site_id': shared_utils.read_config(['firebase', 'site_id']) if self.firebase_client else None
+        }
 
         logging.info("Starting main service loop...")
 
@@ -1857,6 +1988,70 @@ WshShell.Run "{vbs_command}", 0, False
                             logging.error(f"Failed to log agent_started event: {log_err}")
 
                 self.first_start = False
+
+                # Periodic check for Firebase state changes (every 6 iterations = 1 minute)
+                # This detects when Firebase is re-enabled via GUI or config file changes
+                firebase_check_counter += 1
+                if firebase_check_counter >= 6:
+                    try:
+                        current_firebase_enabled = shared_utils.read_config(['firebase', 'enabled'])
+                        current_site_id = shared_utils.read_config(['firebase', 'site_id'])
+                        current_firebase_state = {
+                            'enabled': current_firebase_enabled and current_site_id is not None,
+                            'site_id': current_site_id
+                        }
+
+                        # Detect state changes
+                        was_enabled = last_firebase_state['enabled']
+                        is_enabled = current_firebase_state['enabled']
+                        old_site_id = last_firebase_state['site_id']
+                        new_site_id = current_firebase_state['site_id']
+
+                        # Case 1: Firebase was disabled and is now enabled
+                        if not was_enabled and is_enabled:
+                            logging.info("=" * 60)
+                            logging.info("FIREBASE RE-ENABLED DETECTED (via local config change)")
+                            logging.info(f"Site ID: {new_site_id}")
+                            logging.info("Reinitializing Firebase client...")
+                            logging.info("=" * 60)
+
+                            success = self._initialize_or_restart_firebase_client()
+                            if success:
+                                logging.info("[OK] Firebase client restarted successfully")
+                                last_firebase_state = current_firebase_state
+                            else:
+                                logging.error("[ERROR] Failed to restart Firebase client")
+
+                        # Case 2: Site ID changed while Firebase was enabled
+                        elif was_enabled and is_enabled and old_site_id != new_site_id:
+                            logging.info("=" * 60)
+                            logging.info(f"SITE ID CHANGE DETECTED: {old_site_id} -> {new_site_id}")
+                            logging.info("Reinitializing Firebase client for new site...")
+                            logging.info("=" * 60)
+
+                            success = self._initialize_or_restart_firebase_client()
+                            if success:
+                                logging.info("[OK] Firebase client restarted for new site")
+                                last_firebase_state = current_firebase_state
+                            else:
+                                logging.error("[ERROR] Failed to restart Firebase client for new site")
+
+                        # Case 3: Firebase was enabled and is now disabled
+                        elif was_enabled and not is_enabled:
+                            logging.info("Firebase has been DISABLED - stopping Firebase client")
+                            if self.firebase_client:
+                                try:
+                                    self.firebase_client.stop()
+                                    self.firebase_client = None
+                                    logging.info("[OK] Firebase client stopped")
+                                except Exception as e:
+                                    logging.error(f"[ERROR] Failed to stop Firebase client: {e}")
+                            last_firebase_state = current_firebase_state
+
+                    except Exception as e:
+                        logging.error(f"Error checking Firebase state: {e}")
+
+                    firebase_check_counter = 0
 
                 # Periodic cleanup of stale tracking data (every 30 iterations = 5 minutes)
                 cleanup_counter += 1

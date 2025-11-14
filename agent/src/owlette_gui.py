@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import filedialog
 import customtkinter as ctk
 from CTkListbox import *
-from CTkMessagebox import CTkMessagebox
+from custom_messagebox import OwletteMessagebox as CTkMessagebox
 import os
 import signal
 import json
@@ -152,8 +152,8 @@ class OwletteConfigApp:
         """Apply saved window state (collapsed or expanded)"""
         if self.details_collapsed:
             # Start in collapsed state (narrow window crops out PROCESS DETAILS completely)
-            shared_utils.center_window(self.master, 290, 450)
-            self.master.minsize(290, 450)
+            shared_utils.center_window(self.master, 270, 450)
+            self.master.minsize(270, 450)
             self.details_toggle_button.configure(text=">>")
             self.footer_label.grid_remove()  # Hide footer
             self.site_label_left.pack(side='left', expand=True)  # Show Site in center
@@ -248,35 +248,20 @@ class OwletteConfigApp:
         self.firebase_status_label = ctk.CTkLabel(self.master, text="", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.firebase_status_label.grid(row=10, column=0, columnspan=2, sticky='sw', padx=(20, 0), pady=(5, 5))
 
-        # Leave Site button (next to Firebase status)
-        self.leave_site_button = ctk.CTkButton(
-            self.master,
-            text="Leave Site",
-            command=self.on_leave_site_click,
-            width=100,
-            height=24,
-            fg_color="#991b1b",  # Red
-            hover_color="#7f1d1d",  # Darker red
-            font=("", 11),
-            bg_color=shared_utils.WINDOW_COLOR,
-            corner_radius=6
-        )
-        self.leave_site_button.grid(row=10, column=2, sticky='se', padx=5, pady=(5, 5))
-
-        # Join Site button (below Delete/up arrow in left panel)
-        self.join_site_button = ctk.CTkButton(
+        # Site management button (Join/Leave Site - changes based on connection state)
+        self.site_button = ctk.CTkButton(
             self.master,
             text="Join Site",
-            command=self.on_join_site_click,
-            width=80,
+            command=self.on_site_button_click,
+            width=100,
             height=24,
-            fg_color="#059669",  # Green (emerald-600)
-            hover_color="#047857",  # Darker green (emerald-700)
+            fg_color=shared_utils.BUTTON_COLOR,
+            hover_color=shared_utils.BUTTON_HOVER_COLOR,
             font=("", 11),
             bg_color=shared_utils.WINDOW_COLOR,
             corner_radius=6
         )
-        self.join_site_button.grid(row=10, column=1, sticky='sw', padx=5, pady=(5, 5))
+        self.site_button.grid(row=10, column=2, sticky='se', padx=5, pady=(5, 5))
 
         # Footer label (perfectly centered in row 10)
         footer_text = "Made with ♥ in California by TEC"
@@ -285,6 +270,36 @@ class OwletteConfigApp:
         # Make TEC text clickable
         self.footer_label.configure(cursor="hand2")
         self.footer_label.bind("<Button-1>", lambda _: self._open_tec_website())
+
+        # Config button (far right, before Logs)
+        self.config_button = ctk.CTkButton(
+            self.master,
+            text="Config",
+            command=self.open_config,
+            width=70,
+            height=24,
+            fg_color=shared_utils.BUTTON_COLOR,
+            hover_color=shared_utils.BUTTON_HOVER_COLOR,
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
+        )
+        self.config_button.grid(row=10, column=7, sticky='e', padx=(0, 230), pady=(5, 5))
+
+        # Logs button (far right, before version)
+        self.logs_button = ctk.CTkButton(
+            self.master,
+            text="Logs",
+            command=self.open_logs,
+            width=70,
+            height=24,
+            fg_color=shared_utils.BUTTON_COLOR,
+            hover_color=shared_utils.BUTTON_HOVER_COLOR,
+            font=("", 11),
+            bg_color=shared_utils.WINDOW_COLOR,
+            corner_radius=6
+        )
+        self.logs_button.grid(row=10, column=7, sticky='e', padx=(0, 150), pady=(5, 5))
 
         # Version label (far right of row 10)
         self.version_label = ctk.CTkLabel(self.master, text=f"v{shared_utils.APP_VERSION}", fg_color=shared_utils.WINDOW_COLOR, bg_color=shared_utils.WINDOW_COLOR, text_color=shared_utils.TEXT_COLOR, font=("", 11))
@@ -469,11 +484,11 @@ class OwletteConfigApp:
             self.site_label_left.pack(side='left', expand=True)  # Show Site in header center
 
             if x and y:
-                self.master.geometry(f'290x450+{x}+{y}')
+                self.master.geometry(f'270x450+{x}+{y}')
             else:
-                shared_utils.center_window(self.master, 290, 450)
+                shared_utils.center_window(self.master, 270, 450)
 
-            self.master.minsize(290, 450)
+            self.master.minsize(270, 450)
             self.details_collapsed = True
 
         # Save state to config
@@ -1107,7 +1122,7 @@ class OwletteConfigApp:
     # FIREBASE STATUS
 
     def update_firebase_status(self):
-        """Update Firebase connection status indicator."""
+        """Update Firebase connection status indicator and site button."""
         import os
 
         # Check if Firebase is enabled in config
@@ -1139,19 +1154,30 @@ class OwletteConfigApp:
                 # Failed to initialize AuthManager
                 tokens_valid = False
 
+        # Determine if we're connected (for button state)
+        is_connected = firebase_enabled and tokens_valid and site_id
+
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
             self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
-            self.leave_site_button.configure(state="disabled")
+            self.site_button.configure(text="Join Site", state="normal")
         elif firebase_enabled and tokens_valid:
             self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
-            self.leave_site_button.configure(state="normal")
+            self.site_button.configure(text="Leave Site", state="normal")
         elif firebase_enabled and not tokens_valid:
             self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
-            self.leave_site_button.configure(state="disabled")
+            self.site_button.configure(text="Join Site", state="normal")
         else:
-            self.firebase_status_label.configure(text="Disabled", text_color="#6b7300")  # Gray
-            self.leave_site_button.configure(state="disabled")
+            self.firebase_status_label.configure(text="Disabled", text_color="#9ca3af")  # Gray
+            self.site_button.configure(text="Join Site", state="normal")
+
+    def on_site_button_click(self):
+        """Route to appropriate handler based on current button state."""
+        button_text = self.site_button.cget("text")
+        if button_text == "Leave Site":
+            self.on_leave_site_click()
+        else:
+            self.on_join_site_click()
 
     def on_leave_site_click(self):
         """Handle Leave Site button click."""
@@ -1175,6 +1201,10 @@ class OwletteConfigApp:
         )
 
         if response.get() == "Leave Site":
+            # Update status immediately to show we're working (before GUI freezes)
+            self.firebase_status_label.configure(text="Disabling...", text_color="#fbbf24")  # Yellow
+            self.master.update()  # Force GUI update before blocking operation
+
             try:
                 # Disable Firebase and clear site_id FIRST
                 # This ensures the service won't recreate the document after we delete it
@@ -1208,7 +1238,8 @@ class OwletteConfigApp:
                         subprocess.run([nssm_path, 'stop', 'OwletteService'],
                                      check=False,
                                      capture_output=True,
-                                     timeout=10)
+                                     timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
                         time.sleep(3)  # Give service time to fully stop
                         logging.info("Service stopped successfully")
                     except Exception as e:
@@ -1246,7 +1277,8 @@ class OwletteConfigApp:
                         subprocess.run([nssm_path, 'start', 'OwletteService'],
                                      check=False,
                                      capture_output=True,
-                                     timeout=10)
+                                     timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
                         time.sleep(2)  # Give service time to start
                         logging.info("Service restarted successfully")
                     except Exception as e:
@@ -1293,6 +1325,10 @@ class OwletteConfigApp:
         if response.get() != "Join Site":
             return
 
+        # Update status immediately to show we're connecting (before any blocking operations)
+        self.firebase_status_label.configure(text="Connecting...", text_color="#fbbf24")  # Yellow
+        self.master.update()  # Force GUI update before blocking operation
+
         # Get setup URL based on environment setting
         setup_url = shared_utils.get_setup_url()
 
@@ -1336,12 +1372,14 @@ class OwletteConfigApp:
                             subprocess.run([nssm_path, 'stop', 'OwletteService'],
                                          check=False,
                                          capture_output=True,
-                                         timeout=10)
+                                         timeout=10,
+                                         creationflags=subprocess.CREATE_NO_WINDOW)
                             time.sleep(3)
                             subprocess.run([nssm_path, 'start', 'OwletteService'],
                                          check=False,
                                          capture_output=True,
-                                         timeout=10)
+                                         timeout=10,
+                                         creationflags=subprocess.CREATE_NO_WINDOW)
                             time.sleep(2)
                             logging.info("Service restarted successfully")
                         except Exception as e:
@@ -1466,6 +1504,52 @@ class OwletteConfigApp:
         """Open TEC website in default browser"""
         import webbrowser
         webbrowser.open("https://tec.design")
+
+    def open_config(self):
+        """Open config.json in default text editor"""
+        try:
+            config_path = shared_utils.get_data_path('config/config.json')
+            if os.path.exists(config_path):
+                os.startfile(config_path)
+                logging.info(f"Opened config file: {config_path}")
+            else:
+                CTkMessagebox(
+                    master=self.master,
+                    title="File Not Found",
+                    message=f"Config file not found at:\n{config_path}",
+                    icon="cancel"
+                )
+        except Exception as e:
+            logging.error(f"Error opening config file: {e}")
+            CTkMessagebox(
+                master=self.master,
+                title="Error",
+                message=f"Failed to open config file:\n{str(e)}",
+                icon="cancel"
+            )
+
+    def open_logs(self):
+        """Open logs folder in Windows Explorer"""
+        try:
+            logs_path = shared_utils.get_data_path('logs')
+            if os.path.exists(logs_path):
+                os.startfile(logs_path)
+                logging.info(f"Opened logs folder: {logs_path}")
+            else:
+                CTkMessagebox(
+                    master=self.master,
+                    title="Folder Not Found",
+                    message=f"Logs folder not found at:\n{logs_path}",
+                    icon="cancel"
+                )
+        except Exception as e:
+            logging.error(f"Error opening logs folder: {e}")
+            CTkMessagebox(
+                master=self.master,
+                title="Error",
+                message=f"Failed to open logs folder:\n{str(e)}",
+                icon="cancel"
+            )
 
     # SYSTEM/MISC
 
