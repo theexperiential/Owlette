@@ -115,7 +115,7 @@ export default function UninstallDialog({
     };
 
     fetchSoftware();
-  }, [open, selectedMachines, siteId, machines]);
+  }, [open, selectedMachines, siteId]); // Removed 'machines' to prevent infinite loop
 
   // Auto-select software and set filter if initialSoftwareName matches
   useEffect(() => {
