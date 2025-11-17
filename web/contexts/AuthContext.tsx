@@ -64,6 +64,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('user');
   const [userSites, setUserSites] = useState<string[]>([]);
 
+  // Helper function to send user creation notification
+  const sendUserCreatedNotification = async (
+    email: string,
+    displayName: string,
+    authMethod: 'email' | 'google'
+  ) => {
+    try {
+      const response = await fetch('/api/webhooks/user-created', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email,
+          displayName,
+          authMethod,
+          createdAt: new Date().toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('Failed to send user creation notification:', error);
+      } else {
+        const result = await response.json();
+        console.log('✅ User creation notification sent:', result);
+      }
+    } catch (error) {
+      // Don't fail user creation if notification fails
+      console.error('Error sending user creation notification:', error);
+    }
+  };
+
   useEffect(() => {
     if (!auth || !db) {
       setLoading(false);
@@ -104,13 +137,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 // Create user document if it doesn't exist (new user)
                 console.log('⚠️ User document missing, creating now...');
                 try {
+                  const displayName = user.displayName || '';
                   await setDoc(userDocRef, {
                     email: user.email,
                     role: 'user',
                     sites: [],
                     createdAt: new Date(),
+                    displayName,
+                    // MFA fields for new users
+                    mfaEnrolled: false,
+                    requiresMfaSetup: true, // Mandatory 2FA for new users
                   });
                   console.log('✅ User document created by listener');
+
+                  // Send user creation notification (likely Google sign-in)
+                  sendUserCreatedNotification(
+                    user.email || '',
+                    displayName,
+                    'google'
+                  );
+
                   // Don't set loading to false yet - wait for the listener to fire again
                 } catch (firestoreError: any) {
                   console.error('❌ Listener failed to create document:', firestoreError);
@@ -191,14 +237,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Immediately create user document in Firestore
       const userDocRef = doc(db, 'users', userCredential.user.uid);
       try {
+        const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
         await setDoc(userDocRef, {
           email: userCredential.user.email,
           role: 'user',
           sites: [],
           createdAt: new Date(),
-          displayName: [firstName, lastName].filter(Boolean).join(' ') || '',
+          displayName,
+          // MFA fields for new users
+          mfaEnrolled: false,
+          requiresMfaSetup: true, // Mandatory 2FA for new users
         });
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
+
+        // Send user creation notification
+        sendUserCreatedNotification(
+          userCredential.user.email || '',
+          displayName,
+          'email'
+        );
       } catch (firestoreError: any) {
         console.error('❌ Failed to create user document:', firestoreError);
         console.error('Error code:', firestoreError.code);

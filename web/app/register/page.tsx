@@ -50,7 +50,8 @@ export default function RegisterPage() {
     try {
       await signUp(email, password, firstName, lastName);
       toast.success('Account created successfully!');
-      router.push('/dashboard');
+      // Redirect to 2FA setup (mandatory for new users)
+      router.push('/setup-2fa');
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
@@ -64,6 +65,7 @@ export default function RegisterPage() {
     try {
       await signInWithGoogle();
       toast.success('Account created with Google!');
+      // Note: AuthContext will redirect to /setup-2fa for new users
       router.push('/dashboard');
     } catch (error) {
       toast.error(sanitizeError(error));

@@ -40,11 +40,12 @@ const nextConfig: NextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // Next.js requires unsafe-eval and unsafe-inline
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Next.js requires unsafe-eval and unsafe-inline, Google OAuth requires Google domains
               "style-src 'self' 'unsafe-inline'", // Tailwind requires unsafe-inline
               "img-src 'self' data: https:",
               "font-src 'self' data:",
-              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com", // Firebase endpoints
+              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com", // Firebase endpoints + Google OAuth
+              "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
               "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
               "base-uri 'self'",
               "form-action 'self'",

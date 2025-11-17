@@ -259,6 +259,7 @@ service cloud.firestore {
       allow create: if request.auth.uid == userId;
 
       // Users can update their own sites array (when creating sites)
+      // Users can update MFA fields (mfaEnrolled, mfaSecret, backupCodes, requiresMfaSetup)
       // But cannot change their role or other sensitive fields
       allow update: if request.auth.uid == userId &&
                        request.resource.data.role == resource.data.role &&
