@@ -196,7 +196,14 @@ export default function Setup2FAPage() {
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="space-y-2">
+                <Button
+                  type="submit"
+                  disabled={isSubmitting || verificationCode.length !== 6}
+                  className="w-full"
+                >
+                  {isSubmitting ? 'Verifying...' : 'Verify & Enable 2FA'}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -205,13 +212,6 @@ export default function Setup2FAPage() {
                   className="w-full"
                 >
                   Back
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={isSubmitting || verificationCode.length !== 6}
-                  className="w-full"
-                >
-                  {isSubmitting ? 'Verifying...' : 'Verify & Enable 2FA'}
                 </Button>
               </div>
             </form>
