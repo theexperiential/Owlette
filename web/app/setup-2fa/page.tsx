@@ -261,18 +261,24 @@ export default function Setup2FAPage() {
                 </p>
               </div>
 
-              <div className="bg-gray-50 border rounded-lg p-4">
+              <div className="bg-slate-900 border border-slate-700 rounded-lg p-4">
                 <div className="grid grid-cols-2 gap-2 font-mono text-sm">
                   {backupCodes.map((code, index) => (
                     <div key={index} className="flex items-center gap-2">
-                      <span className="text-gray-500">{index + 1}.</span>
-                      <span className="font-bold">{code}</span>
+                      <span className="text-slate-400">{index + 1}.</span>
+                      <span className="font-bold text-white">{code}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="space-y-2">
+                <Button
+                  onClick={handleFinish}
+                  className="w-full"
+                >
+                  I've Saved My Codes
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -280,12 +286,6 @@ export default function Setup2FAPage() {
                   className="w-full"
                 >
                   Copy All Codes
-                </Button>
-                <Button
-                  onClick={handleFinish}
-                  className="w-full"
-                >
-                  I've Saved My Codes
                 </Button>
               </div>
             </div>
