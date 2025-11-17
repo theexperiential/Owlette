@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import { EyeIcon, EyeOffIcon, AlertTriangle } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Thermometer } from 'lucide-react';
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -15,9 +16,10 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDialogProps) {
-  const { user, updateUserProfile, updatePassword, deleteAccount } = useAuth();
+  const { user, userPreferences, updateUserProfile, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [loading, setLoading] = useState(false);
 
   // Password change state
@@ -35,21 +37,28 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // Parse existing display name when dialog opens
+  // Parse existing display name and preferences when dialog opens
   const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen && user?.displayName) {
-      const names = user.displayName.split(' ');
-      if (names.length >= 2) {
-        setFirstName(names[0]);
-        setLastName(names.slice(1).join(' '));
-      } else {
-        setFirstName(names[0]);
-        setLastName('');
+    if (isOpen) {
+      // Load display name
+      if (user?.displayName) {
+        const names = user.displayName.split(' ');
+        if (names.length >= 2) {
+          setFirstName(names[0]);
+          setLastName(names.slice(1).join(' '));
+        } else {
+          setFirstName(names[0]);
+          setLastName('');
+        }
       }
-    } else if (!isOpen) {
+
+      // Load temperature unit preference
+      setTemperatureUnit(userPreferences.temperatureUnit);
+    } else {
       // Reset form when closing
       setFirstName('');
       setLastName('');
+      setTemperatureUnit('C');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -95,6 +104,11 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       // Always update profile if name fields are filled
       if (firstName || lastName) {
         await updateUserProfile(firstName, lastName);
+      }
+
+      // Update preferences if temperature unit changed
+      if (temperatureUnit !== userPreferences.temperatureUnit) {
+        await updateUserPreferences({ temperatureUnit });
       }
 
       // Update password if password section is shown and fields are filled
@@ -183,6 +197,41 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
               readOnly
             />
             <p className="text-xs text-slate-500">Email cannot be changed</p>
+          </div>
+
+          {/* Preferences Section */}
+          <Separator className="bg-slate-700" />
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Thermometer className="h-4 w-4 text-slate-400" />
+              <Label className="text-white">Preferences</Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
+              <Select
+                value={temperatureUnit}
+                onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
+                disabled={loading}
+              >
+                <SelectTrigger
+                  id="temperatureUnit"
+                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-slate-700 bg-slate-800 text-white">
+                  <SelectItem value="C" className="cursor-pointer hover:bg-slate-700">
+                    Celsius (°C)
+                  </SelectItem>
+                  <SelectItem value="F" className="cursor-pointer hover:bg-slate-700">
+                    Fahrenheit (°F)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">Display temperature in Celsius or Fahrenheit</p>
+            </div>
           </div>
 
           {/* Password Change Section */}

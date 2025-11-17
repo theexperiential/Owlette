@@ -9,7 +9,10 @@ import { verifyTOTP, verifyBackupCode } from '@/lib/totp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { setMfaVerifiedForSession, trustDevice } from '@/lib/mfaSession';
 
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
@@ -20,6 +23,7 @@ function Verify2FAContent() {
   const [verificationCode, setVerificationCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [useBackupCode, setUseBackupCode] = useState(false);
+  const [trustThisDevice, setTrustThisDevice] = useState(false);
   const [mfaSecret, setMfaSecret] = useState<string | null>(null);
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
 
@@ -116,11 +120,24 @@ function Verify2FAContent() {
       }
 
       // Verification successful
-      toast.success('Verification Successful', {
-        description: 'Redirecting to dashboard...',
-      });
+      if (user) {
+        // Mark session as MFA verified
+        setMfaVerifiedForSession(user.uid);
 
-      // Redirect to dashboard
+        // Trust device for 30 days if checked
+        if (trustThisDevice) {
+          trustDevice(user.uid);
+          toast.success('Verification Successful', {
+            description: 'This device has been trusted for 30 days.',
+          });
+        } else {
+          toast.success('Verification Successful', {
+            description: 'Redirecting...',
+          });
+        }
+      }
+
+      // Redirect to return URL
       router.push(returnUrl);
     } catch (error) {
       console.error('Error verifying 2FA:', error);
@@ -170,6 +187,22 @@ function Verify2FAContent() {
                 className="text-center text-2xl font-mono tracking-widest"
                 autoFocus
               />
+            </div>
+
+            {/* Trust Device Checkbox */}
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="trustDevice"
+                checked={trustThisDevice}
+                onCheckedChange={(checked) => setTrustThisDevice(checked === true)}
+                className="border-slate-600"
+              />
+              <Label
+                htmlFor="trustDevice"
+                className="text-sm text-slate-300 cursor-pointer"
+              >
+                Trust this device for 30 days
+              </Label>
             </div>
 
             <Button

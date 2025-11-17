@@ -530,6 +530,14 @@ export function useMachines(siteId: string) {
 
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
+
+      // Set config change flag to notify agent (push notification)
+      // This eliminates agent's need to constantly poll config (saves ~500K-1M reads/week)
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
     } catch (error) {
       logger.firestore.error('Failed to update process', error);
       throw error;
@@ -577,6 +585,13 @@ export function useMachines(siteId: string) {
 
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
+
+      // Set config change flag to notify agent
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
     } catch (error) {
       logger.firestore.error('Failed to delete process', error);
       throw error;
@@ -634,6 +649,13 @@ export function useMachines(siteId: string) {
 
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
+
+      // Set config change flag to notify agent
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
 
       return newProcessId;
     } catch (error) {

@@ -20,8 +20,13 @@ import { auth, db } from '@/lib/firebase';
 import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
 import { handleError } from '@/lib/errorHandler';
 import { toast } from 'sonner';
+import { clearMfaSession } from '@/lib/mfaSession';
 
 type UserRole = 'user' | 'admin';
+
+export interface UserPreferences {
+  temperatureUnit: 'C' | 'F'; // Default: 'C'
+}
 
 interface AuthContextType {
   user: User | null;
@@ -30,12 +35,14 @@ interface AuthContextType {
   isAdmin: boolean;
   userSites: string[]; // Sites the user has access to
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
+  userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  updateUserPreferences: (preferences: Partial<UserPreferences>) => Promise<void>;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -46,12 +53,14 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   userSites: [],
   requiresMfaSetup: false,
+  userPreferences: { temperatureUnit: 'C' },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => {},
   signOut: async () => {},
   updateUserProfile: async () => {},
   updatePassword: async () => {},
+  updateUserPreferences: async () => {},
   deleteAccount: async () => {},
 });
 
@@ -69,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole>('user');
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C' });
 
   // Helper function to send user creation notification
   const sendUserCreatedNotification = async (
@@ -139,6 +149,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setRole(userData.role || 'user');
                 setUserSites(userData.sites || []);
                 setRequiresMfaSetup(userData.requiresMfaSetup || false);
+
+                // Load user preferences (with defaults if missing)
+                const preferences = userData.preferences || {};
+                setUserPreferences({
+                  temperatureUnit: preferences.temperatureUnit || 'C',
+                });
+
                 setLoading(false);
               } else {
                 // Create user document if it doesn't exist (new user)
@@ -154,6 +171,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     // MFA fields for new users
                     mfaEnrolled: false,
                     requiresMfaSetup: true, // Mandatory 2FA for new users
+                    // Default preferences
+                    preferences: {
+                      temperatureUnit: 'C',
+                    },
                   });
                   console.log('✅ User document created by listener');
 
@@ -254,6 +275,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // MFA fields for new users
           mfaEnrolled: false,
           requiresMfaSetup: true, // Mandatory 2FA for new users
+          // Default preferences
+          preferences: {
+            temperatureUnit: 'C',
+          },
         });
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
 
@@ -320,6 +345,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       await firebaseSignOut(auth);
+      clearSessionCookie();
+      clearMfaSession(); // Clear MFA verification status
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
       });
@@ -359,6 +386,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       toast.success('Profile Updated', {
         description: 'Your profile has been updated successfully.',
+      });
+    } catch (error: any) {
+      const friendlyMessage = handleError(error);
+      toast.error('Update Failed', {
+        description: friendlyMessage,
+      });
+      throw error;
+    }
+  };
+
+  const updateUserPreferences = async (preferences: Partial<UserPreferences>) => {
+    try {
+      if (!auth?.currentUser || !db) {
+        const error = new Error('No user is currently signed in.');
+        toast.error('Update Failed', {
+          description: 'You must be signed in to update your preferences.',
+        });
+        throw error;
+      }
+
+      const userDocRef = doc(db, 'users', auth.currentUser.uid);
+
+      // Merge with existing preferences
+      await setDoc(userDocRef, {
+        preferences: {
+          ...userPreferences,
+          ...preferences,
+        },
+      }, { merge: true });
+
+      // Update local state
+      setUserPreferences({
+        ...userPreferences,
+        ...preferences,
+      });
+
+      toast.success('Preferences Updated', {
+        description: 'Your preferences have been saved successfully.',
       });
     } catch (error: any) {
       const friendlyMessage = handleError(error);
@@ -530,12 +595,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdmin: role === 'admin',
     userSites,
     requiresMfaSetup,
+    userPreferences,
     signIn,
     signUp,
     signInWithGoogle,
     signOut,
     updateUserProfile,
     updatePassword,
+    updateUserPreferences,
     deleteAccount,
   };
 

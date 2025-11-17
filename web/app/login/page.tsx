@@ -10,6 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from 'sonner';
 import { sanitizeError } from '@/lib/errorHandler';
 import Image from 'next/image';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth as firebaseAuth, db } from '@/lib/firebase';
+import { isDeviceTrusted, setMfaVerifiedForSession } from '@/lib/mfaSession';
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -28,14 +31,63 @@ function LoginForm() {
     }
   }, [searchParams]);
 
+  // Helper function to check MFA status and determine redirect
+  const checkMfaAndRedirect = async (): Promise<string> => {
+    try {
+      if (!firebaseAuth?.currentUser || !db) {
+        return redirectUrl;
+      }
+
+      const userId = firebaseAuth.currentUser.uid;
+
+      // Check if device is trusted (skip MFA for 30 days)
+      if (isDeviceTrusted(userId)) {
+        setMfaVerifiedForSession(userId);
+        return redirectUrl;
+      }
+
+      // Get user document to check MFA enrollment
+      const userDocRef = doc(db, 'users', userId);
+      const userDocSnap = await getDoc(userDocRef);
+
+      if (userDocSnap.exists()) {
+        const userData = userDocSnap.data();
+
+        // If MFA is enrolled, redirect to verification
+        if (userData.mfaEnrolled) {
+          return `/verify-2fa?return=${encodeURIComponent(redirectUrl)}`;
+        }
+      }
+
+      // No MFA needed, mark session as verified and proceed
+      setMfaVerifiedForSession(userId);
+      return redirectUrl;
+    } catch (error) {
+      console.error('Error checking MFA status:', error);
+      return redirectUrl; // Fallback to normal redirect
+    }
+  };
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       await signIn(email, password);
-      toast.success('Logged in successfully!');
-      router.push(redirectUrl);
+
+      // Wait a moment for Firebase Auth state to update
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Check MFA status and get redirect path
+      const redirectPath = await checkMfaAndRedirect();
+
+      if (redirectPath.includes('/verify-2fa')) {
+        toast.info('2FA Verification Required');
+      } else {
+        toast.success('Logged in successfully!');
+      }
+
+      router.push(redirectPath);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
@@ -48,8 +100,20 @@ function LoginForm() {
 
     try {
       await signInWithGoogle();
-      toast.success('Logged in with Google!');
-      router.push(redirectUrl);
+
+      // Wait a moment for Firebase Auth state to update
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Check MFA status and get redirect path
+      const redirectPath = await checkMfaAndRedirect();
+
+      if (redirectPath.includes('/verify-2fa')) {
+        toast.info('2FA Verification Required');
+      } else {
+        toast.success('Logged in with Google!');
+      }
+
+      router.push(redirectPath);
     } catch (error) {
       toast.error(sanitizeError(error));
     } finally {
