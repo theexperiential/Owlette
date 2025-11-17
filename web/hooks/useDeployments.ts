@@ -187,11 +187,20 @@ export function useDeployments(siteId: string) {
     // Use ref to persist processed commands across renders
     const processedCommands = processedCommandsRef.current;
 
-    // Get all unique machine IDs from active deployments (including those that might be uninstalled)
+    // OPTIMIZATION: Only listen to machines with ACTIVE deployment targets
+    // This reduces Firebase read operations by only tracking machines that need updates
     const machineIds = new Set<string>();
     deployments.forEach(deployment => {
-      if (deployment.status === 'in_progress' || deployment.status === 'pending' || deployment.status === 'completed' || deployment.status === 'partial') {
-        deployment.targets.forEach(target => machineIds.add(target.machineId));
+      // Only listen to deployments that are in-progress or pending
+      if (deployment.status === 'in_progress' || deployment.status === 'pending') {
+        deployment.targets.forEach(target => {
+          // Only track targets with active status (not completed, failed, cancelled, or uninstalled)
+          if (target.status === 'pending' ||
+              target.status === 'downloading' ||
+              target.status === 'installing') {
+            machineIds.add(target.machineId);
+          }
+        });
       }
     });
 
