@@ -13,7 +13,7 @@ import { toast } from 'sonner';
 import Image from 'next/image';
 
 export default function Setup2FAPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, signOut } = useAuth();
   const router = useRouter();
 
   const [secret, setSecret] = useState('');
@@ -168,12 +168,28 @@ export default function Setup2FAPage() {
                 </p>
               </div>
 
-              <Button
-                onClick={() => setStep('verify')}
-                className="w-full"
-              >
-                Continue to Verification
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  onClick={() => setStep('verify')}
+                  className="w-full"
+                >
+                  Continue to Verification
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={async () => {
+                    await signOut();
+                    toast.info('Setup Cancelled', {
+                      description: 'You can complete 2FA setup when you sign in again.',
+                    });
+                    router.push('/login');
+                  }}
+                  className="w-full text-sm text-slate-400 hover:text-white"
+                >
+                  Cancel Setup
+                </Button>
+              </div>
             </div>
           )}
 
@@ -212,6 +228,21 @@ export default function Setup2FAPage() {
                   className="w-full"
                 >
                   Back
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={async () => {
+                    await signOut();
+                    toast.info('Setup Cancelled', {
+                      description: 'You can complete 2FA setup when you sign in again.',
+                    });
+                    router.push('/login');
+                  }}
+                  disabled={isSubmitting}
+                  className="w-full text-sm text-slate-400 hover:text-white"
+                >
+                  Cancel Setup
                 </Button>
               </div>
             </form>
