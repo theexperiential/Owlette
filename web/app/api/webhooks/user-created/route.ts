@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy initialization to avoid build-time errors when env var is missing
+let resend: Resend | null = null;
+function getResend() {
+  if (!resend && process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
 
 // Environment detection
 const isProduction = process.env.NODE_ENV === 'production' &&
@@ -52,8 +59,17 @@ export async function POST(request: NextRequest) {
 
     const envLabel = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
 
+    const resendClient = getResend();
+    if (!resendClient) {
+      console.error('Resend client not available');
+      return NextResponse.json(
+        { error: 'Email service not available' },
+        { status: 500 }
+      );
+    }
+
     // Send admin notification email
-    const adminEmailResult = await resend.emails.send({
+    const adminEmailResult = await resendClient.emails.send({
       from: FROM_EMAIL,
       to: ADMIN_EMAIL,
       subject: `[${envLabel}] New Owlette User Signup`,
@@ -77,7 +93,7 @@ export async function POST(request: NextRequest) {
     // Optionally send welcome email to user
     let welcomeEmailResult = null;
     if (process.env.SEND_WELCOME_EMAIL === 'true') {
-      welcomeEmailResult = await resend.emails.send({
+      welcomeEmailResult = await resendClient.emails.send({
         from: FROM_EMAIL,
         to: payload.email,
         subject: 'Welcome to Owlette',
