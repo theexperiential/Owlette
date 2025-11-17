@@ -156,14 +156,17 @@ class FirebaseClient:
             self.config_listener_thread.start()
             self.logger.info("Config listener thread started")
 
-            # Start software inventory thread (5 minute interval)
-            self.software_inventory_thread = threading.Thread(target=self._software_inventory_loop, daemon=True)
-            self.software_inventory_thread.start()
-            self.logger.info("Software inventory thread started")
+            # Sync software inventory once on startup (non-recurring)
+            # This replaces the old recurring thread to reduce Firebase writes
+            try:
+                self._sync_software_inventory(force=True)
+                self.logger.info("Initial software inventory synced to Firestore")
+            except Exception as e:
+                self.logger.error(f"Failed to sync initial software inventory: {e}")
         else:
             self.logger.warning("Command listener NOT started (offline mode)")
             self.logger.warning("Config listener NOT started (offline mode)")
-            self.logger.warning("Software inventory NOT started (offline mode)")
+            self.logger.warning("Software inventory NOT synced (offline mode)")
 
     def stop(self):
         """Stop all background threads and set machine offline."""
@@ -222,7 +225,14 @@ class FirebaseClient:
             time.sleep(30)  # 30 second interval
 
     def _metrics_loop(self):
-        """Metrics loop - uploads system stats every 60 seconds."""
+        """
+        Metrics loop - uploads system stats with intelligent adaptive intervals.
+
+        Intervals:
+        - 5s when GUI is open (user actively monitoring)
+        - 30s when processes are running (active monitoring)
+        - 120s when idle (minimal overhead)
+        """
         while self.running:
             try:
                 if self.connected:
@@ -239,11 +249,40 @@ class FirebaseClient:
 
                     metrics = shared_utils.get_system_metrics()
                     self._upload_metrics(metrics)
-                    self.logger.debug(f"Metrics uploaded: CPU={metrics.get('cpu')}%")
+
+                    # Adaptive interval with GUI detection:
+                    # Priority 1: GUI open (user actively monitoring) -> 5s
+                    # Priority 2: Processes running -> 30s
+                    # Priority 3: Idle -> 120s
+
+                    # Check if GUI is running (user actively monitoring this machine)
+                    gui_running = shared_utils.is_script_running('owlette_gui.py')
+
+                    if gui_running:
+                        interval = 5
+                        mode = 'GUI active'
+                    else:
+                        # Check if any processes are running
+                        processes = metrics.get('processes', {})
+                        any_process_running = any(
+                            proc.get('status') == 'RUNNING'
+                            for proc in processes.values()
+                            if isinstance(proc, dict)
+                        )
+
+                        if any_process_running:
+                            interval = 30
+                            mode = 'processes active'
+                        else:
+                            interval = 120
+                            mode = 'idle'
+
+                    self.logger.info(f"Metrics uploaded - next in {interval}s ({mode})")
             except Exception as e:
                 self.logger.error(f"Metrics upload failed: {e}")
+                interval = 60  # Default interval on error
 
-            time.sleep(60)  # 60 second interval
+            time.sleep(interval)
 
     def _command_listener_loop(self):
         """Listen for commands from Firestore in real-time."""
@@ -940,18 +979,18 @@ class FirebaseClient:
         """Get the site ID."""
         return self.site_id
 
-    def _software_inventory_loop(self):
-        """Software inventory loop - syncs installed software every 5 minutes."""
-        while self.running:
-            try:
-                if self.connected:
-                    self._sync_software_inventory()
-                    self.logger.debug("Software inventory synced to Firestore")
-            except Exception as e:
-                self.logger.error(f"Software inventory sync failed: {e}")
+    def sync_software_inventory(self):
+        """
+        Manually trigger software inventory sync (public API).
 
-            # Sleep for 5 minutes (300 seconds)
-            time.sleep(300)
+        Call this after software deployments to refresh the inventory.
+        Non-blocking - failures are logged but don't raise exceptions.
+        """
+        try:
+            self._sync_software_inventory(force=True)
+            self.logger.info("Software inventory synced on-demand")
+        except Exception as e:
+            self.logger.error(f"On-demand software inventory sync failed: {e}")
 
     def _calculate_software_hash(self, software_list):
         """

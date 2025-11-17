@@ -756,16 +756,9 @@ WshShell.Run "{vbs_command}", 0, False
         except:
             logging.error('JSON write error')
 
-        # Immediately sync to Firestore
-        if self.firebase_client and self.firebase_client.is_connected():
-            try:
-                metrics = shared_utils.get_system_metrics()
-                self.firebase_client._upload_metrics(metrics)
-                logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> LAUNCHING")
-            except Exception as e:
-                # Don't crash if Firebase sync fails - it will sync on next interval
-                logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
-                logging.exception("Full traceback:")
+        # Process launched - status will sync via centralized metrics loop
+        # (removed direct upload to eliminate duplicates and reduce Firebase writes)
+        logging.info(f"[OK] Process launched: PID {pid} -> Will sync on next metrics interval")
 
         return pid
 
@@ -1177,15 +1170,17 @@ WshShell.Run "{vbs_command}", 0, False
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
-            # Push metrics immediately so web dashboard updates instantly
-            # CRITICAL: Pass the new config directly to avoid race condition from re-reading disk
-            if self.firebase_client:
+
+            # Upload metrics immediately so web dashboard sees config changes quickly
+            # This is different from GUI-initiated changes (which already upload immediately)
+            if self.firebase_client and self.firebase_client.is_connected():
                 try:
-                    metrics = shared_utils.get_system_metrics_with_config(new_config)
+                    metrics = shared_utils.get_system_metrics()
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("Metrics pushed immediately after config update")
+                    logging.info("Config change synced to Firestore immediately (for web dashboard responsiveness)")
                 except Exception as e:
-                    logging.error(f"Failed to push metrics after config update: {e}")
+                    logging.error(f"Failed to immediately sync config change: {e}")
+                    logging.info("Config will sync on next metrics interval")
 
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
@@ -1429,7 +1424,7 @@ WshShell.Run "{vbs_command}", 0, False
                     try:
                         if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after installation")
-                            self.firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client.sync_software_inventory()
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
                         # Don't fail the installation if sync fails
@@ -1685,7 +1680,7 @@ WshShell.Run "{vbs_command}", 0, False
                     try:
                         if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after uninstall")
-                            self.firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client.sync_software_inventory()
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after uninstall: {sync_error}")
                         # Don't fail the uninstall if sync fails
@@ -1837,9 +1832,6 @@ WshShell.Run "{vbs_command}", 0, False
 
     # Main main
     def main(self):
-        logging.info("="*70)
-        logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
-        logging.info("="*70)
 
         # Process startup info
         self.startup_info = win32process.STARTUPINFO()

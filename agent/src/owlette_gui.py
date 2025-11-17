@@ -49,6 +49,7 @@ class OwletteConfigApp:
         self.config = None
         self.service_running = None
         self.details_collapsed = True  # Default to collapsed (will be loaded from config)
+        self.last_save_time = 0  # Debounce for duplicate save events
 
         # Load config directly
         self.config = shared_utils.load_config()
@@ -613,6 +614,12 @@ class OwletteConfigApp:
             logging.error(f"Error activating new process: {e}")
 
     def update_selected_process(self,event=None):
+        import time
+        # Debounce: Prevent duplicate saves within 100ms (Return + FocusOut events)
+        current_time = time.time()
+        if current_time - self.last_save_time < 0.1:
+            return  # Skip duplicate event
+        self.last_save_time = current_time
         # Determine if this is a "soft save" (triggered by Enter key) or "hard save" (Save Changes button)
         is_soft_save = event is not None
 
@@ -940,6 +947,9 @@ class OwletteConfigApp:
         return config_data
 
     def update_process_list(self):
+        import hashlib
+        import json
+
         # Get current keyboard focus (selected entry widget)
         current_focus = str(self.master.focus_get())
         #logging.error(f'current focus = {current_focus}')
@@ -951,7 +961,23 @@ class OwletteConfigApp:
 
         # Reload config from disk to catch external changes (from Firestore, etc.)
         fresh_config = shared_utils.read_config()
+        config_changed_externally = False
         if fresh_config:
+            # Check if the selected process config has changed externally (from Firestore)
+            if self.selected_process and self.config:
+                # Get the current process data for comparison
+                old_process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+                new_process = shared_utils.fetch_process_by_id(self.selected_process, fresh_config)
+
+                if old_process and new_process:
+                    # Calculate hashes to detect changes
+                    old_hash = hashlib.md5(json.dumps(old_process, sort_keys=True).encode()).hexdigest()
+                    new_hash = hashlib.md5(json.dumps(new_process, sort_keys=True).encode()).hexdigest()
+
+                    if old_hash != new_hash:
+                        config_changed_externally = True
+                        logging.info(f"Detected external config change for process '{new_process.get('name')}'")
+
             self.config = fresh_config
 
         updated_config = self.map_status_to_config(status_data, self.config)
@@ -973,9 +999,18 @@ class OwletteConfigApp:
             except Exception as e:
                 logging.info(e)
 
-        # Don't auto-refresh displayed fields - only refresh when user explicitly selects a process
-        # This prevents overwriting user input before they save
-        # External changes from Firestore will be visible when switching processes
+        # Auto-refresh displayed fields if config changed externally AND user is not editing
+        # This allows Firestore changes to appear immediately without overwriting user input
+        if config_changed_externally and self.selected_process:
+            # Check if user is currently editing any entry field
+            user_is_editing = current_focus and ('entry' in current_focus.lower() or 'text' in current_focus.lower())
+
+            if not user_is_editing:
+                # Safe to refresh - user is not actively typing
+                process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+                if process:
+                    self.refresh_displayed_fields(process)
+                    logging.info(f"Auto-refreshed displayed fields for external config change")
 
     def update_process_list_periodically(self):
         self.update_process_list()

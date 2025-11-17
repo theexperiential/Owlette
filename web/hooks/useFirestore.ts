@@ -32,10 +32,10 @@ export interface Machine {
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
   metrics?: {
-    cpu: { name?: string; percent: number; unit: string };
+    cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
     disk: { percent: number; total_gb: number; used_gb: number; unit: string };
-    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string };
+    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
     processes?: Record<string, string>;
   };
   processes?: Process[];
