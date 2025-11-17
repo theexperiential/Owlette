@@ -53,7 +53,7 @@ MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites } = useAuth();
+  const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -447,6 +447,13 @@ export default function DashboardPage() {
     }
   }, [user, loading, router]);
 
+  // 2FA Guard: Redirect users who need to complete 2FA setup
+  useEffect(() => {
+    if (!loading && user && requiresMfaSetup) {
+      router.push('/setup-2fa');
+    }
+  }, [loading, user, requiresMfaSetup, router]);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950">
@@ -508,7 +515,7 @@ export default function DashboardPage() {
       />
 
       {/* Main content */}
-      <main className="mx-auto max-w-7xl p-3 md:p-4">
+      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">

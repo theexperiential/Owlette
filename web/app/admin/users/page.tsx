@@ -136,8 +136,9 @@ export default function UserManagementPage() {
 
   return (
     <div className="p-8">
-      {/* Header */}
-      <div className="mb-8">
+      <div className="max-w-screen-2xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">User Management</h1>
         <p className="text-slate-400">Manage user roles and permissions</p>
       </div>
@@ -447,6 +448,7 @@ export default function UserManagementPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

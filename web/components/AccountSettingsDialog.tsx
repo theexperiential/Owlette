@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import { EyeIcon, EyeOffIcon } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle } from 'lucide-react';
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -15,7 +15,7 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDialogProps) {
-  const { user, updateUserProfile, updatePassword } = useAuth();
+  const { user, updateUserProfile, updatePassword, deleteAccount } = useAuth();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,6 +29,11 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+
+  // Account deletion state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   // Parse existing display name when dialog opens
   const handleOpenChange = (isOpen: boolean) => {
@@ -50,6 +55,8 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       setConfirmPassword('');
       setPasswordError('');
       setShowPasswordSection(false);
+      setShowDeleteConfirm(false);
+      setDeletePassword('');
     }
     onOpenChange(isOpen);
   };
@@ -109,6 +116,24 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       // Error already handled by AuthContext with toast
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      await deleteAccount(deletePassword);
+      // Account deletion successful - user will be signed out automatically
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    } catch (error) {
+      // Error already handled by AuthContext with toast
+      setDeleting(false);
     }
   };
 
@@ -278,7 +303,94 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
               </div>
             )}
           </div>
+
+          {/* Danger Zone */}
+          <Separator className="bg-slate-700" />
+
+          <div className="space-y-3 rounded-md border border-red-800 bg-red-900/10 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Label className="text-red-400 font-semibold">Danger Zone</Label>
+                <p className="text-sm text-slate-300">
+                  Permanently delete your account and all associated data. This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full cursor-pointer border-red-800 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300"
+              disabled={loading || deleting}
+            >
+              Delete Account
+            </Button>
+          </div>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <DialogContent className="border-slate-700 bg-slate-800 text-white">
+            <DialogHeader>
+              <DialogTitle className="text-red-400 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Delete Account
+              </DialogTitle>
+              <DialogDescription className="text-slate-400">
+                This action is permanent and cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="rounded-md bg-red-900/20 border border-red-800 p-4">
+                <p className="text-sm text-red-300 font-semibold mb-2">Warning:</p>
+                <ul className="text-sm text-slate-300 space-y-1 list-disc list-inside">
+                  <li>All your sites and machines will be permanently deleted</li>
+                  <li>All deployments and logs will be removed</li>
+                  <li>Your account data cannot be recovered</li>
+                  <li>You will be immediately signed out</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="deletePassword" className="text-white">
+                  Enter your password to confirm
+                </Label>
+                <Input
+                  id="deletePassword"
+                  type="password"
+                  placeholder="Your password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  className="border-slate-700 bg-slate-900 text-white"
+                  disabled={deleting}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeletePassword('');
+                }}
+                className="cursor-pointer border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDeleteAccount}
+                className="cursor-pointer bg-red-600 hover:bg-red-700 text-white"
+                disabled={deleting || !deletePassword}
+              >
+                {deleting ? 'Deleting...' : 'Delete My Account'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <DialogFooter>
           <Button
             variant="outline"
