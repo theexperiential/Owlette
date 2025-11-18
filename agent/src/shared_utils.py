@@ -136,14 +136,14 @@ def get_cpu_temperature():
         if cpu_temp is not None and 0 < cpu_temp < 150:
             return float(cpu_temp)
         else:
-            logging.debug(f"CPU temperature out of range: {cpu_temp}")
+            logging.warning(f"[TEMP] CPU temperature out of range: {cpu_temp}")
             return None
 
-    except ImportError:
-        logging.debug("WinTmp not installed - CPU temperature unavailable")
+    except ImportError as e:
+        logging.warning(f"[TEMP] WinTmp not installed - CPU temperature unavailable: {e}")
         return None
     except Exception as e:
-        logging.debug(f"WinTmp CPU temp failed: {e}")
+        logging.warning(f"[TEMP] WinTmp CPU temp failed: {e}")
         return None
 
 def get_gpu_temperatures():
@@ -182,13 +182,12 @@ def get_gpu_temperatures():
                     })
 
             if temps:
-                logging.debug(f"GPU temperatures from WinTmp: {temps}")
                 return temps
 
-    except ImportError:
-        logging.debug("WinTmp not installed - trying pynvml fallback")
+    except ImportError as e:
+        logging.warning(f"[TEMP] WinTmp not installed - trying pynvml fallback: {e}")
     except Exception as e:
-        logging.debug(f"WinTmp GPU temp failed: {e}")
+        logging.warning(f"[TEMP] WinTmp GPU temp failed: {e}")
 
     # Method 2: Fallback to pynvml for NVIDIA GPUs
     try:
@@ -209,20 +208,20 @@ def get_gpu_temperatures():
                         'temperature': float(temp)
                     })
             except Exception as e:
-                logging.debug(f"pynvml failed for GPU {i}: {e}")
+                logging.warning(f"[TEMP] pynvml failed for GPU {i}: {e}")
 
         nvmlShutdown()
 
         if temps:
-            logging.debug(f"GPU temperatures from pynvml: {temps}")
             return temps
 
-    except ImportError:
-        logging.debug("pynvml not installed - GPU temperature unavailable")
+    except ImportError as e:
+        logging.warning(f"[TEMP] pynvml not installed - GPU temperature unavailable: {e}")
     except Exception as e:
-        logging.debug(f"pynvml GPU temp failed: {e}")
+        logging.warning(f"[TEMP] pynvml GPU temp failed: {e}")
 
     # All methods failed
+    logging.warning("[TEMP] All GPU temperature methods failed - returning empty list")
     return []
 
 def get_path(filename=None):
@@ -749,22 +748,28 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
 
     Returns:
-        Dictionary from JSON file, or None if error/not found
+        Dictionary from JSON file, or {} if error/not found (never returns None)
     """
     with json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
-                    data = json.load(f)
+                    content = f.read().strip()
+                    # Handle empty files gracefully
+                    if not content:
+                        logging.debug(f"{file_path} is empty, returning empty dict")
+                        return {}
+                    data = json.loads(content)
                     return data
 
             except FileNotFoundError:
-                logging.info(f"{file_path} not found.")
-                return None
+                logging.debug(f"{file_path} not found, returning empty dict")
+                return {}
 
-            except json.JSONDecodeError:
-                logging.error("Failed to decode JSON.")
-                return None
+            except json.JSONDecodeError as e:
+                logging.error(f"Failed to decode JSON from {file_path}: {e}")
+                # Return empty dict instead of None to prevent NoneType errors
+                return {}
 
             except PermissionError as e:
                 # File is locked by another process - retry with exponential backoff
@@ -775,13 +780,13 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
                 else:
                     # Final attempt failed
                     logging.error(f"Failed to read after {max_retries} attempts (file locked): {e}")
-                    return None
+                    return {}
 
             except Exception as e:
-                logging.error(f"An error occurred while reading the file: {e}")
-                return None
+                logging.error(f"An error occurred while reading the file {file_path}: {e}")
+                return {}
 
-        return None  # All retries exhausted
+        return {}  # All retries exhausted
 
 # Writes a Python dictionary to a JSON file using atomic write pattern with retry logic
 def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
@@ -927,7 +932,11 @@ def write_config(keys, value):
 
 def fetch_pid_by_id(target_id):
     data = read_json_from_file(RESULT_FILE_PATH)
-    
+
+    # Defensive programming: ensure data is never None
+    if data is None:
+        data = {}
+
     # Filter out the processes that match the target_id
     matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
 
@@ -950,12 +959,21 @@ def update_process_status_in_json(pid, new_status, firebase_client=None):
         firebase_client: Deprecated parameter (kept for compatibility)
     """
     data = read_json_from_file(RESULT_FILE_PATH)
+
+    # Defensive programming: ensure data is never None
+    if data is None:
+        data = {}
+
+    # Ensure PID entry exists
+    if str(pid) not in data:
+        data[str(pid)] = {}
+
     data[str(pid)]['status'] = new_status
     write_json_to_file(data, RESULT_FILE_PATH)
 
     # Status updated locally - will sync via centralized metrics loop on next interval
     # (removed immediate Firebase sync to eliminate duplicate uploads and reduce Firebase writes)
-    logging.info(f"[OK] Process status updated: PID {pid} -> {new_status} (will sync on next metrics interval)")
+    # Removed verbose logging - status changes sync every ~30s to Firebase
 
 def fetch_process_by_id(id, data):
     return next((process for process in data['processes'] if process['id'] == id), None)

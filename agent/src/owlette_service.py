@@ -606,28 +606,32 @@ WshShell.Run "{vbs_command}", 0, False
         task_name = f"OwletteProcess_{process.get('id', 'unknown')}_{int(time.time())}"
 
         # Get the logged-in user from console session
-        try:
-            # Query the username from the active console session
-            username = win32ts.WTSQuerySessionInformation(
-                win32ts.WTS_CURRENT_SERVER_HANDLE,
-                self.console_session_id,
-                win32ts.WTSUserName
-            )
-            domain = win32ts.WTSQuerySessionInformation(
-                win32ts.WTS_CURRENT_SERVER_HANDLE,
-                self.console_session_id,
-                win32ts.WTSDomainName
-            )
+        user_context = None
+        if self.console_session_id is not None:
+            try:
+                # Query the username from the active console session
+                username = win32ts.WTSQuerySessionInformation(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE,
+                    self.console_session_id,
+                    win32ts.WTSUserName
+                )
+                domain = win32ts.WTSQuerySessionInformation(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE,
+                    self.console_session_id,
+                    win32ts.WTSDomainName
+                )
 
-            if domain and username:
-                user_context = f"{domain}\\{username}"
-                logging.info(f"Task will run as: {user_context}")
-            else:
+                if domain and username:
+                    user_context = f"{domain}\\{username}"
+                    logging.info(f"Task will run as: {user_context}")
+                else:
+                    user_context = None
+                    logging.warning("Could not determine user context - task will run as SYSTEM")
+            except Exception as e:
+                logging.error(f"Failed to query user session info: {e}")
                 user_context = None
-                logging.warning("Could not determine user context - task will run as SYSTEM")
-        except Exception as e:
-            logging.error(f"Failed to query user session info: {e}")
-            user_context = None
+        else:
+            logging.debug("No console session available - task will run as SYSTEM")
 
         try:
             # Step 1: Create scheduled task
@@ -731,10 +735,12 @@ WshShell.Run "{vbs_command}", 0, False
         self.current_timestamp = int(time.time())
 
         # Read existing results from the output file
-        try:
-            self.results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
-        except:
-            logging.error('JSON read error')
+        # read_json_from_file now always returns {} instead of None, so no need for try-except
+        self.results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+
+        # Defensive programming: ensure self.results is never None
+        if self.results is None:
+            logging.warning("read_json_from_file returned None (should not happen), using empty dict")
             self.results = {}
 
         # Initialize the entry for the PID if it doesn't exist
@@ -978,6 +984,9 @@ WshShell.Run "{vbs_command}", 0, False
                     # Check if process was manually killed (don't log crash if it was)
                     try:
                         results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                        # Defensive programming: ensure results is never None
+                        if results is None:
+                            results = {}
                         process_status = results.get(str(last_pid), {}).get('status', '')
                         was_manually_killed = (process_status == 'KILLED')
                     except:
@@ -1837,11 +1846,25 @@ WshShell.Run "{vbs_command}", 0, False
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
-        # Get token for logged-in user
-        self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
-        self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
-        # Get self.environment for logged-in user
-        self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+        # Get token for logged-in user (with fallback for headless/no-user scenarios)
+        # NOTE: Since we now use schtasks for process launching, this is less critical
+        # If this fails, the service will still work but launch_python_script_as_user will be unavailable
+        try:
+            self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
+            self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
+            # Get self.environment for logged-in user
+            self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+            logging.info("Successfully obtained user token for console session")
+        except Exception as e:
+            # This is expected when:
+            # - No user is logged into the console (server/headless machine)
+            # - Service doesn't have sufficient privileges
+            # - Session ID is invalid
+            logging.warning(f"Could not obtain console user token (expected for headless machines): {e}")
+            logging.info("Service will continue without user token - processes will be launched via schtasks")
+            self.console_session_id = None
+            self.console_user_token = None
+            self.environment = None
 
         logging.info("Service initialization complete")
 
@@ -1953,8 +1976,14 @@ WshShell.Run "{vbs_command}", 0, False
 
                 # Load in latest results from the output file
                 content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                # Defensive programming: ensure content is never None
+                if content is None:
+                    content = {}
                 if content:
                     self.results = content
+                else:
+                    # Initialize empty results if file was empty/corrupted
+                    self.results = {}
 
                 # Load in all processes in config json
                 processes = shared_utils.read_config(['processes'])

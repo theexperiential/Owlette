@@ -867,7 +867,11 @@ class OwletteConfigApp:
 
     def get_os_pid_by_process_id(self, process_list_id, result_file_path):
         app_states = shared_utils.read_json_from_file(result_file_path)
-        
+
+        # Defensive programming: ensure app_states is never None
+        if app_states is None:
+            app_states = {}
+
         # Filter the dictionary by the process_list_id
         filtered_dict = {pid: info for pid, info in app_states.items() if info.get('id') == process_list_id}
         
@@ -958,6 +962,10 @@ class OwletteConfigApp:
         self.selected_index = self.process_list.curselection()
 
         status_data = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+
+        # Defensive programming: ensure status_data is never None
+        if status_data is None:
+            status_data = {}
 
         # Reload config from disk to catch external changes (from Firestore, etc.)
         fresh_config = shared_utils.read_config()
