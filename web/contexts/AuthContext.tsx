@@ -17,10 +17,40 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot, deleteDoc, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
-import { setSessionCookie, clearSessionCookie } from '@/lib/sessionManager';
 import { handleError } from '@/lib/errorHandler';
 import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
+
+// Helper functions for server-side session management
+const createSessionCookie = async (userId: string): Promise<void> => {
+  try {
+    const response = await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    });
+
+    if (!response.ok) {
+      console.error('[Session] Failed to create session:', await response.text());
+    }
+  } catch (error) {
+    console.error('[Session] Failed to create session:', error);
+  }
+};
+
+const destroySessionCookie = async (): Promise<void> => {
+  try {
+    const response = await fetch('/api/auth/session', {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      console.error('[Session] Failed to destroy session:', await response.text());
+    }
+  } catch (error) {
+    console.error('[Session] Failed to destroy session:', error);
+  }
+};
 
 type UserRole = 'user' | 'admin';
 
@@ -131,8 +161,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (user) {
-        // User is logged in - set session cookie
-        setSessionCookie(user.uid);
+        // User is logged in - create server-side session with HTTPOnly cookie
+        createSessionCookie(user.uid);
 
         // Listen to user document for real-time updates
         if (db) {
@@ -208,8 +238,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
         }
       } else {
-        // User is logged out - clear session cookie and reset role
-        clearSessionCookie();
+        // User is logged out - destroy server-side session and reset role
+        destroySessionCookie();
         setRole('user');
         setUserSites([]);
         setLoading(false);
@@ -345,7 +375,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       await firebaseSignOut(auth);
-      clearSessionCookie();
+      await destroySessionCookie();
       clearMfaSession(); // Clear MFA verification status
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
@@ -562,8 +592,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Delete Firebase Auth account
       await deleteUser(auth.currentUser);
 
-      // Clear session cookie
-      clearSessionCookie();
+      // Destroy server-side session
+      await destroySessionCookie();
 
       toast.success('Account Deleted', {
         description: 'Your account has been permanently deleted.',

@@ -36,11 +36,12 @@ const nextConfig: NextConfig = {
           },
           {
             // Content Security Policy - controls what resources can be loaded
-            // This is a basic policy; adjust based on your needs
+            // SECURITY UPDATE: Removed 'unsafe-eval' (not required by Next.js 13+ App Router)
+            // Keeping 'unsafe-inline' for compatibility (can be replaced with nonces in future)
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Next.js requires unsafe-eval and unsafe-inline, Google OAuth requires Google domains
+              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Removed unsafe-eval, Google OAuth requires Google domains
               "style-src 'self' 'unsafe-inline'", // Tailwind requires unsafe-inline
               "img-src 'self' data: https:",
               "font-src 'self' data:",

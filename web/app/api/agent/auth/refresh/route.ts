@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import admin from '@/lib/firebase-admin';
+import { withRateLimit } from '@/lib/withRateLimit';
 
 /**
  * POST /api/agent/auth/refresh
@@ -21,9 +22,12 @@ import admin from '@/lib/firebase-admin';
  * - 400: Missing required fields
  * - 401: Invalid or expired refresh token
  * - 403: Machine ID mismatch (security check)
+ * - 429: Rate limit exceeded (20 requests per hour per IP)
  * - 500: Server error
+ *
+ * SECURITY: Rate limited to prevent token refresh spam
  */
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     // Parse request body
     const body = await request.json();
@@ -161,4 +165,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, {
+  strategy: 'tokenRefresh',
+  identifier: 'ip',
+});
