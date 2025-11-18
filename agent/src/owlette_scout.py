@@ -29,6 +29,10 @@ result = True
 # Read existing results from the output file
 results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
 
+# Defensive programming: ensure results is never None
+if results is None:
+    results = {}
+
 # Check if the process has a timestamp and if it's older than 60 seconds
 process_info = results.get(str(pid), {})
 timestamp = process_info.get('timestamp', 0)

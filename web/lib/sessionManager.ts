@@ -1,5 +1,22 @@
 /**
- * Session Management Utility
+ * @deprecated This client-side session manager is deprecated and no longer used.
+ *
+ * SECURITY ISSUE: Client-side cookies are vulnerable to XSS attacks.
+ * This file has been replaced with server-side session management.
+ *
+ * NEW IMPLEMENTATION:
+ * - Server-side: lib/sessionManager.server.ts (HTTPOnly, encrypted cookies)
+ * - API routes: app/api/auth/session/route.ts
+ * - Used by: contexts/AuthContext.tsx, middleware.ts
+ *
+ * DO NOT USE THIS FILE IN NEW CODE.
+ * Kept for backward compatibility during migration period only.
+ *
+ * Migration completed: 2025-11-17
+ */
+
+/**
+ * Session Management Utility (DEPRECATED)
  * Handles setting and clearing session cookies for authentication
  */
 

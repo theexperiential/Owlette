@@ -152,7 +152,7 @@ export default function ProjectsPage() {
       />
 
       {/* Main content */}
-      <main className="mx-auto max-w-7xl p-3 md:p-4">
+      <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">Project Distributions</h2>

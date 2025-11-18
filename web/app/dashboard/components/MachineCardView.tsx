@@ -22,6 +22,8 @@ import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import type { Machine, Process } from '@/hooks/useFirestore';
 
 interface MachineCardViewProps {
@@ -47,6 +49,8 @@ export function MachineCardView({
   onToggleAutolaunch,
   onRemoveMachine,
 }: MachineCardViewProps) {
+  const { userPreferences } = useAuth();
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {machines.map((machine) => (
@@ -79,7 +83,14 @@ export function MachineCardView({
                   <span className="text-slate-300 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
                     {machine.metrics.cpu.name || 'Unknown CPU'}
                   </span>
-                  <span className="text-white flex-shrink-0 ml-auto">{machine.metrics.cpu.percent}%</span>
+                  <span className="text-white flex-shrink-0 ml-auto">
+                    {machine.metrics.cpu.percent}%
+                    {machine.metrics.cpu.temperature !== undefined && (
+                      <span className={`ml-2 ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                        {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                      </span>
+                    )}
+                  </span>
                 </div>
               )}
               <div className="flex justify-between text-sm">
@@ -115,6 +126,11 @@ export function MachineCardView({
                     {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                       <span className="text-slate-500 ml-1">
                         ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                      </span>
+                    )}
+                    {machine.metrics.gpu.temperature !== undefined && (
+                      <span className={`ml-2 ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                        {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
                       </span>
                     )}
                   </span>

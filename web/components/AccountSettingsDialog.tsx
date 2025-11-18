@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import { EyeIcon, EyeOffIcon } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Thermometer } from 'lucide-react';
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -15,9 +16,10 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDialogProps) {
-  const { user, updateUserProfile, updatePassword } = useAuth();
+  const { user, userPreferences, updateUserProfile, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [temperatureUnit, setTemperatureUnit] = useState<'C' | 'F'>('C');
   const [loading, setLoading] = useState(false);
 
   // Password change state
@@ -30,26 +32,40 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // Parse existing display name when dialog opens
+  // Account deletion state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  // Parse existing display name and preferences when dialog opens
   const handleOpenChange = (isOpen: boolean) => {
-    if (isOpen && user?.displayName) {
-      const names = user.displayName.split(' ');
-      if (names.length >= 2) {
-        setFirstName(names[0]);
-        setLastName(names.slice(1).join(' '));
-      } else {
-        setFirstName(names[0]);
-        setLastName('');
+    if (isOpen) {
+      // Load display name
+      if (user?.displayName) {
+        const names = user.displayName.split(' ');
+        if (names.length >= 2) {
+          setFirstName(names[0]);
+          setLastName(names.slice(1).join(' '));
+        } else {
+          setFirstName(names[0]);
+          setLastName('');
+        }
       }
-    } else if (!isOpen) {
+
+      // Load temperature unit preference
+      setTemperatureUnit(userPreferences.temperatureUnit);
+    } else {
       // Reset form when closing
       setFirstName('');
       setLastName('');
+      setTemperatureUnit('C');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
       setPasswordError('');
       setShowPasswordSection(false);
+      setShowDeleteConfirm(false);
+      setDeletePassword('');
     }
     onOpenChange(isOpen);
   };
@@ -90,6 +106,11 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
         await updateUserProfile(firstName, lastName);
       }
 
+      // Update preferences if temperature unit changed
+      if (temperatureUnit !== userPreferences.temperatureUnit) {
+        await updateUserPreferences({ temperatureUnit });
+      }
+
       // Update password if password section is shown and fields are filled
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -109,6 +130,24 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
       // Error already handled by AuthContext with toast
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      await deleteAccount(deletePassword);
+      // Account deletion successful - user will be signed out automatically
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    } catch (error) {
+      // Error already handled by AuthContext with toast
+      setDeleting(false);
     }
   };
 
@@ -158,6 +197,41 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
               readOnly
             />
             <p className="text-xs text-slate-500">Email cannot be changed</p>
+          </div>
+
+          {/* Preferences Section */}
+          <Separator className="bg-slate-700" />
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Thermometer className="h-4 w-4 text-slate-400" />
+              <Label className="text-white">Preferences</Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
+              <Select
+                value={temperatureUnit}
+                onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
+                disabled={loading}
+              >
+                <SelectTrigger
+                  id="temperatureUnit"
+                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="border-slate-700 bg-slate-800 text-white">
+                  <SelectItem value="C" className="cursor-pointer hover:bg-slate-700">
+                    Celsius (°C)
+                  </SelectItem>
+                  <SelectItem value="F" className="cursor-pointer hover:bg-slate-700">
+                    Fahrenheit (°F)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">Display temperature in Celsius or Fahrenheit</p>
+            </div>
           </div>
 
           {/* Password Change Section */}
@@ -278,7 +352,94 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
               </div>
             )}
           </div>
+
+          {/* Danger Zone */}
+          <Separator className="bg-slate-700" />
+
+          <div className="space-y-3 rounded-md border border-red-800 bg-red-900/10 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Label className="text-red-400 font-semibold">Danger Zone</Label>
+                <p className="text-sm text-slate-300">
+                  Permanently delete your account and all associated data. This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full cursor-pointer border-red-800 bg-red-900/20 text-red-400 hover:bg-red-900/40 hover:text-red-300"
+              disabled={loading || deleting}
+            >
+              Delete Account
+            </Button>
+          </div>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <DialogContent className="border-slate-700 bg-slate-800 text-white">
+            <DialogHeader>
+              <DialogTitle className="text-red-400 flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Delete Account
+              </DialogTitle>
+              <DialogDescription className="text-slate-400">
+                This action is permanent and cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="rounded-md bg-red-900/20 border border-red-800 p-4">
+                <p className="text-sm text-red-300 font-semibold mb-2">Warning:</p>
+                <ul className="text-sm text-slate-300 space-y-1 list-disc list-inside">
+                  <li>All your sites and machines will be permanently deleted</li>
+                  <li>All deployments and logs will be removed</li>
+                  <li>Your account data cannot be recovered</li>
+                  <li>You will be immediately signed out</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="deletePassword" className="text-white">
+                  Enter your password to confirm
+                </Label>
+                <Input
+                  id="deletePassword"
+                  type="password"
+                  placeholder="Your password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  className="border-slate-700 bg-slate-900 text-white"
+                  disabled={deleting}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeletePassword('');
+                }}
+                className="cursor-pointer border-slate-700 bg-slate-800 text-white hover:bg-slate-700"
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleDeleteAccount}
+                className="cursor-pointer bg-red-600 hover:bg-red-700 text-white"
+                disabled={deleting || !deletePassword}
+              >
+                {deleting ? 'Deleting...' : 'Delete My Account'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <DialogFooter>
           <Button
             variant="outline"

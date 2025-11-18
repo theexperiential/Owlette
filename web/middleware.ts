@@ -1,14 +1,20 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { validateSessionFromRequest } from '@/lib/sessionManager.server';
 
 /**
  * Next.js Middleware for Route Protection
  *
  * This runs on the server BEFORE pages load, providing true security.
  * Unlike client-side redirects, this cannot be bypassed by disabling JavaScript.
+ *
+ * SECURITY UPDATES:
+ * - Uses encrypted, HTTPOnly session cookies (iron-session)
+ * - Validates session expiration on every request
+ * - Cannot be bypassed via JavaScript/XSS attacks
  */
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define protected routes
@@ -26,13 +32,14 @@ export function middleware(request: NextRequest) {
     pathname === path || pathname.startsWith(path)
   );
 
+  // Validate session using encrypted, HTTPOnly cookies
+  const userId = await validateSessionFromRequest(request);
+  const isAuthenticated = userId !== null;
+
   // If accessing a protected route
   if (isProtectedPath) {
-    // Check for auth cookie set by our session manager
-    const authCookie = request.cookies.get('auth');
-
-    // If no auth cookie, redirect to login
-    if (!authCookie || authCookie.value !== 'true') {
+    // If not authenticated, redirect to login
+    if (!isAuthenticated) {
       const loginUrl = new URL('/login', request.url);
       // Save the intended destination so we can redirect after login
       loginUrl.searchParams.set('redirect', pathname);
@@ -46,15 +53,13 @@ export function middleware(request: NextRequest) {
 
     // User is authenticated, allow access
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Middleware] Allowing access to protected route:', pathname);
+      console.log('[Middleware] Allowing access to protected route:', pathname, 'userId:', userId);
     }
   }
 
   // If logged in user tries to access login/register, redirect to dashboard
   if (pathname === '/login' || pathname === '/register') {
-    const authCookie = request.cookies.get('auth');
-
-    if (authCookie && authCookie.value === 'true') {
+    if (isAuthenticated) {
       // Check if there's a redirect parameter
       const redirectParam = request.nextUrl.searchParams.get('redirect');
 

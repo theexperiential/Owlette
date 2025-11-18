@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import admin from '@/lib/firebase-admin';
+import { withRateLimit } from '@/lib/withRateLimit';
 
 /**
  * POST /api/agent/auth/exchange
@@ -24,9 +25,12 @@ import admin from '@/lib/firebase-admin';
  * Errors:
  * - 400: Missing required fields
  * - 401: Invalid or expired registration code
+ * - 429: Rate limit exceeded (5 attempts per hour per IP)
  * - 500: Server error
+ *
+ * SECURITY: Rate limited to prevent brute force token exchange attempts
  */
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     // Parse request body
     const body = await request.json();
@@ -204,4 +208,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, {
+  strategy: 'tokenExchange',
+  identifier: 'ip',
+});

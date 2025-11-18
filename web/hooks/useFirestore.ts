@@ -32,10 +32,10 @@ export interface Machine {
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
   metrics?: {
-    cpu: { name?: string; percent: number; unit: string };
+    cpu: { name?: string; percent: number; unit: string; temperature?: number };
     memory: { percent: number; total_gb: number; used_gb: number; unit: string };
     disk: { percent: number; total_gb: number; used_gb: number; unit: string };
-    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string };
+    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
     processes?: Record<string, string>;
   };
   processes?: Process[];
@@ -530,8 +530,36 @@ export function useMachines(siteId: string) {
 
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
-    } catch (error) {
+
+      // Set config change flag to notify agent (push notification)
+      // This eliminates agent's need to constantly poll config (saves ~500K-1M reads/week)
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+    } catch (error: any) {
       logger.firestore.error('Failed to update process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] updateProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processId
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to update process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };
@@ -577,8 +605,35 @@ export function useMachines(siteId: string) {
 
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
-    } catch (error) {
+
+      // Set config change flag to notify agent
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+    } catch (error: any) {
       logger.firestore.error('Failed to delete process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] deleteProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processId
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to delete process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };
@@ -635,9 +690,36 @@ export function useMachines(siteId: string) {
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
 
+      // Set config change flag to notify agent
+      const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
+      await updateDoc(statusRef, {
+        configChangeFlag: true
+      });
+      logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
+
       return newProcessId;
-    } catch (error) {
+    } catch (error: any) {
       logger.firestore.error('Failed to create process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] createProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processData
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to create process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };

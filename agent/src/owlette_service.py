@@ -606,28 +606,32 @@ WshShell.Run "{vbs_command}", 0, False
         task_name = f"OwletteProcess_{process.get('id', 'unknown')}_{int(time.time())}"
 
         # Get the logged-in user from console session
-        try:
-            # Query the username from the active console session
-            username = win32ts.WTSQuerySessionInformation(
-                win32ts.WTS_CURRENT_SERVER_HANDLE,
-                self.console_session_id,
-                win32ts.WTSUserName
-            )
-            domain = win32ts.WTSQuerySessionInformation(
-                win32ts.WTS_CURRENT_SERVER_HANDLE,
-                self.console_session_id,
-                win32ts.WTSDomainName
-            )
+        user_context = None
+        if self.console_session_id is not None:
+            try:
+                # Query the username from the active console session
+                username = win32ts.WTSQuerySessionInformation(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE,
+                    self.console_session_id,
+                    win32ts.WTSUserName
+                )
+                domain = win32ts.WTSQuerySessionInformation(
+                    win32ts.WTS_CURRENT_SERVER_HANDLE,
+                    self.console_session_id,
+                    win32ts.WTSDomainName
+                )
 
-            if domain and username:
-                user_context = f"{domain}\\{username}"
-                logging.info(f"Task will run as: {user_context}")
-            else:
+                if domain and username:
+                    user_context = f"{domain}\\{username}"
+                    logging.info(f"Task will run as: {user_context}")
+                else:
+                    user_context = None
+                    logging.warning("Could not determine user context - task will run as SYSTEM")
+            except Exception as e:
+                logging.error(f"Failed to query user session info: {e}")
                 user_context = None
-                logging.warning("Could not determine user context - task will run as SYSTEM")
-        except Exception as e:
-            logging.error(f"Failed to query user session info: {e}")
-            user_context = None
+        else:
+            logging.debug("No console session available - task will run as SYSTEM")
 
         try:
             # Step 1: Create scheduled task
@@ -731,10 +735,12 @@ WshShell.Run "{vbs_command}", 0, False
         self.current_timestamp = int(time.time())
 
         # Read existing results from the output file
-        try:
-            self.results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
-        except:
-            logging.error('JSON read error')
+        # read_json_from_file now always returns {} instead of None, so no need for try-except
+        self.results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+
+        # Defensive programming: ensure self.results is never None
+        if self.results is None:
+            logging.warning("read_json_from_file returned None (should not happen), using empty dict")
             self.results = {}
 
         # Initialize the entry for the PID if it doesn't exist
@@ -756,16 +762,9 @@ WshShell.Run "{vbs_command}", 0, False
         except:
             logging.error('JSON write error')
 
-        # Immediately sync to Firestore
-        if self.firebase_client and self.firebase_client.is_connected():
-            try:
-                metrics = shared_utils.get_system_metrics()
-                self.firebase_client._upload_metrics(metrics)
-                logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> LAUNCHING")
-            except Exception as e:
-                # Don't crash if Firebase sync fails - it will sync on next interval
-                logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
-                logging.exception("Full traceback:")
+        # Process launched - status will sync via centralized metrics loop
+        # (removed direct upload to eliminate duplicates and reduce Firebase writes)
+        logging.info(f"[OK] Process launched: PID {pid} -> Will sync on next metrics interval")
 
         return pid
 
@@ -985,6 +984,9 @@ WshShell.Run "{vbs_command}", 0, False
                     # Check if process was manually killed (don't log crash if it was)
                     try:
                         results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                        # Defensive programming: ensure results is never None
+                        if results is None:
+                            results = {}
                         process_status = results.get(str(last_pid), {}).get('status', '')
                         was_manually_killed = (process_status == 'KILLED')
                     except:
@@ -1177,15 +1179,17 @@ WshShell.Run "{vbs_command}", 0, False
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
-            # Push metrics immediately so web dashboard updates instantly
-            # CRITICAL: Pass the new config directly to avoid race condition from re-reading disk
-            if self.firebase_client:
+
+            # Upload metrics immediately so web dashboard sees config changes quickly
+            # This is different from GUI-initiated changes (which already upload immediately)
+            if self.firebase_client and self.firebase_client.is_connected():
                 try:
-                    metrics = shared_utils.get_system_metrics_with_config(new_config)
+                    metrics = shared_utils.get_system_metrics()
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("Metrics pushed immediately after config update")
+                    logging.info("Config change synced to Firestore immediately (for web dashboard responsiveness)")
                 except Exception as e:
-                    logging.error(f"Failed to push metrics after config update: {e}")
+                    logging.error(f"Failed to immediately sync config change: {e}")
+                    logging.info("Config will sync on next metrics interval")
 
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
@@ -1429,7 +1433,7 @@ WshShell.Run "{vbs_command}", 0, False
                     try:
                         if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after installation")
-                            self.firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client.sync_software_inventory()
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after installation: {sync_error}")
                         # Don't fail the installation if sync fails
@@ -1685,7 +1689,7 @@ WshShell.Run "{vbs_command}", 0, False
                     try:
                         if self.firebase_client and self.firebase_client.is_connected():
                             logging.info("Triggering software inventory sync after uninstall")
-                            self.firebase_client._sync_software_inventory(force=True)
+                            self.firebase_client.sync_software_inventory()
                     except Exception as sync_error:
                         logging.warning(f"Failed to sync software inventory after uninstall: {sync_error}")
                         # Don't fail the uninstall if sync fails
@@ -1837,19 +1841,30 @@ WshShell.Run "{vbs_command}", 0, False
 
     # Main main
     def main(self):
-        logging.info("="*70)
-        logging.info("OWLETTE SERVICE STARTING (NSSM MODE)")
-        logging.info("="*70)
 
         # Process startup info
         self.startup_info = win32process.STARTUPINFO()
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
-        # Get token for logged-in user
-        self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
-        self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
-        # Get self.environment for logged-in user
-        self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+        # Get token for logged-in user (with fallback for headless/no-user scenarios)
+        # NOTE: Since we now use schtasks for process launching, this is less critical
+        # If this fails, the service will still work but launch_python_script_as_user will be unavailable
+        try:
+            self.console_session_id = win32ts.WTSGetActiveConsoleSessionId()
+            self.console_user_token = win32ts.WTSQueryUserToken(self.console_session_id)
+            # Get self.environment for logged-in user
+            self.environment = win32profile.CreateEnvironmentBlock(self.console_user_token, False)
+            logging.info("Successfully obtained user token for console session")
+        except Exception as e:
+            # This is expected when:
+            # - No user is logged into the console (server/headless machine)
+            # - Service doesn't have sufficient privileges
+            # - Session ID is invalid
+            logging.warning(f"Could not obtain console user token (expected for headless machines): {e}")
+            logging.info("Service will continue without user token - processes will be launched via schtasks")
+            self.console_session_id = None
+            self.console_user_token = None
+            self.environment = None
 
         logging.info("Service initialization complete")
 
@@ -1961,8 +1976,14 @@ WshShell.Run "{vbs_command}", 0, False
 
                 # Load in latest results from the output file
                 content = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+                # Defensive programming: ensure content is never None
+                if content is None:
+                    content = {}
                 if content:
                     self.results = content
+                else:
+                    # Initialize empty results if file was empty/corrupted
+                    self.results = {}
 
                 # Load in all processes in config json
                 processes = shared_utils.read_config(['processes'])

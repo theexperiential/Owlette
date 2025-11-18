@@ -116,6 +116,114 @@ def get_cpu_name():
     logging.warning("All CPU detection methods failed")
     return "Unknown CPU"
 
+def get_cpu_temperature():
+    """
+    Get CPU temperature in Celsius with fallback chain.
+
+    Returns:
+        float: CPU temperature in Celsius, or None if unavailable
+
+    Notes:
+        - Always returns Celsius (storage standard)
+        - Requires administrator privileges (satisfied by Windows service)
+        - Non-critical - returns None on failure without crashing
+    """
+    try:
+        import WinTmp
+        cpu_temp = WinTmp.CPU_Temp()
+
+        # Validate reasonable temperature range (0-150°C)
+        if cpu_temp is not None and 0 < cpu_temp < 150:
+            return float(cpu_temp)
+        else:
+            logging.warning(f"[TEMP] CPU temperature out of range: {cpu_temp}")
+            return None
+
+    except ImportError as e:
+        logging.warning(f"[TEMP] WinTmp not installed - CPU temperature unavailable: {e}")
+        return None
+    except Exception as e:
+        logging.warning(f"[TEMP] WinTmp CPU temp failed: {e}")
+        return None
+
+def get_gpu_temperatures():
+    """
+    Get GPU temperatures in Celsius with fallback chain.
+
+    Tries multiple methods:
+    1. WinTmp (supports NVIDIA, AMD, Intel)
+    2. pynvml (NVIDIA only - official NVML library)
+
+    Returns:
+        list: List of dicts with GPU index and temperature, or empty list if unavailable
+              Example: [{'index': 0, 'temperature': 72.0}]
+
+    Notes:
+        - Always returns Celsius (storage standard)
+        - Requires administrator privileges for WinTmp (satisfied by Windows service)
+        - pynvml works with standard user permissions
+        - Non-critical - returns empty list on failure without crashing
+    """
+    temps = []
+
+    # Method 1: Try WinTmp (works for NVIDIA, AMD, Intel)
+    try:
+        import WinTmp
+        all_temps = WinTmp.GPU_Temps()
+
+        if all_temps:
+            # WinTmp returns a list of temperatures
+            for i, temp in enumerate(all_temps):
+                # Validate reasonable temperature range (0-150°C)
+                if temp is not None and 0 < temp < 150:
+                    temps.append({
+                        'index': i,
+                        'temperature': float(temp)
+                    })
+
+            if temps:
+                return temps
+
+    except ImportError as e:
+        logging.warning(f"[TEMP] WinTmp not installed - trying pynvml fallback: {e}")
+    except Exception as e:
+        logging.warning(f"[TEMP] WinTmp GPU temp failed: {e}")
+
+    # Method 2: Fallback to pynvml for NVIDIA GPUs
+    try:
+        from pynvml import nvmlInit, nvmlDeviceGetCount, nvmlDeviceGetHandleByIndex, nvmlDeviceGetTemperature, nvmlShutdown, NVML_TEMPERATURE_GPU, NVMLError
+
+        nvmlInit()
+        gpu_count = nvmlDeviceGetCount()
+
+        for i in range(gpu_count):
+            try:
+                handle = nvmlDeviceGetHandleByIndex(i)
+                temp = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
+
+                # Validate reasonable temperature range (0-150°C)
+                if temp is not None and 0 < temp < 150:
+                    temps.append({
+                        'index': i,
+                        'temperature': float(temp)
+                    })
+            except Exception as e:
+                logging.warning(f"[TEMP] pynvml failed for GPU {i}: {e}")
+
+        nvmlShutdown()
+
+        if temps:
+            return temps
+
+    except ImportError as e:
+        logging.warning(f"[TEMP] pynvml not installed - GPU temperature unavailable: {e}")
+    except Exception as e:
+        logging.warning(f"[TEMP] pynvml GPU temp failed: {e}")
+
+    # All methods failed
+    logging.warning("[TEMP] All GPU temperature methods failed - returning empty list")
+    return []
+
 def get_path(filename=None):
     """
     Get path relative to the currently executing script (installation directory).
@@ -640,22 +748,28 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
         initial_delay: Initial delay in seconds, doubles with each retry (default: 0.1s)
 
     Returns:
-        Dictionary from JSON file, or None if error/not found
+        Dictionary from JSON file, or {} if error/not found (never returns None)
     """
     with json_lock:
         for attempt in range(max_retries):
             try:
                 with open(file_path, 'r') as f:
-                    data = json.load(f)
+                    content = f.read().strip()
+                    # Handle empty files gracefully
+                    if not content:
+                        logging.debug(f"{file_path} is empty, returning empty dict")
+                        return {}
+                    data = json.loads(content)
                     return data
 
             except FileNotFoundError:
-                logging.info(f"{file_path} not found.")
-                return None
+                logging.debug(f"{file_path} not found, returning empty dict")
+                return {}
 
-            except json.JSONDecodeError:
-                logging.error("Failed to decode JSON.")
-                return None
+            except json.JSONDecodeError as e:
+                logging.error(f"Failed to decode JSON from {file_path}: {e}")
+                # Return empty dict instead of None to prevent NoneType errors
+                return {}
 
             except PermissionError as e:
                 # File is locked by another process - retry with exponential backoff
@@ -666,13 +780,13 @@ def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
                 else:
                     # Final attempt failed
                     logging.error(f"Failed to read after {max_retries} attempts (file locked): {e}")
-                    return None
+                    return {}
 
             except Exception as e:
-                logging.error(f"An error occurred while reading the file: {e}")
-                return None
+                logging.error(f"An error occurred while reading the file {file_path}: {e}")
+                return {}
 
-        return None  # All retries exhausted
+        return {}  # All retries exhausted
 
 # Writes a Python dictionary to a JSON file using atomic write pattern with retry logic
 def write_json_to_file(data, file_path, max_retries=3, initial_delay=0.1):
@@ -818,7 +932,11 @@ def write_config(keys, value):
 
 def fetch_pid_by_id(target_id):
     data = read_json_from_file(RESULT_FILE_PATH)
-    
+
+    # Defensive programming: ensure data is never None
+    if data is None:
+        data = {}
+
     # Filter out the processes that match the target_id
     matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
 
@@ -833,27 +951,29 @@ def fetch_pid_by_id(target_id):
 
 def update_process_status_in_json(pid, new_status, firebase_client=None):
     """
-    Update process status in JSON file and optionally sync to Firebase immediately.
+    Update process status in JSON file. Status will sync to Firebase via centralized metrics loop.
 
     Args:
         pid: Process ID to update
         new_status: New status string (LAUNCHING, RUNNING, STALLED, etc.)
-        firebase_client: Optional FirebaseClient instance for immediate sync
+        firebase_client: Deprecated parameter (kept for compatibility)
     """
     data = read_json_from_file(RESULT_FILE_PATH)
+
+    # Defensive programming: ensure data is never None
+    if data is None:
+        data = {}
+
+    # Ensure PID entry exists
+    if str(pid) not in data:
+        data[str(pid)] = {}
+
     data[str(pid)]['status'] = new_status
     write_json_to_file(data, RESULT_FILE_PATH)
 
-    # Immediately sync to Firestore if client is available and connected
-    if firebase_client and firebase_client.is_connected():
-        try:
-            metrics = get_system_metrics()
-            firebase_client._upload_metrics(metrics)
-            logging.info(f"[OK] Process status synced to Firebase: PID {pid} -> {new_status}")
-        except Exception as e:
-            # Don't crash if Firebase sync fails - it will sync on next interval
-            logging.error(f"[ERROR] Failed to sync process status to Firebase: {e}")
-            logging.exception("Full traceback:")
+    # Status updated locally - will sync via centralized metrics loop on next interval
+    # (removed immediate Firebase sync to eliminate duplicate uploads and reduce Firebase writes)
+    # Removed verbose logging - status changes sync every ~30s to Firebase
 
 def fetch_process_by_id(id, data):
     return next((process for process in data['processes'] if process['id'] == id), None)
@@ -943,9 +1063,10 @@ def get_system_metrics_with_config(config, skip_gpu=False):
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
     try:
-        # CPU - model name and percentage
+        # CPU - model name, percentage, and temperature
         cpu_name = get_cpu_name()
         cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
+        cpu_temp = get_cpu_temperature()  # Celsius or None
 
         # Memory - bytes to GB
         mem = psutil.virtual_memory()
@@ -959,11 +1080,12 @@ def get_system_metrics_with_config(config, skip_gpu=False):
         disk_total_gb = round(disk.total / (1024**3), 2)
         disk_percent = round(disk.percent, 1)
 
-        # GPU - usage % and VRAM (skip if requested to avoid command window flashing)
+        # GPU - usage %, VRAM, and temperature (skip if requested to avoid command window flashing)
         gpu_usage_percent = 0
         gpu_vram_used_gb = 0
         gpu_vram_total_gb = 0
         gpu_name = "N/A"
+        gpu_temp = None  # Celsius or None
         if not skip_gpu:
             try:
                 gpus = GPUtil.getGPUs()
@@ -973,6 +1095,11 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                     gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
                     gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
                     gpu_name = gpu.name
+
+                    # Get GPU temperature (first GPU only, to match GPUtil behavior)
+                    gpu_temps = get_gpu_temperatures()
+                    if gpu_temps and len(gpu_temps) > 0:
+                        gpu_temp = gpu_temps[0]['temperature']  # Celsius
             except:
                 pass
 
@@ -1034,12 +1161,28 @@ def get_system_metrics_with_config(config, skip_gpu=False):
         except Exception as e:
             logging.error(f"Error collecting process data: {e}")
 
+        # Build CPU metrics with optional temperature
+        cpu_metrics = {
+            'name': cpu_name,
+            'percent': cpu_percent,
+            'unit': '%'
+        }
+        if cpu_temp is not None:
+            cpu_metrics['temperature'] = round(cpu_temp, 1)  # Celsius, 1 decimal place
+
+        # Build GPU metrics with optional temperature
+        gpu_metrics = {
+            'name': gpu_name,
+            'usage_percent': gpu_usage_percent,
+            'vram_used_gb': gpu_vram_used_gb,
+            'vram_total_gb': gpu_vram_total_gb,
+            'unit': 'GB'
+        }
+        if gpu_temp is not None:
+            gpu_metrics['temperature'] = round(gpu_temp, 1)  # Celsius, 1 decimal place
+
         return {
-            'cpu': {
-                'name': cpu_name,
-                'percent': cpu_percent,
-                'unit': '%'
-            },
+            'cpu': cpu_metrics,
             'memory': {
                 'used_gb': mem_used_gb,
                 'total_gb': mem_total_gb,
@@ -1052,13 +1195,7 @@ def get_system_metrics_with_config(config, skip_gpu=False):
                 'percent': disk_percent,
                 'unit': 'GB'
             },
-            'gpu': {
-                'name': gpu_name,
-                'usage_percent': gpu_usage_percent,
-                'vram_used_gb': gpu_vram_used_gb,
-                'vram_total_gb': gpu_vram_total_gb,
-                'unit': 'GB'
-            },
+            'gpu': gpu_metrics,
             'processes': processes_data
         }
     except Exception as e:

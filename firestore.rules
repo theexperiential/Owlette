@@ -114,13 +114,23 @@ service cloud.firestore {
       match /machines/{machineId} {
         // Machine status document
         // Agents write heartbeats, metrics, and process status
-        // Web dashboard reads machine status
+        // Web dashboard reads machine status and can set configChangeFlag
         // OAuth agents can ONLY access their own machine (strict isolation)
         allow read: if canAccessSite(siteId) ||
                        isServiceAccount() ||
                        agentCanAccessMachine(siteId, machineId);
+
+        // Allow web dashboard to update configChangeFlag (for push-based config updates)
+        // Also permit timestamp fields that Firebase may add automatically
+        // Block modifications to agent-managed fields (metrics, processes, online, lastHeartbeat)
+        allow update: if canAccessSite(siteId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasAny(['configChangeFlag']) &&
+                         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['metrics', 'processes', 'online', 'lastHeartbeat']);
+
+        // Allow agents full write access for metrics, heartbeats, processes
         allow write: if isServiceAccount() ||
-                        agentCanAccessMachine(siteId, machineId); // Only the assigned agent can write
+                        agentCanAccessMachine(siteId, machineId);
+
         allow delete: if canAccessSite(siteId); // Authenticated users can remove machines from sites
 
         // Commands documents (pending/completed)
@@ -259,6 +269,7 @@ service cloud.firestore {
       allow create: if request.auth.uid == userId;
 
       // Users can update their own sites array (when creating sites)
+      // Users can update MFA fields (mfaEnrolled, mfaSecret, backupCodes, requiresMfaSetup)
       // But cannot change their role or other sensitive fields
       allow update: if request.auth.uid == userId &&
                        request.resource.data.role == resource.data.role &&

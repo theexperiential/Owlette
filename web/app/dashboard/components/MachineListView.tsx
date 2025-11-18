@@ -24,6 +24,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
+import { formatStorageRange } from '@/lib/storageUtils';
 import type { Machine, Process } from '@/hooks/useFirestore';
 
 // Memoized table header to prevent flickering on data updates
@@ -70,6 +73,8 @@ export function MachineListView({
   onToggleAutolaunch,
   onRemoveMachine,
 }: MachineListViewProps) {
+  const { userPreferences } = useAuth();
+
   const handleRowClick = (machineId: string, canExpand: boolean) => {
     // Don't toggle if user is selecting text
     const selection = window.getSelection();
@@ -114,7 +119,14 @@ export function MachineListView({
                       <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
                         {machine.metrics.cpu.name || 'Unknown CPU'}
                       </div>
-                      <div className="text-sm">{machine.metrics.cpu.percent}%</div>
+                      <div className="text-sm">
+                        {machine.metrics.cpu.percent}%
+                        {machine.metrics.cpu.temperature !== undefined && (
+                          <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                            {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                          </span>
+                        )}
+                      </div>
                     </>
                   ) : '-'}
                 </TableCell>
@@ -123,7 +135,7 @@ export function MachineListView({
                     <>
                       {machine.metrics.memory.percent}%
                       <span className="text-slate-500 text-xs ml-1">
-                        ({machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB)
+                        ({formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)})
                       </span>
                     </>
                   ) : '-'}
@@ -133,7 +145,7 @@ export function MachineListView({
                     <>
                       {machine.metrics.disk.percent}%
                       <span className="text-slate-500 text-xs ml-1">
-                        ({machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB)
+                        ({formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)})
                       </span>
                     </>
                   ) : '-'}
@@ -148,7 +160,12 @@ export function MachineListView({
                         {machine.metrics.gpu.usage_percent}%
                         {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                           <span className="text-slate-500 text-xs ml-1">
-                            ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                            ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
+                          </span>
+                        )}
+                        {machine.metrics.gpu.temperature !== undefined && (
+                          <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                            {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
                           </span>
                         )}
                       </div>

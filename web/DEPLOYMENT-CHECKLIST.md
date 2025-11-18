@@ -74,9 +74,12 @@ Copy these 6 values from Firebase SDK config snippet:
 
 ## Phase 4: Configure Environment Variables
 
-### Add Firebase Variables to Railway
+### Add Required Variables to Railway
 - [ ] In your service, click "Variables" tab
-- [ ] Copy your `.env.example` file and fill in the correct Firebase values:
+- [ ] Click "Raw Editor" or "Bulk Import"
+- [ ] Copy and paste these variables (fill in your actual values):
+
+  **Firebase Client-Side (6 variables):**
   ```env
   NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key_here
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
@@ -85,15 +88,52 @@ Copy these 6 values from Firebase SDK config snippet:
   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
   NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
   ```
-- [ ] Click "Raw Editor" or "Bulk Import" in Railway Variables tab
-- [ ] Paste all 6 variables at once (Railway accepts `KEY=value` format)
+
+  **Firebase Server-Side Admin SDK (3 variables):**
+  ```env
+  FIREBASE_PROJECT_ID=your-project-id
+  FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccount.com
+  FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYourPrivateKeyHere\n-----END PRIVATE KEY-----"
+  ```
+
+  > Note: Get Admin SDK credentials from Firebase Console → Project Settings → Service Accounts → Generate new private key
+
+  **Session Secret (1 variable - REQUIRED):**
+  ```env
+  SESSION_SECRET=<generate with: openssl rand -base64 32>
+  ```
+
+  > **IMPORTANT:** Generate a NEW secret for production (different from development!)
+
+  **Upstash Redis (2 variables - REQUIRED for rate limiting):**
+  ```env
+  UPSTASH_REDIS_REST_URL=https://your-instance.upstash.io
+  UPSTASH_REDIS_REST_TOKEN=your-token-here
+  ```
+
+  > Note: Create free account at https://upstash.com and create Redis database
+
+  **Resend Email (4 variables - OPTIONAL):**
+  ```env
+  RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+  RESEND_FROM_EMAIL=notifications@yourdomain.com
+  ADMIN_EMAIL_PROD=admin@example.com
+  SEND_WELCOME_EMAIL=false
+  ```
+
+  > Note: Only needed if you want email notifications
 
 ### Verify Configuration
 - [ ] Click "Show All" to view all variables
-- [ ] Confirm all 6 Firebase variables are present
+- [ ] Confirm all **9 REQUIRED** variables are present (6 Firebase client + 3 Firebase server)
+- [ ] Confirm `SESSION_SECRET` is set (new requirement)
+- [ ] Confirm Upstash Redis variables are set (new requirement)
 - [ ] Confirm `NODE_ENV=production` exists (auto-set by railway.toml)
 
-**Important:** Do NOT include quotes around values!
+**Important:**
+- Do NOT include quotes around values (except `FIREBASE_PRIVATE_KEY`)
+- Use a **different** `SESSION_SECRET` for production vs development
+- Rate limiting will be disabled without Upstash Redis (app works but vulnerable to brute force)
 
 ---
 

@@ -36,15 +36,17 @@ const nextConfig: NextConfig = {
           },
           {
             // Content Security Policy - controls what resources can be loaded
-            // This is a basic policy; adjust based on your needs
+            // SECURITY UPDATE: Removed 'unsafe-eval' (not required by Next.js 13+ App Router)
+            // Keeping 'unsafe-inline' for compatibility (can be replaced with nonces in future)
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline'", // Next.js requires unsafe-eval and unsafe-inline
+              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Removed unsafe-eval, Google OAuth requires Google domains
               "style-src 'self' 'unsafe-inline'", // Tailwind requires unsafe-inline
               "img-src 'self' data: https:",
               "font-src 'self' data:",
-              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com", // Firebase endpoints
+              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com", // Firebase endpoints + Google OAuth
+              "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
               "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
               "base-uri 'self'",
               "form-action 'self'",
