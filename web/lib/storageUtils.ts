@@ -181,3 +181,35 @@ export function isValidVersion(version: string): boolean {
   const semverRegex = /^\d+\.\d+\.\d+$/;
   return semverRegex.test(version);
 }
+
+/**
+ * Format storage size with automatic unit selection (GB/TB)
+ * Switches to TB when GB > 1000
+ *
+ * @param gb - Size in gigabytes
+ * @returns Formatted string with appropriate unit (e.g., "512.5 GB" or "1.2 TB")
+ */
+export function formatStorage(gb: number): string {
+  if (gb >= 1000) {
+    const tb = gb / 1000;
+    return `${tb.toFixed(1)} TB`;
+  }
+  return `${gb.toFixed(1)} GB`;
+}
+
+/**
+ * Format storage range (used/total) with automatic unit selection
+ * Both values use the same unit based on the total size
+ *
+ * @param usedGb - Used storage in gigabytes
+ * @param totalGb - Total storage in gigabytes
+ * @returns Formatted string (e.g., "512.5 / 1024.0 GB" or "1.2 / 2.5 TB")
+ */
+export function formatStorageRange(usedGb: number, totalGb: number): string {
+  if (totalGb >= 1000) {
+    const usedTb = usedGb / 1000;
+    const totalTb = totalGb / 1000;
+    return `${usedTb.toFixed(1)} / ${totalTb.toFixed(1)} TB`;
+  }
+  return `${usedGb.toFixed(1)} / ${totalGb.toFixed(1)} GB`;
+}

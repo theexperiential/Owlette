@@ -28,6 +28,7 @@ import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
+import { formatStorageRange } from '@/lib/storageUtils';
 
 type ViewType = 'card' | 'list';
 
@@ -654,7 +655,7 @@ export default function DashboardPage() {
                           {machine.metrics.memory?.percent}%
                           {machine.metrics.memory?.used_gb && machine.metrics.memory?.total_gb && (
                             <span className="text-slate-500 ml-1 hidden md:inline">
-                              ({machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB)
+                              ({formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)})
                             </span>
                           )}
                         </span>
@@ -665,7 +666,7 @@ export default function DashboardPage() {
                           {machine.metrics.disk?.percent}%
                           {machine.metrics.disk?.used_gb && machine.metrics.disk?.total_gb && (
                             <span className="text-slate-500 ml-1 hidden md:inline">
-                              ({machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB)
+                              ({formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)})
                             </span>
                           )}
                         </span>
@@ -680,7 +681,7 @@ export default function DashboardPage() {
                             {machine.metrics.gpu.usage_percent}%
                             {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                               <span className="text-slate-500 ml-1">
-                                ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                                ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
                               </span>
                             )}
                             {machine.metrics.gpu.temperature !== undefined && (
@@ -831,23 +832,33 @@ export default function DashboardPage() {
                           </TableCell>
                           <TableCell className="text-white max-w-28">
                             {machine.metrics?.memory ? (
-                              <div title={`${machine.metrics.memory.used_gb.toFixed(1)} / ${machine.metrics.memory.total_gb.toFixed(1)} GB`}>
-                                {machine.metrics.memory.percent}%
-                              </div>
+                              <>
+                                <div className="text-xs text-slate-400">
+                                  {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
+                                </div>
+                                <div className="text-sm">
+                                  {machine.metrics.memory.percent}%
+                                </div>
+                              </>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-white max-w-28">
                             {machine.metrics?.disk ? (
-                              <div title={`${machine.metrics.disk.used_gb.toFixed(1)} / ${machine.metrics.disk.total_gb.toFixed(1)} GB`}>
-                                {machine.metrics.disk.percent}%
-                              </div>
+                              <>
+                                <div className="text-xs text-slate-400">
+                                  {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
+                                </div>
+                                <div className="text-sm">
+                                  {machine.metrics.disk.percent}%
+                                </div>
+                              </>
                             ) : '-'}
                           </TableCell>
                           <TableCell className="text-white max-w-32">
                             {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                               <>
                                 <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>{machine.metrics.gpu.name}</div>
-                                <div className="text-sm" title={machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb ? `${machine.metrics.gpu.vram_used_gb.toFixed(1)} / ${machine.metrics.gpu.vram_total_gb.toFixed(1)} GB` : undefined}>
+                                <div className="text-sm" title={machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb ? formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb) : undefined}>
                                   {machine.metrics.gpu.usage_percent}%
                                   {machine.metrics.gpu.temperature !== undefined && (
                                     <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>

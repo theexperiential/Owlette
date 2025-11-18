@@ -105,7 +105,7 @@ echo Pip installed successfully!
 :: Step 5: Install dependencies
 :: ============================================================================
 echo [5/9] Installing dependencies (this may take a few minutes)...
-"%~dp0build\python\python.exe" -m pip install --no-warn-script-location -r "%~dp0requirements.txt"
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo ERROR: Failed to install dependencies
     pause

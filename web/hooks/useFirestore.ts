@@ -538,8 +538,28 @@ export function useMachines(siteId: string) {
         configChangeFlag: true
       });
       logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
-    } catch (error) {
+    } catch (error: any) {
       logger.firestore.error('Failed to update process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] updateProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processId
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to update process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };
@@ -592,8 +612,28 @@ export function useMachines(siteId: string) {
         configChangeFlag: true
       });
       logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
-    } catch (error) {
+    } catch (error: any) {
       logger.firestore.error('Failed to delete process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] deleteProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processId
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to delete process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };
@@ -658,8 +698,28 @@ export function useMachines(siteId: string) {
       logger.debug('Config change flag set - agent will fetch updated config on next metrics cycle');
 
       return newProcessId;
-    } catch (error) {
+    } catch (error: any) {
       logger.firestore.error('Failed to create process', error);
+
+      // Enhanced error logging for debugging
+      console.error('[Firestore Error] createProcess failed:', {
+        error,
+        code: error?.code,
+        message: error?.message,
+        siteId,
+        machineId,
+        processData
+      });
+
+      // Provide more descriptive error messages for common Firestore errors
+      if (error?.code === 'permission-denied') {
+        throw new Error('Permission denied: Unable to create process configuration. Please check Firestore security rules.');
+      } else if (error?.code === 'not-found') {
+        throw new Error('Machine or config document not found. The machine may have been removed.');
+      } else if (error?.code === 'unavailable') {
+        throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
+      }
+
       throw error;
     }
   };

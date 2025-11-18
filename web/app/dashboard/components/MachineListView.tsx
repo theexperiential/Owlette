@@ -26,6 +26,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
+import { formatStorageRange } from '@/lib/storageUtils';
 import type { Machine, Process } from '@/hooks/useFirestore';
 
 // Memoized table header to prevent flickering on data updates
@@ -134,7 +135,7 @@ export function MachineListView({
                     <>
                       {machine.metrics.memory.percent}%
                       <span className="text-slate-500 text-xs ml-1">
-                        ({machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB)
+                        ({formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)})
                       </span>
                     </>
                   ) : '-'}
@@ -144,7 +145,7 @@ export function MachineListView({
                     <>
                       {machine.metrics.disk.percent}%
                       <span className="text-slate-500 text-xs ml-1">
-                        ({machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB)
+                        ({formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)})
                       </span>
                     </>
                   ) : '-'}
@@ -159,7 +160,7 @@ export function MachineListView({
                         {machine.metrics.gpu.usage_percent}%
                         {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                           <span className="text-slate-500 text-xs ml-1">
-                            ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                            ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
                           </span>
                         )}
                         {machine.metrics.gpu.temperature !== undefined && (
