@@ -27,6 +27,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 
 type ViewType = 'card' | 'list';
 
@@ -36,13 +37,13 @@ const MemoizedTableHeader = memo(() => {
     <TableHeader className="sticky top-0 z-10 bg-slate-900">
       <TableRow className="border-slate-800 hover:bg-slate-800">
         <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Hostname</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Status</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>CPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>GPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
+        <TableHead className="text-slate-200 w-32" style={{ willChange: 'auto' }}>Hostname</TableHead>
+        <TableHead className="text-slate-200 w-20" style={{ willChange: 'auto' }}>Status</TableHead>
+        <TableHead className="text-slate-200 w-36" style={{ willChange: 'auto' }}>CPU</TableHead>
+        <TableHead className="text-slate-200 w-28" style={{ willChange: 'auto' }}>Memory</TableHead>
+        <TableHead className="text-slate-200 w-28" style={{ willChange: 'auto' }}>Disk</TableHead>
+        <TableHead className="text-slate-200 w-32" style={{ willChange: 'auto' }}>GPU</TableHead>
+        <TableHead className="text-slate-200 w-36" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
         <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
       </TableRow>
     </TableHeader>
@@ -53,7 +54,7 @@ MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup } = useAuth();
+  const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup, userPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -637,7 +638,14 @@ export default function DashboardPage() {
                           <span className="text-slate-300 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
                             {machine.metrics.cpu.name || 'Unknown CPU'}
                           </span>
-                          <span className="text-white flex-shrink-0 ml-auto">{machine.metrics.cpu.percent}%</span>
+                          <span className="text-white flex-shrink-0 ml-auto">
+                            {machine.metrics.cpu.percent}%
+                            {machine.metrics.cpu.temperature !== undefined && (
+                              <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                                {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                              </span>
+                            )}
+                          </span>
                         </div>
                       )}
                       <div className="flex justify-between text-sm">
@@ -673,6 +681,11 @@ export default function DashboardPage() {
                             {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
                               <span className="text-slate-500 ml-1">
                                 ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                              </span>
+                            )}
+                            {machine.metrics.gpu.temperature !== undefined && (
+                              <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                                {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
                               </span>
                             )}
                           </span>
@@ -775,7 +788,7 @@ export default function DashboardPage() {
 
             {/* List View - Hidden on mobile, only shown on desktop when selected */}
             <div className={`rounded-lg border border-slate-800 bg-slate-900 overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
-                <Table style={{ contain: 'layout' }}>
+                <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <MemoizedTableHeader />
                   <TableBody>
                     {machines.map((machine) => (
@@ -793,49 +806,52 @@ export default function DashboardPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="font-medium text-white select-text">{machine.machineId}</TableCell>
-                          <TableCell>
+                          <TableCell className="font-medium text-white select-text max-w-32">
+                            <div className="truncate" title={machine.machineId}>{machine.machineId}</div>
+                          </TableCell>
+                          <TableCell className="max-w-20">
                             <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
                               {machine.online ? 'Online' : 'Offline'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-white">
+                          <TableCell className="text-white max-w-36">
                             {machine.metrics?.cpu ? (
                               <>
-                                <div className="text-xs text-slate-400">{machine.metrics.cpu.name || 'Unknown CPU'}</div>
-                                <div className="text-sm">{machine.metrics.cpu.percent}%</div>
+                                <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>{machine.metrics.cpu.name || 'Unknown CPU'}</div>
+                                <div className="text-sm">
+                                  {machine.metrics.cpu.percent}%
+                                  {machine.metrics.cpu.temperature !== undefined && (
+                                    <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                                      {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                                    </span>
+                                  )}
+                                </div>
                               </>
                             ) : '-'}
                           </TableCell>
-                          <TableCell className="text-white">
+                          <TableCell className="text-white max-w-28">
                             {machine.metrics?.memory ? (
-                              <>
+                              <div title={`${machine.metrics.memory.used_gb.toFixed(1)} / ${machine.metrics.memory.total_gb.toFixed(1)} GB`}>
                                 {machine.metrics.memory.percent}%
-                                <span className="text-slate-500 text-xs ml-1">
-                                  ({machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB)
-                                </span>
-                              </>
+                              </div>
                             ) : '-'}
                           </TableCell>
-                          <TableCell className="text-white">
+                          <TableCell className="text-white max-w-28">
                             {machine.metrics?.disk ? (
-                              <>
+                              <div title={`${machine.metrics.disk.used_gb.toFixed(1)} / ${machine.metrics.disk.total_gb.toFixed(1)} GB`}>
                                 {machine.metrics.disk.percent}%
-                                <span className="text-slate-500 text-xs ml-1">
-                                  ({machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB)
-                                </span>
-                              </>
+                              </div>
                             ) : '-'}
                           </TableCell>
-                          <TableCell className="text-white">
+                          <TableCell className="text-white max-w-32">
                             {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
                               <>
-                                <div className="text-xs text-slate-400">{machine.metrics.gpu.name}</div>
-                                <div className="text-sm">
+                                <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>{machine.metrics.gpu.name}</div>
+                                <div className="text-sm" title={machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb ? `${machine.metrics.gpu.vram_used_gb.toFixed(1)} / ${machine.metrics.gpu.vram_total_gb.toFixed(1)} GB` : undefined}>
                                   {machine.metrics.gpu.usage_percent}%
-                                  {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                                    <span className="text-slate-500 text-xs ml-1">
-                                      ({machine.metrics.gpu.vram_used_gb.toFixed(1)} / {machine.metrics.gpu.vram_total_gb.toFixed(1)} GB)
+                                  {machine.metrics.gpu.temperature !== undefined && (
+                                    <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                                      {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
                                     </span>
                                   )}
                                 </div>
@@ -844,8 +860,10 @@ export default function DashboardPage() {
                               <span className="text-slate-500">N/A</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-slate-400 text-xs">
-                            {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
+                          <TableCell className="text-slate-400 text-xs max-w-36">
+                            <div className="truncate" title={new Date(machine.lastHeartbeat * 1000).toLocaleString()}>
+                              {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
+                            </div>
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <MachineContextMenu
