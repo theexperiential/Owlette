@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { PageHeader } from '@/components/PageHeader';
 import { toast } from 'sonner';
 
 export default function TestEmailPage() {
@@ -59,10 +58,12 @@ export default function TestEmailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Email Test"
-        description="Test your Resend email configuration"
-      />
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Email Test</h1>
+        <p className="text-muted-foreground mt-2">
+          Test your Resend email configuration and verify email delivery
+        </p>
+      </div>
 
       <Card>
         <CardHeader>

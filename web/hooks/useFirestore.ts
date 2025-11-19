@@ -273,7 +273,7 @@ export function useMachines(siteId: string) {
 
         const updated = prevMachines.map(machine => {
           const heartbeatAge = now - machine.lastHeartbeat;
-          const shouldBeOnline = (machine.online === true) && (heartbeatAge < 90);
+          const shouldBeOnline = (machine.online === true) && (heartbeatAge < 150);
 
           // If calculated online state differs from current state, update it
           if (machine.online !== shouldBeOnline) {
@@ -356,11 +356,11 @@ export function useMachines(siteId: string) {
             // Determine online status: use both boolean flag AND heartbeat timestamp
             // Machine is online if BOTH conditions are true:
             // 1. online flag is true
-            // 2. Last heartbeat was within 90 seconds (1.5x the metrics interval)
-            //    Agent sends metrics every 60s, so 90s allows for network delays
+            // 2. Last heartbeat was within 150 seconds
+            //    Agent sends metrics every 30-120s (adaptive), so 150s allows buffer for idle machines
             const now = Math.floor(Date.now() / 1000); // Current time in seconds
             const heartbeatAge = now - lastHeartbeat; // Age in seconds
-            const isOnline = (data.online === true) && (heartbeatAge < 90);
+            const isOnline = (data.online === true) && (heartbeatAge < 150);
 
               // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
               const metrics = data.metrics ? {
