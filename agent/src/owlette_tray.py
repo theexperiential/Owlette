@@ -13,6 +13,7 @@ import win32gui
 import win32con
 import threading
 import time
+import json
 import win32serviceutil
 import win32service
 
@@ -94,65 +95,116 @@ def check_service_running():
         logging.debug(f"Service status check failed: {e}")
         return False
 
-# Function to check Firebase connection status
-def check_firebase_status():
+# Function to read service status from IPC file
+def read_service_status():
     """
-    Check Firebase connection by:
-    1. Checking if Firebase is enabled in config
-    2. Checking if credentials file exists
-    3. Checking service log for recent connection errors
+    Read service status from status file written by service.
 
-    Returns: 'connected', 'disabled', or 'error'
+    The service writes C:\\ProgramData\\Owlette\\tmp\\service_status.json
+    every 10 seconds with current Firebase connection state.
+
+    Returns dict or None if file doesn't exist/can't be read.
     """
     try:
-        # Read config to see if Firebase is enabled
-        config = shared_utils.read_json_from_file(shared_utils.CONFIG_PATH)
-        if not config:
-            return 'disabled'
+        status_path = shared_utils.get_data_path('tmp/service_status.json')
+        logging.info(f"[STATUS] Reading status from: {status_path}")
 
-        firebase_enabled = config.get('firebase', {}).get('enabled', False)
-        if not firebase_enabled:
-            return 'disabled'
+        if not os.path.exists(status_path):
+            logging.warning(f"[STATUS] Status file does not exist: {status_path}")
+            return None
 
-        # Check if OAuth tokens exist (new authentication method)
-        token_path = os.path.join(os.environ.get('PROGRAMDATA', 'C:\\ProgramData'), 'Owlette', '.tokens.enc')
-        if not os.path.exists(token_path):
-            return 'error'
+        # Check file age (stale if > 120 seconds old)
+        file_age = time.time() - os.path.getmtime(status_path)
+        logging.info(f"[STATUS] Status file age: {int(file_age)}s")
 
-        # If enabled and OAuth tokens exist, assume connected
-        # (We could add more sophisticated checks by reading the log file)
-        return 'connected'
+        if file_age > 120:
+            logging.warning(f"[STATUS] Service status file is stale ({int(file_age)}s old)")
+            return None
+
+        with open(status_path, 'r') as f:
+            raw_content = f.read()
+            logging.info(f"[STATUS] Raw file content: {raw_content[:200]}")
+
+        # Parse JSON
+        with open(status_path, 'r') as f:
+            status_data = json.load(f)
+            logging.info(f"[STATUS] Parsed status data: {status_data}")
+            return status_data
+
+    except NameError as e:
+        logging.error(f"[STATUS] NameError (json module not imported?): {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logging.error(f"[STATUS] JSON decode error: {e}")
+        return None
     except Exception as e:
-        logging.debug(f"Firebase status check failed: {e}")
-        return 'error'
+        logging.error(f"[STATUS] Failed to read service status: {e}", exc_info=True)
+        return None
 
 # Function to determine overall status
 def determine_status():
     """
-    Determine overall system status:
-    - error: Service stopped/crashed
-    - warning: Service running but Firebase has issues
-    - normal: Everything good
+    Determine overall system status using IPC status file from service.
+
+    Returns tuple of (status_code, service_msg, firebase_msg) where:
+    - status_code: 'error' (red), 'warning' (orange), 'normal' (white)
+    - service_msg: "Service: Running" or "Service: Stopped"
+    - firebase_msg: "Connected", "Connecting", "Disconnected", "Disabled", "Unknown"
     """
-    service_running = check_service_running()
-    firebase_status = check_firebase_status()
+    logging.info("[STATUS] determine_status() called")
 
-    # Format Firebase message
-    if firebase_status == 'error':
-        firebase_msg = 'Disconnected'
-    elif firebase_status == 'disabled':
+    # Try to read status file first (IPC from service)
+    status_data = read_service_status()
+
+    if not status_data:
+        logging.warning("[STATUS] No status data from file, checking service directly")
+        # Fallback to checking Windows service status directly
+        service_running = check_service_running()
+        if not service_running:
+            logging.info("[STATUS] Returning: error (service stopped)")
+            return 'error', 'Service: Stopped', 'Unknown'
+        else:
+            # Service running but no status file - likely starting up
+            logging.info("[STATUS] Returning: warning (service running, no status file)")
+            return 'warning', 'Service: Running', 'Starting'
+
+    # Service reports its own status
+    service_running = status_data.get('service', {}).get('running', False)
+    firebase_enabled = status_data.get('firebase', {}).get('enabled', False)
+    firebase_connected = status_data.get('firebase', {}).get('connected', False)
+    site_id = status_data.get('firebase', {}).get('site_id', '')
+
+    logging.info(f"[STATUS] Extracted values: service_running={service_running}, "
+                 f"firebase_enabled={firebase_enabled}, firebase_connected={firebase_connected}, "
+                 f"site_id='{site_id}'")
+
+    # Determine Firebase message
+    if not firebase_enabled or not site_id:
         firebase_msg = 'Disabled'
-    else:
+    elif firebase_connected:
         firebase_msg = 'Connected'
+    else:
+        firebase_msg = 'Disconnected'
 
-    # Determine overall status
+    logging.info(f"[STATUS] Firebase message: {firebase_msg}")
+
+    # Determine overall status code (icon color)
     if not service_running:
+        logging.info("[STATUS] Returning: error (service not running)")
         return 'error', 'Service: Stopped', firebase_msg
 
-    if firebase_status == 'error':
-        return 'warning', 'Service: Running', firebase_msg
-    else:
+    if not firebase_enabled or not site_id:
+        # Firebase disabled = red dot (not monitoring)
+        logging.info("[STATUS] Returning: error (firebase disabled or no site_id)")
+        return 'error', 'Service: Running', firebase_msg
+    elif firebase_connected:
+        # Connected = white dot (all good)
+        logging.info("[STATUS] Returning: normal (connected)")
         return 'normal', 'Service: Running', firebase_msg
+    else:
+        # Not connected = orange dot (connection issues)
+        logging.info("[STATUS] Returning: warning (not connected)")
+        return 'warning', 'Service: Running', firebase_msg
 
 # Function to check if process is running
 def is_process_running(pid):
@@ -172,7 +224,10 @@ def open_config_gui(icon, item):
     global pid
     if not is_process_running(pid):
         try:
-            process = subprocess.Popen(["pythonw", shared_utils.get_path('owlette_gui.py')])
+            process = subprocess.Popen(
+                ["pythonw", shared_utils.get_path('owlette_gui.py')],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             pid = process.pid
         except Exception as e:
             logging.error(f"Failed to open Owlette Configuration: {e}")
@@ -333,7 +388,11 @@ def on_select(icon, item):
             # Re-run the command with admin rights
             ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/k sc config OwletteService start= {start_type}", None, 0)
         else:
-            subprocess.run('sc config OwletteService start= disabled', shell=True)
+            subprocess.run(
+                'sc config OwletteService start= disabled',
+                shell=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
 
         start_on_login = not start_on_login  # Toggle the checkbox state
         #logging.info(f"Checkbox state after action: {start_on_login}")
@@ -364,6 +423,19 @@ def monitor_status(icon):
     """
     global current_status, last_status
 
+    # Wait for icon to become visible (icon.run() is called after thread starts)
+    logging.info("[MONITOR] Waiting for icon to become visible...")
+    for i in range(100):  # Wait up to 10 seconds
+        if icon.visible:
+            break
+        time.sleep(0.1)
+
+    if not icon.visible:
+        logging.error("[MONITOR] Icon never became visible after 10s, exiting monitor thread")
+        return
+
+    logging.info("[MONITOR] Icon is visible, starting status monitoring loop")
+
     # Grace period to avoid false alarms during restarts (seconds)
     grace_period = 5
     last_check_time = 0
@@ -372,8 +444,8 @@ def monitor_status(icon):
         try:
             current_time = time.time()
 
-            # Check status every 60 seconds
-            if current_time - last_check_time >= 60:
+            # Check status every 15 seconds (more responsive than 60s)
+            if current_time - last_check_time >= 15:
                 status_code, service_msg, firebase_msg = determine_status()
 
                 with status_lock:
@@ -383,27 +455,31 @@ def monitor_status(icon):
                         'firebase': firebase_msg
                     }
 
-                    # Check if status changed
+                    # Always update tooltip (messages can change even if icon doesn't)
+                    hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
+                    tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
+                    icon.title = tooltip
+
+                    # Check if icon color should change
                     if last_status.get('code') != status_code:
                         # Update icon
                         icon.icon = load_icon(status_code)
-
-                        # Update tooltip
-                        hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-                        tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
-                        icon.title = tooltip
+                        logging.info(f"[TRAY] Icon updated: {last_status.get('code')} -> {status_code} ({firebase_msg})")
 
                         # Send notification on state change (but not on first check)
                         if last_status.get('code') != 'unknown' and current_time - last_check_time > grace_period:
                             send_status_notification(icon, status_code, service_msg, firebase_msg)
+                    else:
+                        # Log status even if unchanged (for debugging)
+                        logging.debug(f"[TRAY] Status check: {status_code} ({firebase_msg})")
 
-                        # Update last status
-                        last_status = current_status.copy()
+                    # Always update last status
+                    last_status = current_status.copy()
 
                 last_check_time = current_time
 
-            # Sleep for 10 seconds before checking again
-            time.sleep(10)
+            # Sleep for 5 seconds before checking again
+            time.sleep(5)
 
         except Exception as e:
             logging.error(f"Status monitoring error: {e}")

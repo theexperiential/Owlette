@@ -127,23 +127,50 @@ def get_cpu_temperature():
         - Always returns Celsius (storage standard)
         - Requires administrator privileges (satisfied by Windows service)
         - Non-critical - returns None on failure without crashing
+        - Fallback order: WinTmp → WMI → None
     """
+    # Method 1: Try WinTmp first (fastest, most reliable when available)
     try:
         import WinTmp
         cpu_temp = WinTmp.CPU_Temp()
 
         # Validate reasonable temperature range (0-150°C)
         if cpu_temp is not None and 0 < cpu_temp < 150:
+            logging.debug(f"[TEMP] CPU temperature via WinTmp: {cpu_temp}°C")
             return float(cpu_temp)
         else:
-            logging.warning(f"[TEMP] CPU temperature out of range: {cpu_temp}")
+            logging.debug(f"[TEMP] WinTmp returned invalid value: {cpu_temp}, trying WMI fallback")
+
+    except ImportError:
+        logging.debug(f"[TEMP] WinTmp not installed, trying WMI fallback")
+    except Exception as e:
+        logging.debug(f"[TEMP] WinTmp failed ({e}), trying WMI fallback")
+
+    # Method 2: Fallback to WMI (works on most Windows systems)
+    try:
+        import wmi
+        w = wmi.WMI(namespace="root\\wmi")
+        temperature_info = w.MSAcpi_ThermalZoneTemperature()[0]
+
+        # WMI returns temperature in tenths of Kelvin
+        temp_celsius = (temperature_info.CurrentTemperature / 10.0) - 273.15
+
+        # Validate reasonable temperature range (0-150°C)
+        if 0 < temp_celsius < 150:
+            logging.debug(f"[TEMP] CPU temperature via WMI: {temp_celsius:.1f}°C")
+            return float(temp_celsius)
+        else:
+            logging.warning(f"[TEMP] WMI temperature out of range: {temp_celsius:.1f}°C")
             return None
 
-    except ImportError as e:
-        logging.warning(f"[TEMP] WinTmp not installed - CPU temperature unavailable: {e}")
+    except ImportError:
+        logging.warning(f"[TEMP] WMI not available - CPU temperature unavailable")
+        return None
+    except IndexError:
+        logging.warning(f"[TEMP] WMI temperature sensors not found")
         return None
     except Exception as e:
-        logging.warning(f"[TEMP] WinTmp CPU temp failed: {e}")
+        logging.warning(f"[TEMP] WMI CPU temp failed: {e}")
         return None
 
 def get_gpu_temperatures():

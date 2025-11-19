@@ -232,6 +232,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.firebase_client.start()
             logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
 
+            # Write status file for tray icon
+            self._write_service_status()
+
             return True
 
         except Exception as e:
@@ -239,6 +242,71 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.exception("Firebase initialization error details:")
             self.firebase_client = None
             return False
+
+    def _write_service_status(self, running=True):
+        """
+        Write current service status to file for tray icon to read.
+
+        Creates/updates C:\\ProgramData\\Owlette\\tmp\\service_status.json with:
+        - Service running state
+        - Firebase enabled/connected state
+        - Site ID
+        - Last heartbeat timestamp
+        - Service version
+
+        This provides real-time IPC from service → tray icon without log parsing.
+
+        Args:
+            running: Whether service is currently running (False when stopping)
+        """
+        try:
+            status_path = shared_utils.get_data_path('tmp/service_status.json')
+
+            # Ensure tmp directory exists
+            os.makedirs(os.path.dirname(status_path), exist_ok=True)
+
+            # Build status dict
+            firebase_enabled = shared_utils.read_config(['firebase', 'enabled']) or False
+            firebase_connected = False
+            site_id = ''
+            last_heartbeat = 0
+
+            if self.firebase_client:
+                try:
+                    firebase_connected = self.firebase_client.is_connected()
+                    site_id = self.firebase_client.site_id or ''
+                    # Get last heartbeat time if available
+                    if hasattr(self.firebase_client, '_last_heartbeat_time'):
+                        last_heartbeat = int(self.firebase_client._last_heartbeat_time)
+                except Exception:
+                    pass  # Ignore errors getting Firebase state
+
+            status = {
+                'service': {
+                    'running': running,
+                    'last_update': int(time.time()),
+                    'version': shared_utils.APP_VERSION
+                },
+                'firebase': {
+                    'enabled': firebase_enabled,
+                    'connected': firebase_connected,
+                    'site_id': site_id,
+                    'last_heartbeat': last_heartbeat
+                }
+            }
+
+            # Write atomically (write to temp file, then rename)
+            temp_path = status_path + '.tmp'
+            with open(temp_path, 'w') as f:
+                json.dump(status, f, indent=2)
+
+            # Atomic rename on Windows
+            if os.path.exists(status_path):
+                os.remove(status_path)
+            os.rename(temp_path, status_path)
+
+        except Exception as e:
+            logging.debug(f"Failed to write service status: {e}")
 
     # On service stop
     def SvcStop(self):
@@ -287,6 +355,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.close_owlette_windows()
 
         self.terminate_tray_icon()
+
+        # Write final status (service stopped) for tray icon
+        self._write_service_status(running=False)
+
         win32event.SetEvent(self.hWaitStop)
 
         logging.info("=== SERVICE STOP COMPLETE ===")
@@ -2091,6 +2163,9 @@ WshShell.Run "{vbs_command}", 0, False
                     except Exception as e:
                         logging.error(f"Log cleanup failed: {e}")
                     log_cleanup_counter = 0
+
+                # Write service status for tray icon (every loop iteration = 10s)
+                self._write_service_status()
 
                 # Sleep for 10 seconds
                 time.sleep(SLEEP_INTERVAL)
