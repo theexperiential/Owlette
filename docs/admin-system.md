@@ -4,8 +4,8 @@
 
 The admin system provides role-based access control for managing users and agent installer versions. This guide covers setup, configuration, and usage.
 
-**Last Updated**: 2025-11-02
-**Version**: 2.0.0
+**Last Updated**: 2025-11-19
+**Version**: 2.0.46
 
 ---
 
@@ -16,6 +16,10 @@ The admin system provides role-based access control for managing users and agent
 3. [Firebase Setup](#firebase-setup)
 4. [Initial Admin User Setup](#initial-admin-user-setup)
 5. [Using the Admin Panel](#using-the-admin-panel)
+   - [Managing Users](#managing-users)
+   - [Managing Installer Versions](#managing-installer-versions)
+   - [Email Testing](#email-testing)
+   - [Public Download Button](#public-download-button)
 6. [Security Model](#security-model)
 7. [Troubleshooting](#troubleshooting)
 
@@ -39,6 +43,13 @@ The admin system provides role-based access control for managing users and agent
 - Download any version directly
 - Real-time updates when new versions are uploaded
 
+### Email Testing
+- Test email notification system configuration
+- Verify email delivery to recipients
+- Debug email template rendering
+- Validate SMTP or email service settings
+- Admin-only access for security
+
 ### Public Download
 - Download button in dashboard header for all users
 - Always points to latest version
@@ -56,7 +67,10 @@ web/
 ├── app/admin/                     # Admin pages
 │   ├── layout.tsx                 # Admin layout with navigation
 │   ├── users/page.tsx             # User management page
-│   └── installers/page.tsx        # Installer versions page
+│   ├── installers/page.tsx        # Installer versions page
+│   └── test-email/page.tsx        # Email testing page
+├── app/api/
+│   └── test-email/route.ts        # Email testing API endpoint
 ├── components/
 │   ├── RequireAdmin.tsx           # Admin route protection
 │   ├── DownloadButton.tsx         # Public download button
@@ -207,6 +221,7 @@ firestore/
 **Direct URLs**:
 - Installer Versions: `/admin/installers`
 - User Management: `/admin/users`
+- Email Testing: `/admin/test-email`
 
 ---
 
@@ -287,6 +302,113 @@ firestore/
 - Click the download icon next to any version
 - Direct download from Firebase Storage
 - Useful for testing older versions
+
+---
+
+### Email Testing
+
+**Location**: Admin Panel → Email Test
+
+The Email Testing page allows administrators to test and verify email notification functionality before deploying to production or when troubleshooting email delivery issues.
+
+#### Accessing Email Testing
+
+1. Navigate to Admin Panel
+2. Click "Email Test" in the admin navigation
+3. Or go directly to `/admin/test-email`
+
+#### Sending Test Emails
+
+1. **Enter recipient email address**
+   - Use your own email for testing
+   - Or use a test email service
+   - Multiple recipients not supported yet
+
+2. **Enter test subject** (optional)
+   - Default: "Owlette Test Email"
+   - Customize to identify test emails
+
+3. **Enter test message** (optional)
+   - Default: "This is a test email from Owlette"
+   - Use plain text or HTML
+
+4. **Click "Send Test Email"**
+   - API call sent to `/api/test-email`
+   - Watch for success/error notification
+   - Check recipient inbox
+
+#### Verifying Email Delivery
+
+**Success Indicators**:
+- Green toast notification: "Test email sent successfully"
+- Email arrives in recipient inbox within 1-2 minutes
+- Check spam folder if not received
+
+**Failure Indicators**:
+- Red toast notification with error message
+- Check browser console for detailed errors
+- Check server logs if using SMTP
+
+#### Common Test Scenarios
+
+**1. Verify Email Configuration**
+```
+Recipient: your-email@example.com
+Subject: Owlette Email Config Test
+Message: Testing email service configuration
+```
+
+**2. Test HTML Rendering**
+```
+Recipient: your-email@example.com
+Subject: HTML Template Test
+Message: <h1>Test</h1><p>This is <strong>bold</strong> text</p>
+```
+
+**3. Test Special Characters**
+```
+Recipient: your-email@example.com
+Subject: Special Characters Test
+Message: Testing émojis 🎉 and spëcial çharacters
+```
+
+#### Troubleshooting Email Issues
+
+**Email Not Received**:
+1. Check spam/junk folder
+2. Verify recipient email is valid
+3. Check email service quota/limits
+4. Review server logs for errors
+5. Verify email service credentials
+
+**"Email service not configured" Error**:
+1. Ensure email environment variables are set
+2. Check `.env.local` for email config
+3. Verify email API keys are valid
+4. Restart development server
+
+**Rate Limiting Errors**:
+1. Wait before sending another test
+2. Check email service rate limits
+3. Consider upgrading email service plan
+
+#### Security Considerations
+
+**Admin-Only Access**:
+- Email testing is restricted to admin users
+- RequireAdmin component protects the route
+- API endpoint validates admin role
+
+**Abuse Prevention**:
+- Consider adding rate limiting to `/api/test-email`
+- Log all test email sends for auditing
+- Monitor for unusual activity
+
+**Best Practices**:
+- Only use test emails during development
+- Don't send test emails to customer addresses
+- Use dedicated test email accounts
+- Clear test emails regularly
 
 ---
 

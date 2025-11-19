@@ -5,6 +5,36 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.46] - 2025-11-19
+
+### Added
+
+#### Web Dashboard - Admin Panel
+- **Email Testing Page** - New admin-only page for testing email notifications
+  - Located at `/admin/test-email` in the admin panel
+  - Test email delivery and configuration
+  - Verify email templates and formatting
+  - Debug SMTP and email service settings
+  - Admin-only access for security
+  - See [docs/admin-system.md](docs/admin-system.md#email-testing) for detailed usage
+
+#### Web Dashboard - UI Improvements
+- **Update Panel Layout** - Improved spacing and organization for machine update dialog
+  - Increased padding for better readability (p-3 → p-4)
+  - Better spacing between elements (gap-3 → gap-4)
+  - Reorganized updating status display to prevent overlap
+  - Enhanced Clear button styling and alignment
+  - More consistent badge sizing across all status indicators
+
+### Changed
+
+#### Documentation
+- **Admin System Documentation** - Updated [docs/admin-system.md](docs/admin-system.md) with email testing section
+  - Added comprehensive email testing guide
+  - Included troubleshooting steps for common email issues
+  - Added security considerations and best practices
+  - Updated version to 2.0.46
+
 ## [2.0.44] - 2025-11-13
 
 ### Added
