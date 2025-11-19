@@ -207,7 +207,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                   return (
                     <label
                       key={machine.machineId}
-                      className="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                      className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
                     >
                       <Checkbox
                         checked={isSelected}
@@ -215,47 +215,47 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                         disabled={isUpdating}
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3 mb-1">
                           <span className="font-medium truncate">
                             {machine.machineId}
                           </span>
-                          {isUpdating && (
-                            <>
-                              <Badge variant="secondary" className="flex items-center gap-1">
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                Updating...
-                              </Badge>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-2 text-xs"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  cancelUpdate(machine.machineId);
-                                  toast.info('Update status cleared', {
-                                    description: `Cleared updating status for ${machine.machineId}`,
-                                    duration: 3000,
-                                  });
-                                }}
-                              >
-                                <X className="h-3 w-3 mr-1" />
-                                Clear
-                              </Button>
-                            </>
-                          )}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">
                           Current: {machine.agent_version ? `v${machine.agent_version}` : '< v2.0.8'} → Latest: v{latestVersion}
                         </div>
                       </div>
+                      {isUpdating && (
+                        <div className="flex items-center gap-3">
+                          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Updating...
+                          </Badge>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-3 text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelUpdate(machine.machineId);
+                              toast.info('Update status cleared', {
+                                description: `Cleared updating status for ${machine.machineId}`,
+                                duration: 3000,
+                              });
+                            }}
+                          >
+                            <X className="h-3.5 w-3.5 mr-1.5" />
+                            Clear
+                          </Button>
+                        </div>
+                      )}
                       {machine.online ? (
-                        <Badge className="bg-green-100 text-green-800 border-green-200">
+                        <Badge className="bg-green-100 text-green-800 border-green-200 px-3 py-1">
                           Online
                         </Badge>
                       ) : (
-                        <Badge variant="secondary">
+                        <Badge variant="secondary" className="px-3 py-1">
                           Offline
                         </Badge>
                       )}

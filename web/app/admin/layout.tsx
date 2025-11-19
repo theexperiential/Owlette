@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import RequireAdmin from '@/components/RequireAdmin';
-import { Shield, Users, Package, ArrowLeft, Menu, X, Settings } from 'lucide-react';
+import { Shield, Users, Package, ArrowLeft, Menu, X, Settings, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -39,6 +39,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       href: '/admin/users',
       icon: Users,
       description: 'Manage user roles and permissions',
+    },
+    {
+      name: 'Email Test',
+      href: '/admin/test-email',
+      icon: Mail,
+      description: 'Test email notifications',
     },
   ];
 
