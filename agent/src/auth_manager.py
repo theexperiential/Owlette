@@ -84,6 +84,12 @@ class AuthManager:
         self._token_expiry: Optional[float] = None
         self._site_id: Optional[str] = None
 
+        # Retry/backoff state for token refresh
+        self._last_refresh_attempt: Optional[float] = None
+        self._refresh_backoff_seconds: float = 60  # Start with 1 minute
+        self._max_backoff_seconds: float = 3600  # Max 1 hour
+        self._consecutive_failures: int = 0  # Track consecutive failures
+
         # Load cached tokens from storage
         self._load_cached_tokens()
 
@@ -247,21 +253,41 @@ class AuthManager:
                     'refreshToken': refresh_token,
                     'machineId': self.machine_id,
                 },
+                headers={
+                    'User-Agent': f'Owlette-Agent/{shared_utils.APP_VERSION} (Windows; {self.machine_id})',
+                    'X-Owlette-Agent-Version': shared_utils.APP_VERSION,
+                    'Content-Type': 'application/json',
+                },
                 timeout=30,
             )
 
             if response.status_code != 200:
+                # Track consecutive failures
+                self._consecutive_failures += 1
+
+                # Parse error message
                 try:
                     error_msg = response.json().get('error', 'Unknown error')
                 except (ValueError, json.JSONDecodeError):
                     error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-                logger.error(f"Token refresh failed: {error_msg}")
 
-                # If refresh token is invalid/expired, clear storage
+                # Classify error type for better logging
                 if response.status_code in [401, 403]:
+                    error_type = "Authentication failed (invalid/expired tokens)"
                     logger.warning("Refresh token invalid/expired, clearing storage")
                     self.storage.clear_tokens()
+                elif response.status_code == 429:
+                    error_type = "Rate limited by server"
+                elif response.status_code == 500:
+                    # Detect rate limiting: 3+ consecutive 500s likely means Cloudflare blocking
+                    if self._consecutive_failures >= 3:
+                        error_type = "Server error (likely Cloudflare rate limiting/blocking)"
+                    else:
+                        error_type = "Server error (transient)"
+                else:
+                    error_type = f"HTTP {response.status_code}"
 
+                logger.error(f"Token refresh failed: {error_type} - {error_msg}")
                 raise TokenRefreshError(f"Token refresh failed: {error_msg}")
 
             try:
@@ -284,6 +310,10 @@ class AuthManager:
             # Update instance state
             self._access_token = access_token
             self._token_expiry = expiry_timestamp
+
+            # Reset failure counters on success
+            self._consecutive_failures = 0
+            self._refresh_backoff_seconds = 60  # Reset backoff to 1 minute
 
             logger.info(f"Token refreshed successfully, expires_in={expires_in}s")
 
@@ -324,11 +354,48 @@ class AuthManager:
 
             # Refresh if token expires in less than 5 minutes
             if time_until_expiry <= TOKEN_REFRESH_BUFFER_SECONDS:
+                # Check backoff - don't retry too soon after previous failure
+                if self._last_refresh_attempt:
+                    time_since_last_attempt = time.time() - self._last_refresh_attempt
+                    if time_since_last_attempt < self._refresh_backoff_seconds:
+                        # Still in backoff period
+                        retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
+                        logger.warning(
+                            f"Skipping refresh (backoff: {int(self._refresh_backoff_seconds)}s, "
+                            f"retry in {retry_in}s, {self._consecutive_failures} consecutive failures)"
+                        )
+                        # Use existing token even if close to expiry (better than spamming)
+                        if self._access_token and time_until_expiry > 0:
+                            return self._access_token
+                        # If token completely expired and still in backoff, raise error
+                        raise TokenRefreshError(
+                            f"Token expired and refresh in backoff period (retry in {retry_in}s)"
+                        )
+
+                # Attempt refresh
                 logger.info(
                     f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
                 )
-                self.refresh_access_token()
-                logger.info("[OK] Token refresh completed successfully")
+                try:
+                    self._last_refresh_attempt = time.time()
+                    self.refresh_access_token()
+                    logger.info("[OK] Token refresh completed successfully")
+                except TokenRefreshError as e:
+                    # Double backoff on failure (exponential backoff)
+                    self._refresh_backoff_seconds = min(
+                        self._refresh_backoff_seconds * 2,
+                        self._max_backoff_seconds
+                    )
+                    logger.error(
+                        f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
+                        f"({self._consecutive_failures} consecutive failures)"
+                    )
+                    # If token is still valid (not completely expired), use it
+                    if self._access_token and time_until_expiry > 0:
+                        logger.warning("Using expiring token due to refresh failure")
+                        return self._access_token
+                    # Otherwise, re-raise the error
+                    raise
 
         # If we still don't have a token, authentication is required
         if not self._access_token:
