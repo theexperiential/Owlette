@@ -118,59 +118,46 @@ def get_cpu_name():
 
 def get_cpu_temperature():
     """
-    Get CPU temperature in Celsius with fallback chain.
+    Get CPU temperature in Celsius using LibreHardwareMonitor (via WinTmp).
 
     Returns:
         float: CPU temperature in Celsius, or None if unavailable
 
     Notes:
-        - Always returns Celsius (storage standard)
+        - Uses LibreHardwareMonitor driver via WinTmp wrapper
         - Requires administrator privileges (satisfied by Windows service)
-        - Non-critical - returns None on failure without crashing
-        - Fallback order: WinTmp → WMI → None
+        - Returns None on unsupported hardware without crashing
+        - Non-critical feature - system continues normally if unavailable
     """
-    # Method 1: Try WinTmp first (fastest, most reliable when available)
+    # Try WinTmp (LibreHardwareMonitor wrapper)
     try:
         import WinTmp
+        logging.info(f"[TEMP] WinTmp module imported successfully")
+
         cpu_temp = WinTmp.CPU_Temp()
+        logging.info(f"[TEMP] WinTmp.CPU_Temp() returned: {cpu_temp}")
 
         # Validate reasonable temperature range (0-150°C)
         if cpu_temp is not None and 0 < cpu_temp < 150:
-            logging.debug(f"[TEMP] CPU temperature via WinTmp: {cpu_temp}°C")
+            logging.info(f"[TEMP] ✓ CPU temperature: {cpu_temp}°C (via LibreHardwareMonitor)")
             return float(cpu_temp)
+        elif cpu_temp is None:
+            logging.warning(f"[TEMP] WinTmp returned None - LibreHardwareMonitor driver may not be running or hardware unsupported")
+            logging.warning(f"[TEMP] CPU temperature monitoring unavailable on this system")
+            return None
         else:
-            logging.debug(f"[TEMP] WinTmp returned invalid value: {cpu_temp}, trying WMI fallback")
-
-    except ImportError:
-        logging.debug(f"[TEMP] WinTmp not installed, trying WMI fallback")
-    except Exception as e:
-        logging.debug(f"[TEMP] WinTmp failed ({e}), trying WMI fallback")
-
-    # Method 2: Fallback to WMI (works on most Windows systems)
-    try:
-        import wmi
-        w = wmi.WMI(namespace="root\\wmi")
-        temperature_info = w.MSAcpi_ThermalZoneTemperature()[0]
-
-        # WMI returns temperature in tenths of Kelvin
-        temp_celsius = (temperature_info.CurrentTemperature / 10.0) - 273.15
-
-        # Validate reasonable temperature range (0-150°C)
-        if 0 < temp_celsius < 150:
-            logging.debug(f"[TEMP] CPU temperature via WMI: {temp_celsius:.1f}°C")
-            return float(temp_celsius)
-        else:
-            logging.warning(f"[TEMP] WMI temperature out of range: {temp_celsius:.1f}°C")
+            logging.warning(f"[TEMP] WinTmp returned invalid temperature: {cpu_temp}°C (expected 0-150)")
             return None
 
-    except ImportError:
-        logging.warning(f"[TEMP] WMI not available - CPU temperature unavailable")
+    except ImportError as e:
+        logging.warning(f"[TEMP] WinTmp module not available: {e}")
+        logging.warning(f"[TEMP] This usually means WinTmp was not bundled in the executable")
+        logging.warning(f"[TEMP] CPU temperature monitoring unavailable")
         return None
-    except IndexError:
-        logging.warning(f"[TEMP] WMI temperature sensors not found")
-        return None
+
     except Exception as e:
-        logging.warning(f"[TEMP] WMI CPU temp failed: {e}")
+        logging.warning(f"[TEMP] WinTmp failed with error: {type(e).__name__}: {e}")
+        logging.warning(f"[TEMP] CPU temperature monitoring unavailable")
         return None
 
 def get_gpu_temperatures():

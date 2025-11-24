@@ -61,11 +61,12 @@ class SecureStorage:
     def _get_cipher(self) -> Fernet:
         """Get Fernet cipher with machine-specific key."""
         try:
-            import uuid
             import platform
 
-            # Generate machine-specific key from UUID and hostname
-            machine_id = str(uuid.getnode())  # MAC address as int
+            # Get Windows MachineGuid - stable across reboots and user contexts
+            # This is preferred over uuid.getnode() which can return different
+            # MAC addresses after a reboot due to network adapter enumeration changes
+            machine_id = self._get_machine_guid()
             hostname = platform.node()
 
             # Derive encryption key from machine identifiers
@@ -77,6 +78,37 @@ class SecureStorage:
         except Exception as e:
             logger.error(f"Failed to generate encryption key: {e}")
             raise
+
+    def _get_machine_guid(self) -> str:
+        """
+        Get Windows MachineGuid from registry.
+
+        This is a stable identifier that:
+        - Doesn't change after reboots
+        - Is accessible to both regular users and SYSTEM account
+        - Is unique per Windows installation
+
+        Falls back to uuid.getnode() if registry read fails.
+        """
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Cryptography"
+            )
+            machine_guid = winreg.QueryValueEx(key, "MachineGuid")[0]
+            winreg.CloseKey(key)
+
+            if machine_guid:
+                logger.debug(f"Using Windows MachineGuid for encryption key")
+                return machine_guid
+        except Exception as e:
+            logger.warning(f"Failed to read MachineGuid from registry: {e}")
+
+        # Fallback to MAC address (less reliable but works on non-Windows)
+        import uuid
+        logger.warning("Falling back to uuid.getnode() for encryption key")
+        return str(uuid.getnode())
 
     def _load_data(self) -> dict:
         """Load and decrypt token data from file."""
