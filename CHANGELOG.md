@@ -5,6 +5,26 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.47] - 2025-11-24
+
+### Fixed
+
+#### Agent Service
+- **Token Encryption Key Stability** - Fixed token decryption failures after PC restart
+  - Changed encryption key derivation from `uuid.getnode()` (MAC address) to Windows `MachineGuid`
+  - MAC address can return different values after reboot due to network adapter enumeration changes
+  - `MachineGuid` is stable across reboots and accessible to both user accounts and SYSTEM service
+  - Resolves "Agent not authenticated - no refresh token found" errors after restart
+  - See [agent/src/secure_storage.py](agent/src/secure_storage.py) for implementation
+
+### Changed
+
+#### Agent Service
+- **CPU Temperature Monitoring** - Simplified to use WinTmp (LibreHardwareMonitor) only
+  - Removed WMI fallback which was unreliable on some systems
+  - Added detailed logging for temperature monitoring status
+  - Returns None gracefully when temperature monitoring unavailable
+
 ## [2.0.46] - 2025-11-19
 
 ### Added
