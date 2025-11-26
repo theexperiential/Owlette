@@ -5,6 +5,29 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.48] - 2025-11-26
+
+### Fixed
+
+#### Installer
+- **Windows Defender False Positive** - Installer now adds Defender exclusion for Owlette directory
+  - WinRing0 driver (used by LibreHardwareMonitor for CPU/GPU temps) was flagged as `VulnerableDriver:WinNT/Winring0`
+  - Installer automatically runs `Add-MpPreference -ExclusionPath` during installation
+  - Exclusion is removed during uninstall via `Remove-MpPreference`
+  - CPU and GPU temperature monitoring preserved (no feature loss)
+  - This is standard practice for legitimate software with AV false positives
+
+#### Agent GUI
+- **Join Site Performance** - Fixed extremely slow "Join Site" operation (2+ minutes → instant)
+  - Removed redundant Firebase client initialization from GUI after OAuth completion
+  - GUI no longer starts its own Firebase sync - the Windows service handles all syncing
+  - See [agent/src/owlette_gui.py](agent/src/owlette_gui.py) `_reinitialize_firebase()`
+
+- **Silent Browser Launch** - Fixed flashing command prompt windows during OAuth flow
+  - Changed from `webbrowser.open()` to `os.startfile()` on Windows
+  - `webbrowser.open()` spawns visible cmd.exe windows; `os.startfile()` does not
+  - See [agent/src/configure_site.py](agent/src/configure_site.py) `open_browser_silent()`
+
 ## [2.0.47] - 2025-11-24
 
 ### Fixed
@@ -16,14 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `MachineGuid` is stable across reboots and accessible to both user accounts and SYSTEM service
   - Resolves "Agent not authenticated - no refresh token found" errors after restart
   - See [agent/src/secure_storage.py](agent/src/secure_storage.py) for implementation
-
-### Changed
-
-#### Agent Service
-- **CPU Temperature Monitoring** - Simplified to use WinTmp (LibreHardwareMonitor) only
-  - Removed WMI fallback which was unreliable on some systems
-  - Added detailed logging for temperature monitoring status
-  - Returns None gracefully when temperature monitoring unavailable
 
 ## [2.0.46] - 2025-11-19
 

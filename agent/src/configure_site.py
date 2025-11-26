@@ -33,8 +33,29 @@ import os
 import sys
 import time
 import argparse
+import subprocess
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
+
+
+def open_browser_silent(url: str) -> bool:
+    """
+    Open browser without spawning visible console windows on Windows.
+
+    Uses os.startfile() on Windows which doesn't create console windows,
+    unlike webbrowser.open() which can spawn visible cmd.exe windows.
+    """
+    try:
+        if sys.platform == 'win32':
+            # os.startfile doesn't spawn console windows
+            os.startfile(url)
+            return True
+        else:
+            # Use webbrowser on other platforms
+            return webbrowser.open(url)
+    except Exception:
+        # Fallback to webbrowser
+        return webbrowser.open(url)
 
 # Configuration
 CALLBACK_PORT = 8765
@@ -417,12 +438,12 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
                 print("3. Authorize this agent")
                 print()
 
-            if webbrowser.open(callback_url):
+            if open_browser_silent(callback_url):
                 if show_prompts:
-                    print("✓ Browser opened successfully")
+                    print("Browser opened successfully")
             else:
                 if show_prompts:
-                    print("⚠ Could not open browser automatically")
+                    print("Could not open browser automatically")
                     print(f"  Please manually navigate to: {callback_url}")
 
             if show_prompts:

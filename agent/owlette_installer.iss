@@ -136,6 +136,12 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\Owlette Tray"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
 
 [Run]
+; Step 0: Add Windows Defender exclusion for Owlette directory
+; This prevents false positive alerts for the WinRing0 driver used by LibreHardwareMonitor
+; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring
+; Adding exclusions is a common practice for legitimate software with AV false positives
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
+
 ; Step 1: Configure site (browser-based OAuth flow) - RUNS FIRST
 ; Pass server URL based on /SERVER= command-line parameter
 ; Usage: Owlette-Installer-v2.0.0.exe              (uses owlette.app, default)
@@ -156,6 +162,8 @@ Filename: "{app}\scripts\install.bat"; Parameters: "--silent"; Description: "Ins
 ; Stop and remove the Windows service before uninstalling
 Filename: "{app}\tools\nssm.exe"; Parameters: "stop OwletteService"; Flags: runhidden waituntilterminated
 Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; Flags: runhidden waituntilterminated
+; Remove Windows Defender exclusion
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
 [Code]
 var
