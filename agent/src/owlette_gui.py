@@ -1375,14 +1375,15 @@ class OwletteConfigApp:
         # Get setup URL based on environment setting
         setup_url = shared_utils.get_setup_url()
 
-        # Show loading dialog
+        # Show loading dialog (not topmost so browser is accessible)
         loading_dialog = CTkMessagebox(
             master=self.master,
             title="Joining Site...",
             message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
             icon=None,
             option_1="Cancel",
-            width=550
+            width=550,
+            topmost=False
         )
 
         # Run OAuth flow in background thread
