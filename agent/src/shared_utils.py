@@ -119,36 +119,32 @@ def get_cpu_name():
 def get_cpu_temperature():
     """
     Get CPU temperature in Celsius using LibreHardwareMonitor (via WinTmp).
-    
+
     Returns:
         float: CPU temperature in Celsius, or None if unavailable
-        
-    Note:
-        - Requires LibreHardwareMonitor driver (admin privileges)
-        - Returns None on systems without temperature sensor support
-        - Non-critical - service continues normally without temperature data
+
+    Notes:
+        - Uses LibreHardwareMonitor driver via WinTmp wrapper
+        - Requires administrator privileges (satisfied by Windows service)
+        - Returns None on unsupported hardware without crashing
+        - Non-critical feature - system continues normally if unavailable
     """
     try:
         import WinTmp
+
         cpu_temp = WinTmp.CPU_Temp()
-        
+
         # Validate reasonable temperature range (0-150°C)
         if cpu_temp is not None and 0 < cpu_temp < 150:
-            logging.debug(f"[TEMP] CPU temperature: {cpu_temp}°C")
             return float(cpu_temp)
-        else:
-            logging.debug(f"[TEMP] Invalid temperature value: {cpu_temp}")
-            return None
-            
-    except ImportError as e:
-        # WinTmp not installed - temperature unavailable
-        logging.info(f"[TEMP] Temperature monitoring unavailable (WinTmp not installed)")
         return None
-        
+
+    except ImportError:
+        logging.debug("[TEMP] WinTmp not available")
+        return None
+
     except Exception as e:
-        # Driver or hardware access error
-        logging.warning(f"[TEMP] Temperature monitoring failed: {e}")
-        logging.warning(f"[TEMP] This is normal on some systems (VM, older hardware, driver issues)")
+        logging.debug(f"[TEMP] WinTmp error: {e}")
         return None
 
 def get_gpu_temperatures():
@@ -177,22 +173,19 @@ def get_gpu_temperatures():
         all_temps = WinTmp.GPU_Temps()
 
         if all_temps:
-            # WinTmp returns a list of temperatures
             for i, temp in enumerate(all_temps):
-                # Validate reasonable temperature range (0-150°C)
                 if temp is not None and 0 < temp < 150:
                     temps.append({
                         'index': i,
                         'temperature': float(temp)
                     })
-
             if temps:
                 return temps
 
-    except ImportError as e:
-        logging.warning(f"[TEMP] WinTmp not installed - trying pynvml fallback: {e}")
-    except Exception as e:
-        logging.warning(f"[TEMP] WinTmp GPU temp failed: {e}")
+    except ImportError:
+        pass
+    except Exception:
+        pass
 
     # Method 2: Fallback to pynvml for NVIDIA GPUs
     try:
@@ -226,7 +219,6 @@ def get_gpu_temperatures():
         logging.warning(f"[TEMP] pynvml GPU temp failed: {e}")
 
     # All methods failed
-    logging.warning("[TEMP] All GPU temperature methods failed - returning empty list")
     return []
 
 def get_path(filename=None):

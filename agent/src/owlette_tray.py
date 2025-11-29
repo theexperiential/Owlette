@@ -107,28 +107,21 @@ def read_service_status():
     """
     try:
         status_path = shared_utils.get_data_path('tmp/service_status.json')
-        logging.info(f"[STATUS] Reading status from: {status_path}")
 
         if not os.path.exists(status_path):
-            logging.warning(f"[STATUS] Status file does not exist: {status_path}")
+            logging.debug(f"[STATUS] Status file does not exist: {status_path}")
             return None
 
         # Check file age (stale if > 120 seconds old)
         file_age = time.time() - os.path.getmtime(status_path)
-        logging.info(f"[STATUS] Status file age: {int(file_age)}s")
 
         if file_age > 120:
             logging.warning(f"[STATUS] Service status file is stale ({int(file_age)}s old)")
             return None
 
-        with open(status_path, 'r') as f:
-            raw_content = f.read()
-            logging.info(f"[STATUS] Raw file content: {raw_content[:200]}")
-
         # Parse JSON
         with open(status_path, 'r') as f:
             status_data = json.load(f)
-            logging.info(f"[STATUS] Parsed status data: {status_data}")
             return status_data
 
     except NameError as e:
@@ -151,21 +144,16 @@ def determine_status():
     - service_msg: "Service: Running" or "Service: Stopped"
     - firebase_msg: "Connected", "Connecting", "Disconnected", "Disabled", "Unknown"
     """
-    logging.info("[STATUS] determine_status() called")
-
     # Try to read status file first (IPC from service)
     status_data = read_service_status()
 
     if not status_data:
-        logging.warning("[STATUS] No status data from file, checking service directly")
         # Fallback to checking Windows service status directly
         service_running = check_service_running()
         if not service_running:
-            logging.info("[STATUS] Returning: error (service stopped)")
             return 'error', 'Service: Stopped', 'Unknown'
         else:
             # Service running but no status file - likely starting up
-            logging.info("[STATUS] Returning: warning (service running, no status file)")
             return 'warning', 'Service: Running', 'Starting'
 
     # Service reports its own status
@@ -173,10 +161,6 @@ def determine_status():
     firebase_enabled = status_data.get('firebase', {}).get('enabled', False)
     firebase_connected = status_data.get('firebase', {}).get('connected', False)
     site_id = status_data.get('firebase', {}).get('site_id', '')
-
-    logging.info(f"[STATUS] Extracted values: service_running={service_running}, "
-                 f"firebase_enabled={firebase_enabled}, firebase_connected={firebase_connected}, "
-                 f"site_id='{site_id}'")
 
     # Determine Firebase message
     if not firebase_enabled or not site_id:
@@ -186,24 +170,18 @@ def determine_status():
     else:
         firebase_msg = 'Disconnected'
 
-    logging.info(f"[STATUS] Firebase message: {firebase_msg}")
-
     # Determine overall status code (icon color)
     if not service_running:
-        logging.info("[STATUS] Returning: error (service not running)")
         return 'error', 'Service: Stopped', firebase_msg
 
     if not firebase_enabled or not site_id:
         # Firebase disabled = red dot (not monitoring)
-        logging.info("[STATUS] Returning: error (firebase disabled or no site_id)")
         return 'error', 'Service: Running', firebase_msg
     elif firebase_connected:
         # Connected = white dot (all good)
-        logging.info("[STATUS] Returning: normal (connected)")
         return 'normal', 'Service: Running', firebase_msg
     else:
         # Not connected = orange dot (connection issues)
-        logging.info("[STATUS] Returning: warning (not connected)")
         return 'warning', 'Service: Running', firebase_msg
 
 # Function to check if process is running

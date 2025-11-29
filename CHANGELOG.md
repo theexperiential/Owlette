@@ -5,6 +5,88 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.49] - 2025-11-28
+
+### Fixed
+
+#### Agent Service
+- **VBS Cleanup Race Condition** - Fixed potential race condition when cleaning up VBScript wrapper files
+  - VBS files used for hidden process launches are now cleaned up in a background thread after 10s delay
+  - Prevents "file in use" errors when wscript.exe hasn't finished reading the VBS file
+  - See [agent/src/owlette_service.py](agent/src/owlette_service.py) `launch_process()`
+
+#### Logging Improvements
+- **Reduced Log Noise** - Decreased verbose logging in GUI and system tray components
+  - GUI: Changed frequent config change detection logs from INFO to DEBUG level
+  - Tray: Removed verbose [STATUS] logging from status checking code
+  - Service logs now cleaner with only meaningful operational messages
+  - See [agent/src/owlette_gui.py](agent/src/owlette_gui.py) and [agent/src/owlette_tray.py](agent/src/owlette_tray.py)
+
+## [2.0.48] - 2025-11-26
+
+### Fixed
+
+#### Installer
+- **Windows Defender False Positive** - Installer now adds Defender exclusion for Owlette directory
+  - WinRing0 driver (used by LibreHardwareMonitor for CPU/GPU temps) was flagged as `VulnerableDriver:WinNT/Winring0`
+  - Installer automatically runs `Add-MpPreference -ExclusionPath` during installation
+  - Exclusion is removed during uninstall via `Remove-MpPreference`
+  - CPU and GPU temperature monitoring preserved (no feature loss)
+  - This is standard practice for legitimate software with AV false positives
+
+#### Agent GUI
+- **Join Site Performance** - Fixed extremely slow "Join Site" operation (2+ minutes → instant)
+  - Removed redundant Firebase client initialization from GUI after OAuth completion
+  - GUI no longer starts its own Firebase sync - the Windows service handles all syncing
+  - See [agent/src/owlette_gui.py](agent/src/owlette_gui.py) `_reinitialize_firebase()`
+
+- **Silent Browser Launch** - Fixed flashing command prompt windows during OAuth flow
+  - Changed from `webbrowser.open()` to `os.startfile()` on Windows
+  - `webbrowser.open()` spawns visible cmd.exe windows; `os.startfile()` does not
+  - See [agent/src/configure_site.py](agent/src/configure_site.py) `open_browser_silent()`
+
+## [2.0.47] - 2025-11-24
+
+### Fixed
+
+#### Agent Service
+- **Token Encryption Key Stability** - Fixed token decryption failures after PC restart
+  - Changed encryption key derivation from `uuid.getnode()` (MAC address) to Windows `MachineGuid`
+  - MAC address can return different values after reboot due to network adapter enumeration changes
+  - `MachineGuid` is stable across reboots and accessible to both user accounts and SYSTEM service
+  - Resolves "Agent not authenticated - no refresh token found" errors after restart
+  - See [agent/src/secure_storage.py](agent/src/secure_storage.py) for implementation
+
+## [2.0.46] - 2025-11-19
+
+### Added
+
+#### Web Dashboard - Admin Panel
+- **Email Testing Page** - New admin-only page for testing email notifications
+  - Located at `/admin/test-email` in the admin panel
+  - Test email delivery and configuration
+  - Verify email templates and formatting
+  - Debug SMTP and email service settings
+  - Admin-only access for security
+  - See [docs/admin-system.md](docs/admin-system.md#email-testing) for detailed usage
+
+#### Web Dashboard - UI Improvements
+- **Update Panel Layout** - Improved spacing and organization for machine update dialog
+  - Increased padding for better readability (p-3 → p-4)
+  - Better spacing between elements (gap-3 → gap-4)
+  - Reorganized updating status display to prevent overlap
+  - Enhanced Clear button styling and alignment
+  - More consistent badge sizing across all status indicators
+
+### Changed
+
+#### Documentation
+- **Admin System Documentation** - Updated [docs/admin-system.md](docs/admin-system.md) with email testing section
+  - Added comprehensive email testing guide
+  - Included troubleshooting steps for common email issues
+  - Added security considerations and best practices
+  - Updated version to 2.0.46
+
 ## [2.0.44] - 2025-11-13
 
 ### Added

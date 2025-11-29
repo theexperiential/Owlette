@@ -984,7 +984,7 @@ class OwletteConfigApp:
 
                     if old_hash != new_hash:
                         config_changed_externally = True
-                        logging.info(f"Detected external config change for process '{new_process.get('name')}'")
+                        logging.debug(f"Detected external config change for process '{new_process.get('name')}'")  # Debug level - fires frequently
 
             self.config = fresh_config
 
@@ -1018,7 +1018,7 @@ class OwletteConfigApp:
                 process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
                 if process:
                     self.refresh_displayed_fields(process)
-                    logging.info(f"Auto-refreshed displayed fields for external config change")
+                    logging.debug(f"Auto-refreshed displayed fields for external config change")  # Debug level - fires frequently
 
     def update_process_list_periodically(self):
         self.update_process_list()
@@ -1466,40 +1466,30 @@ class OwletteConfigApp:
         oauth_thread.start()
 
     def _reinitialize_firebase(self):
-        """Reinitialize Firebase client after configuration change."""
+        """Reinitialize Firebase status after configuration change.
+
+        Note: The GUI does NOT need its own Firebase client for sync.
+        The Windows service handles all Firebase syncing. The GUI just
+        needs to update the status display.
+        """
         try:
-            # Stop old client if exists
+            # Stop old client if exists (we don't need it for status updates)
             if hasattr(self, 'firebase_client') and self.firebase_client:
                 try:
                     self.firebase_client.stop()
+                    self.firebase_client = None
                 except:
                     pass
 
             # Reload config
             self.config = shared_utils.load_config()
 
-            # Initialize new Firebase client (similar to _complete_initialization)
+            # Update site_id for status display
             if self.config.get('firebase', {}).get('enabled'):
-                from firebase_client import FirebaseClient
-                from auth_manager import AuthManager
+                self.site_id = self.config['firebase'].get('site_id', '')
+                logging.info(f"Firebase config updated for site: {self.site_id}")
 
-                api_base = self.config['firebase'].get('api_base') or shared_utils.get_api_base_url()
-                project_id = self.config['firebase'].get('project_id') or shared_utils.get_project_id()
-                site_id = self.config['firebase'].get('site_id', '')
-
-                auth_manager = AuthManager(api_base=api_base)
-
-                if auth_manager.is_authenticated():
-                    self.firebase_client = FirebaseClient(
-                        auth_manager=auth_manager,
-                        project_id=project_id,
-                        site_id=site_id
-                    )
-                    self.firebase_client.start()
-                    self.site_id = site_id
-                    logging.info(f"Firebase client reinitialized for site: {site_id}")
-
-            # Update status display
+            # Update status display (the service handles actual sync)
             self.update_firebase_status()
 
         except Exception as e:

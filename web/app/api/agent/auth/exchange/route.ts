@@ -25,7 +25,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
  * Errors:
  * - 400: Missing required fields
  * - 401: Invalid or expired registration code
- * - 429: Rate limit exceeded (5 attempts per hour per IP)
+ * - 429: Rate limit exceeded (20 attempts per hour per IP)
  * - 500: Server error
  *
  * SECURITY: Rate limited to prevent brute force token exchange attempts
