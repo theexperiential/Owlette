@@ -47,13 +47,13 @@ export const authRateLimit = redis
   : null;
 
 /**
- * Strict rate limiter for token exchange (one-time operations)
- * Allows 5 requests per hour per IP
+ * Rate limiter for token exchange operations
+ * Allows 20 requests per hour per IP (supports re-auth of multiple machines)
  */
 export const tokenExchangeRateLimit = redis
   ? new Ratelimit({
       redis,
-      limiter: Ratelimit.slidingWindow(5, '1 h'),
+      limiter: Ratelimit.slidingWindow(20, '1 h'),
       prefix: 'token-exchange',
       analytics: true,
     })
