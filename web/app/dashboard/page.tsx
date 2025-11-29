@@ -476,7 +476,7 @@ export default function DashboardPage() {
   const currentSite = sites.find(s => s.id === currentSiteId);
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-8">
+    <div className="min-h-screen bg-slate-950 pb-24">
       {/* Header */}
       <PageHeader
         currentPage="Dashboard"
