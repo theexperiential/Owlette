@@ -984,7 +984,7 @@ class OwletteConfigApp:
 
                     if old_hash != new_hash:
                         config_changed_externally = True
-                        logging.info(f"Detected external config change for process '{new_process.get('name')}'")
+                        logging.debug(f"Detected external config change for process '{new_process.get('name')}'")  # Debug level - fires frequently
 
             self.config = fresh_config
 
@@ -1018,7 +1018,7 @@ class OwletteConfigApp:
                 process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
                 if process:
                     self.refresh_displayed_fields(process)
-                    logging.info(f"Auto-refreshed displayed fields for external config change")
+                    logging.debug(f"Auto-refreshed displayed fields for external config change")  # Debug level - fires frequently
 
     def update_process_list_periodically(self):
         self.update_process_list()

@@ -5,6 +5,23 @@ All notable changes to Owlette will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.49] - 2025-11-28
+
+### Fixed
+
+#### Agent Service
+- **VBS Cleanup Race Condition** - Fixed potential race condition when cleaning up VBScript wrapper files
+  - VBS files used for hidden process launches are now cleaned up in a background thread after 10s delay
+  - Prevents "file in use" errors when wscript.exe hasn't finished reading the VBS file
+  - See [agent/src/owlette_service.py](agent/src/owlette_service.py) `launch_process()`
+
+#### Logging Improvements
+- **Reduced Log Noise** - Decreased verbose logging in GUI and system tray components
+  - GUI: Changed frequent config change detection logs from INFO to DEBUG level
+  - Tray: Removed verbose [STATUS] logging from status checking code
+  - Service logs now cleaner with only meaningful operational messages
+  - See [agent/src/owlette_gui.py](agent/src/owlette_gui.py) and [agent/src/owlette_tray.py](agent/src/owlette_tray.py)
+
 ## [2.0.48] - 2025-11-26
 
 ### Fixed

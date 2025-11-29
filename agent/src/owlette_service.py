@@ -604,6 +604,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         elif visibility == 'Hide':
             visibility = 'Hidden'
 
+        # Track all VBS files created for cleanup
+        vbs_cleanup_paths = []
+
         # For Hidden mode, use VBScript wrapper to launch without window
         # This is the most reliable method for truly hidden launches (works for console apps)
         if visibility == 'Hidden':
@@ -625,6 +628,7 @@ Set WshShell = Nothing'''
             vbs_file.write(vbs_content)
             vbs_path = vbs_file.name
             vbs_file.close()
+            vbs_cleanup_paths.append(vbs_path)
 
             command = f'cscript.exe //nologo "{vbs_path}"'
             logging.info(f"Launching with Hidden visibility via VBScript wrapper")
@@ -636,7 +640,6 @@ Set WshShell = Nothing'''
                 command = f'"{exe_path}"'
 
         # Wrap command with working directory if specified
-        vbs_cleanup_path = None
         if cwd:
             # Create a VBScript wrapper to launch with zero window visibility
             # VBScript's Run method with windowStyle=0 (vbHide) completely suppresses windows
@@ -656,7 +659,7 @@ WshShell.Run "{vbs_command}", 0, False
             try:
                 with os.fdopen(vbs_fd, 'w') as f:
                     f.write(vbs_content)
-                vbs_cleanup_path = vbs_path
+                vbs_cleanup_paths.append(vbs_path)
                 # Update command to execute VBS with hidden window
                 command = f'wscript.exe //nologo "{vbs_path}"'
                 logging.info(f"Command will run in directory: {cwd}")
@@ -664,7 +667,6 @@ WshShell.Run "{vbs_command}", 0, False
                 logging.error(f"Failed to create VBS wrapper: {e}")
                 if os.path.exists(vbs_path):
                     os.unlink(vbs_path)
-                vbs_cleanup_path = None
                 # Fall back to cmd approach
                 command = f'cmd /c start /b /d "{cwd}" "" {command}'
 
@@ -781,13 +783,29 @@ WshShell.Run "{vbs_command}", 0, False
             )
             logging.info(f"Cleaned up task: {task_name}")
 
-            # Clean up VBS wrapper if it was created
-            if vbs_cleanup_path and os.path.exists(vbs_cleanup_path):
-                try:
-                    os.unlink(vbs_cleanup_path)
-                    logging.debug(f"Cleaned up VBS wrapper: {vbs_cleanup_path}")
-                except Exception as e:
-                    logging.warning(f"Failed to clean up VBS wrapper: {e}")
+            # Clean up VBS wrappers after a delay (in background thread)
+            # This prevents race condition where wscript.exe hasn't finished reading the VBS file yet
+            if vbs_cleanup_paths:
+                import threading
+
+                def delayed_vbs_cleanup(paths, delay=10):
+                    """Clean up VBS files after a delay to ensure wscript.exe has finished"""
+                    time.sleep(delay)
+                    for path in paths:
+                        if os.path.exists(path):
+                            try:
+                                os.unlink(path)
+                                logging.debug(f"Cleaned up VBS wrapper: {path}")
+                            except Exception as e:
+                                logging.warning(f"Failed to clean up VBS wrapper {path}: {e}")
+
+                cleanup_thread = threading.Thread(
+                    target=delayed_vbs_cleanup,
+                    args=(vbs_cleanup_paths.copy(),),
+                    daemon=True
+                )
+                cleanup_thread.start()
+                logging.debug(f"Scheduled VBS cleanup for {len(vbs_cleanup_paths)} file(s)")
 
             if not pid:
                 logging.error(f"Could not find PID for newly launched process")
