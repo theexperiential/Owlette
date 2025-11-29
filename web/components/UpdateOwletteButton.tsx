@@ -224,41 +224,43 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                           Current: {machine.agent_version ? `v${machine.agent_version}` : '< v2.0.8'} → Latest: v{latestVersion}
                         </div>
                       </div>
-                      {isUpdating && (
-                        <div className="flex items-center gap-3">
-                          <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Updating...
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {isUpdating && (
+                          <>
+                            <Badge variant="secondary" className="flex items-center gap-1.5 px-3 py-1">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Updating...
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                cancelUpdate(machine.machineId);
+                                toast.info('Update status cleared', {
+                                  description: `Cleared updating status for ${machine.machineId}`,
+                                  duration: 3000,
+                                });
+                              }}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1" />
+                              Clear
+                            </Button>
+                          </>
+                        )}
+                        {machine.online ? (
+                          <Badge className="bg-green-100 text-green-800 border-green-200 px-3 py-1">
+                            Online
                           </Badge>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-3 text-xs hover:bg-gray-100 dark:hover:bg-gray-700"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              cancelUpdate(machine.machineId);
-                              toast.info('Update status cleared', {
-                                description: `Cleared updating status for ${machine.machineId}`,
-                                duration: 3000,
-                              });
-                            }}
-                          >
-                            <X className="h-3.5 w-3.5 mr-1.5" />
-                            Clear
-                          </Button>
-                        </div>
-                      )}
-                      {machine.online ? (
-                        <Badge className="bg-green-100 text-green-800 border-green-200 px-3 py-1">
-                          Online
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="px-3 py-1">
-                          Offline
-                        </Badge>
-                      )}
+                        ) : (
+                          <Badge variant="secondary" className="px-3 py-1">
+                            Offline
+                          </Badge>
+                        )}
+                      </div>
                     </label>
                   );
                 })}
