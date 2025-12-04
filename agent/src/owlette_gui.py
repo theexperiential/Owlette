@@ -83,6 +83,7 @@ class OwletteConfigApp:
 
         # Start periodic updates
         self.master.after(1000, self.update_process_list_periodically)
+        self.master.after(5000, self.update_firebase_status_periodically)  # Refresh connection status every 5s
 
     def _start_background_initialization(self):
         """Start heavy operations in background threads"""
@@ -1024,6 +1025,14 @@ class OwletteConfigApp:
         self.update_process_list()
         self.master.after(1000, self.update_process_list_periodically)  # Schedule next run
 
+    def update_firebase_status_periodically(self):
+        """Periodically refresh Firebase connection status from service_status.json"""
+        try:
+            self.update_firebase_status()
+        except Exception as e:
+            logging.debug(f"Error updating firebase status: {e}")
+        self.master.after(5000, self.update_firebase_status_periodically)  # Schedule next run (every 5s)
+
     def remove_process(self):
         if self.selected_process:
             process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
@@ -1167,6 +1176,7 @@ class OwletteConfigApp:
     def update_firebase_status(self):
         """Update Firebase connection status indicator and site button."""
         import os
+        import json
 
         # Check if Firebase is enabled in config
         firebase_enabled = self.config.get('firebase', {}).get('enabled', False)
@@ -1177,35 +1187,52 @@ class OwletteConfigApp:
         self.site_id_label.configure(text=f"Site: {site_display}")
         self.site_label_left.configure(text=f"Site: {site_display}")  # Keep both in sync
 
-        # Check if OAuth tokens are VALID (not just if file exists)
+        # Read ACTUAL connection status from service_status.json (IPC from service)
+        # This is the real-time status, not just token validity
+        service_connected = False
+        service_status_valid = False
+
+        try:
+            status_path = shared_utils.get_data_path('tmp/service_status.json')
+            if os.path.exists(status_path):
+                # Check file age (stale if > 120 seconds old)
+                file_age = time.time() - os.path.getmtime(status_path)
+                if file_age <= 120:
+                    with open(status_path, 'r') as f:
+                        status_data = json.load(f)
+                    service_connected = status_data.get('firebase', {}).get('connected', False)
+                    service_status_valid = True
+        except Exception:
+            pass  # Fall back to token check
+
+        # Fall back to token check ONLY if service status file is unavailable
         tokens_valid = False
-        if firebase_enabled:
+        if not service_status_valid and firebase_enabled:
             try:
                 from auth_manager import AuthManager
                 api_base = self.config.get('firebase', {}).get('api_base') or shared_utils.get_api_base_url()
                 auth = AuthManager(api_base=api_base)
-
-                # Try to get valid token - this will return None if no tokens exist or if refresh fails
-                # This is better than just checking file existence
                 try:
                     token = auth.get_valid_token()
                     tokens_valid = bool(token)
                 except Exception:
-                    # Token doesn't exist, expired and can't refresh, or other auth error
                     tokens_valid = False
             except Exception:
-                # Failed to initialize AuthManager
                 tokens_valid = False
 
-        # Determine if we're connected (for button state)
-        is_connected = firebase_enabled and tokens_valid and site_id
+        # Use service status if available, otherwise fall back to token check
+        actually_connected = service_connected if service_status_valid else (tokens_valid and firebase_enabled)
 
         if firebase_enabled and not site_id:
             # Firebase was enabled but site_id is missing (removed from site)
             self.firebase_status_label.configure(text="Removed from Site", text_color="#f87171")  # Red
             self.site_button.configure(text="Join Site", state="normal")
-        elif firebase_enabled and tokens_valid:
+        elif firebase_enabled and actually_connected:
             self.firebase_status_label.configure(text="Connected", text_color="#4ade80")  # Green
+            self.site_button.configure(text="Leave Site", state="normal")
+        elif firebase_enabled and service_status_valid and not service_connected:
+            # Service is running but not connected (internet down, reconnecting, etc.)
+            self.firebase_status_label.configure(text="Disconnected", text_color="#f87171")  # Red
             self.site_button.configure(text="Leave Site", state="normal")
         elif firebase_enabled and not tokens_valid:
             self.firebase_status_label.configure(text="Authentication Required", text_color="#fbbf24")  # Yellow/Warning
