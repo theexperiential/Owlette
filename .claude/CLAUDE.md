@@ -4,7 +4,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system designed for managing TouchDesigner installations, digital signage, kiosks, and media servers across multiple Windows machines. It consists of a Python-based Windows service (agent) and a Next.js web dashboard with Firebase/Firestore backend.
 
-**Version**: 2.0.50 (see [Version Management](../docs/version-management.md))
+**Version**: 2.0.52 (see [Version Management](../docs/version-management.md))
 **License**: GNU General Public License v3.0
 **Repository Type**: Monorepo (web + agent)
 
@@ -905,7 +905,7 @@ npm start
 
 See [CHANGELOG.md](../CHANGELOG.md) for detailed version history.
 
-**Current Version**: 2.0.50 (November 29, 2025)
+**Current Version**: 2.0.52 (December 4, 2025)
 - Implemented single source of truth version management system
 - Created `agent/VERSION` file for centralized version control
 - Updated build system to validate and propagate version automatically
