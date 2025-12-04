@@ -208,12 +208,13 @@ class FirestoreRestClient:
 
         return {k: self._from_firestore_value(v) for k, v in firestore_doc['fields'].items()}
 
-    def get_document(self, path: str) -> Optional[Dict[str, Any]]:
+    def get_document(self, path: str, _suppress_logging: bool = False) -> Optional[Dict[str, Any]]:
         """
         Get a Firestore document.
 
         Args:
             path: Document path (e.g., 'sites/abc/machines/DESKTOP-001')
+            _suppress_logging: If True, don't log errors (used by listener loops)
 
         Returns:
             Document data as dict, or None if not found
@@ -233,10 +234,23 @@ class FirestoreRestClient:
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 return None
-            logger.error(f"HTTP error getting document {path}: {e}")
+            if not _suppress_logging:
+                logger.error(f"HTTP error getting document {path}: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error getting document {path}: {e}")
+            # Check if this is a connectivity error
+            error_str = str(e).lower()
+            is_connectivity_error = any(x in error_str for x in [
+                'connection', 'network', 'getaddrinfo', 'errno 11001',
+                'unreachable', 'timeout', 'refused', 'max retries'
+            ])
+
+            if not _suppress_logging and not is_connectivity_error:
+                # Only log non-connectivity errors at ERROR level
+                logger.error(f"Error getting document {path}: {e}")
+            elif not _suppress_logging:
+                # Connectivity errors logged at DEBUG level (listener handles logging)
+                logger.debug(f"Connectivity error getting document {path}: {type(e).__name__}")
             raise
 
     def set_document(self, path: str, data: Dict[str, Any], merge: bool = False):
@@ -420,10 +434,20 @@ class FirestoreRestClient:
             max_interval = 30.0     # Maximum interval (when idle)
             backoff_multiplier = 1.5  # Multiply by this when no change
 
+            # Error tracking for reduced logging
+            consecutive_errors = 0
+            last_error_type = None
+
             while True:
                 try:
-                    # Get current document
-                    current_data = self.get_document(path)
+                    # Get current document (suppress logging - we handle it here)
+                    current_data = self.get_document(path, _suppress_logging=True)
+
+                    # Success - reset error tracking
+                    if consecutive_errors > 0:
+                        logger.info(f"Listener recovered for {path} after {consecutive_errors} errors")
+                    consecutive_errors = 0
+                    last_error_type = None
 
                     # Calculate hash for reliable comparison (handles dict ordering, float precision, etc.)
                     import hashlib
@@ -453,8 +477,39 @@ class FirestoreRestClient:
                     time.sleep(current_interval)
 
                 except Exception as e:
-                    logger.error(f"Error in document listener for {path}: {e}")
-                    time.sleep(5)  # Back off on error
+                    consecutive_errors += 1
+                    error_type = type(e).__name__
+
+                    # Determine if this is a connectivity error (should be logged less aggressively)
+                    error_str = str(e).lower()
+                    is_connectivity_error = any(x in error_str for x in [
+                        'connection', 'network', 'getaddrinfo', 'errno 11001',
+                        'unreachable', 'timeout', 'refused'
+                    ])
+
+                    # Log strategy: first error, then every 30th, or when error type changes
+                    should_log = (
+                        consecutive_errors == 1 or
+                        error_type != last_error_type or
+                        consecutive_errors % 30 == 0
+                    )
+
+                    if should_log:
+                        if is_connectivity_error:
+                            # Connectivity errors: minimal logging
+                            if consecutive_errors == 1:
+                                logger.warning(f"Listener lost connectivity for {path}: {error_type}")
+                            else:
+                                logger.debug(f"Listener still offline for {path} ({consecutive_errors} errors)")
+                        else:
+                            # Other errors: normal logging
+                            logger.error(f"Error in document listener for {path}: {e}")
+
+                    last_error_type = error_type
+
+                    # Back off on error - increase backoff for consecutive errors
+                    error_backoff = min(5 * (1 + consecutive_errors // 10), 60)  # 5s to 60s max
+                    time.sleep(error_backoff)
                     current_interval = min_interval  # Reset interval after error
 
         thread = threading.Thread(target=poll_document, daemon=True)

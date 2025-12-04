@@ -89,6 +89,7 @@ class AuthManager:
         self._refresh_backoff_seconds: float = 60  # Start with 1 minute
         self._max_backoff_seconds: float = 3600  # Max 1 hour
         self._consecutive_failures: int = 0  # Track consecutive failures
+        self._backoff_logged: bool = False  # Track if we've logged backoff message
 
         # Load cached tokens from storage
         self._load_cached_tokens()
@@ -358,12 +359,14 @@ class AuthManager:
                 if self._last_refresh_attempt:
                     time_since_last_attempt = time.time() - self._last_refresh_attempt
                     if time_since_last_attempt < self._refresh_backoff_seconds:
-                        # Still in backoff period
+                        # Still in backoff period - only log ONCE per backoff period
                         retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
-                        logger.warning(
-                            f"Skipping refresh (backoff: {int(self._refresh_backoff_seconds)}s, "
-                            f"retry in {retry_in}s, {self._consecutive_failures} consecutive failures)"
-                        )
+                        if not self._backoff_logged:
+                            logger.warning(
+                                f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
+                                f"{self._consecutive_failures} consecutive failures)"
+                            )
+                            self._backoff_logged = True
                         # Use existing token even if close to expiry (better than spamming)
                         if self._access_token and time_until_expiry > 0:
                             return self._access_token
@@ -372,7 +375,8 @@ class AuthManager:
                             f"Token expired and refresh in backoff period (retry in {retry_in}s)"
                         )
 
-                # Attempt refresh
+                # Attempt refresh - reset backoff log flag since we're trying again
+                self._backoff_logged = False
                 logger.info(
                     f"[WARNING] Token expires in {int(time_until_expiry)}s (< {TOKEN_REFRESH_BUFFER_SECONDS}s buffer), triggering refresh..."
                 )

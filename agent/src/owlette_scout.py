@@ -45,10 +45,24 @@ if time_since_launch < 60:
 else:
     result = is_app_responsive(pid)
 
-    # Update the results dictionary
-    if str(pid) not in results:
-        results[str(pid)] = {}
-    results[str(pid)]['responsive'] = result
+# Update the results dictionary
+if str(pid) not in results:
+    results[str(pid)] = {}
+
+results[str(pid)]['responsive'] = result
+
+# Track hung_since timestamp for confirmation-based killing
+if not result:
+    # Process is hung - record when we first detected it (if not already recorded)
+    if 'hung_since' not in results[str(pid)] or results[str(pid)].get('responsive_prev', True):
+        results[str(pid)]['hung_since'] = current_time
+else:
+    # Process is responsive - clear any hung tracking
+    if 'hung_since' in results[str(pid)]:
+        del results[str(pid)]['hung_since']
+
+# Track previous responsive state for edge detection
+results[str(pid)]['responsive_prev'] = result
 
 # Write the updated results back to the output file
 shared_utils.write_json_to_file(results, shared_utils.RESULT_FILE_PATH)
