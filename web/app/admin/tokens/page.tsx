@@ -50,12 +50,23 @@ export default function TokensPage() {
     }
   }, [selectedSiteId]);
 
-  // Set default site when sites load
+  // Load saved site from localStorage or use first available
   useEffect(() => {
     if (sites.length > 0 && !selectedSiteId) {
-      setSelectedSiteId(sites[0].id);
+      const savedSite = localStorage.getItem('owlette_current_site');
+      if (savedSite && sites.find(s => s.id === savedSite)) {
+        setSelectedSiteId(savedSite);
+      } else {
+        setSelectedSiteId(sites[0].id);
+      }
     }
   }, [sites, selectedSiteId]);
+
+  // Save site selection to localStorage
+  const handleSiteChange = (siteId: string) => {
+    setSelectedSiteId(siteId);
+    localStorage.setItem('owlette_current_site', siteId);
+  };
 
   const fetchTokens = async () => {
     if (!selectedSiteId) return;
@@ -179,7 +190,7 @@ export default function TokensPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
           <h1 className="text-2xl font-bold text-white">Agent Token Management</h1>
           <div className="flex items-center gap-2">
-            <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+            <Select value={selectedSiteId} onValueChange={handleSiteChange}>
               <SelectTrigger className="w-[180px] bg-slate-800 border-slate-600 text-white">
                 <SelectValue placeholder="Select site" />
               </SelectTrigger>

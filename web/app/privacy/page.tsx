@@ -13,7 +13,7 @@ export default function PrivacyPage() {
         <div className="mb-8">
           <button
             onClick={() => router.back()}
-            className="text-blue-400 hover:text-blue-300 text-sm"
+            className="text-blue-400 hover:text-blue-300 text-sm cursor-pointer"
           >
             &larr; Back
           </button>

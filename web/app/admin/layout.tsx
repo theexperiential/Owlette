@@ -193,15 +193,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </nav>
 
-          {/* Footer */}
-          <div className="p-4 lg:p-2 xl:p-4 border-t border-slate-700">
-            <p className="text-xs text-slate-500 text-center lg:hidden xl:block">
-              Administrator Access
-            </p>
-            <div className="hidden lg:block xl:hidden text-center">
-              <Shield className="h-4 w-4 text-slate-500 mx-auto" />
-            </div>
-          </div>
         </aside>
 
         {/* Main Content */}
