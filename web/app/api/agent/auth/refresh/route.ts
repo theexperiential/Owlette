@@ -20,10 +20,12 @@ import { withRateLimit } from '@/lib/withRateLimit';
  *
  * Errors:
  * - 400: Missing required fields
- * - 401: Invalid or expired refresh token
+ * - 401: Invalid refresh token, or expired (if token has expiresAt set)
  * - 403: Machine ID mismatch (security check)
  * - 429: Rate limit exceeded (20 requests per hour per IP)
  * - 500: Server error
+ *
+ * Note: Tokens without expiresAt field never expire (for long-duration installations)
  *
  * SECURITY: Rate limited to prevent token refresh spam
  */
@@ -60,11 +62,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const tokenData = tokenDoc.data();
 
-    // Check if refresh token has expired (30 days)
+    // Check if refresh token has expired (only if expiresAt is set)
+    // Tokens without expiresAt never expire (for long-duration installations)
     const now = Date.now();
     const expiresAt = tokenData?.expiresAt?.toMillis();
 
-    if (!expiresAt || expiresAt < now) {
+    if (expiresAt && expiresAt < now) {
       // Clean up expired token
       await tokenRef.delete();
 
