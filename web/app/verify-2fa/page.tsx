@@ -3,9 +3,8 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { doc, getDoc, updateDoc, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { verifyTOTP, verifyBackupCode } from '@/lib/totp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,8 +23,7 @@ function Verify2FAContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [trustThisDevice, setTrustThisDevice] = useState(false);
-  const [mfaSecret, setMfaSecret] = useState<string | null>(null);
-  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [mfaReady, setMfaReady] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -33,7 +31,7 @@ function Verify2FAContent() {
       return;
     }
 
-    // Load user's MFA configuration
+    // Check if user has MFA enrolled
     if (user && db) {
       const userDocRef = doc(db, 'users', user.uid);
       getDoc(userDocRef)
@@ -47,8 +45,7 @@ function Verify2FAContent() {
               return;
             }
 
-            setMfaSecret(userData.mfaSecret || null);
-            setBackupCodes(userData.backupCodes || []);
+            setMfaReady(true);
           } else {
             // No user document, redirect to dashboard
             router.push(returnUrl);
@@ -74,42 +71,29 @@ function Verify2FAContent() {
       return;
     }
 
+    if (!user) {
+      toast.error('User not authenticated');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      let isValid = false;
+      // Verify code via server-side API (secret never sent to client)
+      const response = await fetch('/api/mfa/verify-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.uid,
+          code: verificationCode,
+          isBackupCode: useBackupCode,
+        }),
+      });
 
-      if (useBackupCode) {
-        // Verify backup code
-        const normalizedCode = verificationCode.toUpperCase().trim();
-        const matchingCodeIndex = backupCodes.findIndex((hash) =>
-          verifyBackupCode(normalizedCode, hash)
-        );
+      const data = await response.json();
 
-        if (matchingCodeIndex !== -1) {
-          isValid = true;
-
-          // Remove used backup code
-          if (user && db) {
-            const userDocRef = doc(db, 'users', user.uid);
-            await updateDoc(userDocRef, {
-              backupCodes: arrayRemove(backupCodes[matchingCodeIndex]),
-            });
-
-            toast.success('Backup code used', {
-              description: 'This backup code has been removed.',
-            });
-          }
-        }
-      } else {
-        // Verify TOTP code
-        if (mfaSecret) {
-          isValid = verifyTOTP(verificationCode, mfaSecret);
-        }
-      }
-
-      if (!isValid) {
-        toast.error('Invalid code', {
+      if (!response.ok || data.error) {
+        toast.error(data.error || 'Invalid code', {
           description: useBackupCode
             ? 'The backup code you entered is incorrect.'
             : 'Please check your authenticator app and try again.',
@@ -119,22 +103,26 @@ function Verify2FAContent() {
         return;
       }
 
-      // Verification successful
-      if (user) {
-        // Mark session as MFA verified
-        setMfaVerifiedForSession(user.uid);
+      // Show backup code usage message if applicable
+      if (data.backupCodeUsed) {
+        toast.success('Backup code used', {
+          description: 'This backup code has been removed.',
+        });
+      }
 
-        // Trust device for 30 days if checked
-        if (trustThisDevice) {
-          trustDevice(user.uid);
-          toast.success('Verification Successful', {
-            description: 'This device has been trusted for 30 days.',
-          });
-        } else {
-          toast.success('Verification Successful', {
-            description: 'Redirecting...',
-          });
-        }
+      // Verification successful - mark session as MFA verified
+      setMfaVerifiedForSession(user.uid);
+
+      // Trust device for 30 days if checked
+      if (trustThisDevice) {
+        trustDevice(user.uid);
+        toast.success('Verification Successful', {
+          description: 'This device has been trusted for 30 days.',
+        });
+      } else {
+        toast.success('Verification Successful', {
+          description: 'Redirecting...',
+        });
       }
 
       // Redirect to return URL

@@ -3,9 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { generateTOTPSecret, generateQRCode, verifyTOTP, generateBackupCodes, hashBackupCode } from '@/lib/totp';
+import { generateBackupCodes } from '@/lib/totp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,19 +27,30 @@ export default function Setup2FAPage() {
       return;
     }
 
-    if (user && step === 'setup') {
-      // Generate TOTP secret and QR code
-      const newSecret = generateTOTPSecret();
-      setSecret(newSecret);
-
-      generateQRCode(user.email!, newSecret)
-        .then(setQrCodeUrl)
+    if (user && step === 'setup' && !secret) {
+      // Generate TOTP secret and QR code via API
+      fetch('/api/mfa/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.uid,
+          email: user.email,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          setSecret(data.secret);
+          setQrCodeUrl(data.qrCodeUrl);
+        })
         .catch((error) => {
-          console.error('Failed to generate QR code:', error);
+          console.error('Failed to generate MFA setup:', error);
           toast.error('Failed to generate QR code');
         });
     }
-  }, [user, loading, router, step]);
+  }, [user, loading, router, step, secret]);
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,38 +60,40 @@ export default function Setup2FAPage() {
       return;
     }
 
+    if (!user) {
+      toast.error('User not authenticated');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      // Verify the TOTP code
-      const isValid = verifyTOTP(verificationCode, secret);
+      // Generate backup codes
+      const codes = generateBackupCodes(10);
 
-      if (!isValid) {
-        toast.error('Invalid code', {
+      // Verify TOTP code and save encrypted secret via API
+      const response = await fetch('/api/mfa/verify-setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.uid,
+          code: verificationCode,
+          backupCodes: codes,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        toast.error(data.error || 'Invalid code', {
           description: 'Please check your authenticator app and try again.',
         });
         setIsSubmitting(false);
         return;
       }
 
-      // Generate backup codes
-      const codes = generateBackupCodes(10);
+      // Store backup codes for display
       setBackupCodes(codes);
-
-      // Hash backup codes for storage
-      const hashedCodes = codes.map(hashBackupCode);
-
-      // Save MFA configuration to Firestore
-      if (user && db) {
-        const userDocRef = doc(db, 'users', user.uid);
-        await updateDoc(userDocRef, {
-          mfaEnrolled: true,
-          mfaSecret: secret, // TODO: Encrypt this before storing
-          backupCodes: hashedCodes,
-          mfaEnrolledAt: new Date(),
-          requiresMfaSetup: false, // Setup complete
-        });
-      }
 
       toast.success('2FA Enabled', {
         description: 'Two-factor authentication has been enabled successfully.',
