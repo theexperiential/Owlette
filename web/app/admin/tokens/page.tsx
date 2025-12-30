@@ -89,7 +89,7 @@ export default function TokensPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           siteId: selectedSiteId,
-          machineId: tokenToRevoke.machineId,
+          tokenId: tokenToRevoke.id,  // Use unique token ID, not machineId
         }),
       });
 

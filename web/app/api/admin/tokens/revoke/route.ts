@@ -6,12 +6,14 @@ import { adminDb } from '@/lib/firebase-admin';
  * POST /api/admin/tokens/revoke
  *
  * Revoke agent refresh tokens. Supports revoking:
- * - A single machine's token (by machineId + siteId)
+ * - A single token (by tokenId - the document hash)
+ * - All tokens for a machine (by machineId + siteId)
  * - All tokens for a site (by siteId + all: true)
  *
  * Request body:
  * - siteId: string - The site ID (required)
- * - machineId?: string - The machine ID to revoke (optional)
+ * - tokenId?: string - The specific token document ID to revoke (preferred for single token)
+ * - machineId?: string - The machine ID to revoke all tokens for (optional)
  * - all?: boolean - If true, revoke all tokens for the site (optional)
  *
  * Response:
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { siteId, machineId, all } = body;
+    const { siteId, tokenId, machineId, all } = body;
 
     if (!siteId) {
       return NextResponse.json(
@@ -49,9 +51,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!machineId && !all) {
+    if (!tokenId && !machineId && !all) {
       return NextResponse.json(
-        { error: 'Must specify either machineId or all: true' },
+        { error: 'Must specify tokenId, machineId, or all: true' },
         { status: 400 }
       );
     }
@@ -82,8 +84,40 @@ export async function POST(request: NextRequest) {
         revokedCount,
         message: `Revoked all ${revokedCount} tokens for site ${siteId}`,
       });
+    } else if (tokenId) {
+      // Revoke specific token by document ID (most precise)
+      const tokenRef = db.collection('agent_refresh_tokens').doc(tokenId);
+      const tokenDoc = await tokenRef.get();
+
+      if (!tokenDoc.exists) {
+        return NextResponse.json({
+          success: false,
+          revokedCount: 0,
+          message: 'Token not found',
+        });
+      }
+
+      // Verify token belongs to the specified site
+      const tokenData = tokenDoc.data();
+      if (tokenData?.siteId !== siteId) {
+        return NextResponse.json(
+          { error: 'Token does not belong to this site' },
+          { status: 403 }
+        );
+      }
+
+      await tokenRef.delete();
+      revokedCount = 1;
+
+      console.log(`Revoked token ${tokenId} for site ${siteId}`);
+
+      return NextResponse.json({
+        success: true,
+        revokedCount,
+        message: `Revoked token for machine ${tokenData?.machineId || 'unknown'}`,
+      });
     } else {
-      // Revoke specific machine's token
+      // Revoke all tokens for a specific machine
       const tokensSnapshot = await db.collection('agent_refresh_tokens')
         .where('siteId', '==', siteId)
         .where('machineId', '==', machineId)
@@ -105,7 +139,7 @@ export async function POST(request: NextRequest) {
         success: true,
         revokedCount,
         message: revokedCount > 0
-          ? `Revoked token for machine ${machineId}`
+          ? `Revoked ${revokedCount} token(s) for machine ${machineId}`
           : `No tokens found for machine ${machineId}`,
       });
     }
