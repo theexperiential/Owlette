@@ -1587,14 +1587,51 @@ WshShell.Run "{vbs_command}", 0, False
                     if self.firebase_client:
                         self.firebase_client.update_command_progress(cmd_id, 'downloading', deployment_id)
 
-                    # Download installer
+                    # Download installer to our own temp directory (not WINDOWS\TEMP)
+                    # Some security software blocks execution from system temp directories
                     logging.info("Downloading installer...")
-                    temp_dir = tempfile.gettempdir()
-                    temp_installer_path = os.path.join(temp_dir, 'Owlette-Update.exe')
+                    owlette_tmp_dir = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'tmp')
+                    os.makedirs(owlette_tmp_dir, exist_ok=True)
+                    temp_installer_path = os.path.join(owlette_tmp_dir, 'Owlette-Update.exe')
 
                     import urllib.request
                     urllib.request.urlretrieve(installer_url, temp_installer_path)
                     logging.info(f"Installer downloaded to: {temp_installer_path}")
+
+                    # Verify downloaded file
+                    if not os.path.exists(temp_installer_path):
+                        raise Exception("Installer file not found after download")
+
+                    file_size = os.path.getsize(temp_installer_path)
+                    logging.info(f"Installer file size: {file_size:,} bytes")
+
+                    # Sanity check - Inno Setup installer should be at least 1MB
+                    if file_size < 1_000_000:
+                        raise Exception(f"Downloaded file too small ({file_size} bytes) - likely not a valid installer")
+
+                    # Verify it's a valid PE executable (check MZ header)
+                    with open(temp_installer_path, 'rb') as f:
+                        header = f.read(2)
+                        if header != b'MZ':
+                            raise Exception("Downloaded file is not a valid Windows executable")
+
+                    logging.info("Installer verified successfully")
+
+                    # Create update marker file (persists across service restart)
+                    # This helps diagnose whether updates are completing successfully
+                    update_marker_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'update_in_progress.json')
+                    import json
+                    update_marker = {
+                        'started_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'old_version': shared_utils.APP_VERSION,
+                        'target_version': target_version,
+                        'installer_url': installer_url,
+                        'installer_path': temp_installer_path,
+                        'command_id': cmd_id
+                    }
+                    with open(update_marker_path, 'w') as f:
+                        json.dump(update_marker, f, indent=2)
+                    logging.info(f"Update marker created: {update_marker_path}")
 
                     # Update status: installing
                     if self.firebase_client:
@@ -1602,11 +1639,14 @@ WshShell.Run "{vbs_command}", 0, False
 
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
-                    silent_flags = '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS'
+                    # Include /LOG to help diagnose failures on problematic systems
+                    log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'Owlette', 'logs', 'installer_update.log')
+                    silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
                     logging.info(f"Creating scheduled task: {task_name}")
                     logging.info(f"Installer flags: {silent_flags}")
+                    logging.info(f"Installer log will be written to: {log_path}")
 
                     # Create one-time task that runs immediately as SYSTEM
                     schtasks_cmd = [
@@ -1955,6 +1995,63 @@ WshShell.Run "{vbs_command}", 0, False
             logging.error(error_msg)
             return error_msg
 
+    def _check_update_status(self):
+        """
+        Check if a self-update was in progress when the service started.
+        This helps diagnose whether updates are completing successfully.
+        """
+        try:
+            update_marker_path = os.path.join(
+                os.environ.get('ProgramData', 'C:\\ProgramData'),
+                'Owlette', 'logs', 'update_in_progress.json'
+            )
+
+            if not os.path.exists(update_marker_path):
+                return  # No update was in progress
+
+            logging.info("=" * 60)
+            logging.info("UPDATE STATUS CHECK")
+            logging.info("=" * 60)
+
+            import json
+            with open(update_marker_path, 'r') as f:
+                marker = json.load(f)
+
+            old_version = marker.get('old_version', 'unknown')
+            target_version = marker.get('target_version', 'unknown')
+            started_at = marker.get('started_at', 'unknown')
+            current_version = shared_utils.APP_VERSION
+
+            logging.info(f"Update started at: {started_at}")
+            logging.info(f"Old version: {old_version}")
+            logging.info(f"Target version: {target_version}")
+            logging.info(f"Current version: {current_version}")
+
+            # Store result for Firebase logging after client starts
+            if current_version == target_version:
+                logging.info("[SUCCESS] Self-update completed successfully!")
+                self._pending_update_event = ('update_success', f'Updated from {old_version} to {current_version}', 'info')
+            elif current_version == old_version:
+                logging.error(f"[FAILED] Self-update FAILED - still on version {old_version}")
+                logging.error("Check installer_update.log for details")
+                self._pending_update_event = ('update_failed', f'Failed to update from {old_version} to {target_version}', 'error')
+            else:
+                logging.warning(f"[PARTIAL?] Unexpected version {current_version} after update")
+                logging.warning(f"Expected {target_version}, was {old_version}")
+                self._pending_update_event = ('update_unknown', f'Unexpected version {current_version} after update from {old_version}', 'warning')
+
+            logging.info("=" * 60)
+
+            # Clean up marker file
+            try:
+                os.remove(update_marker_path)
+                logging.info("Update marker file cleaned up")
+            except Exception as e:
+                logging.warning(f"Failed to remove update marker: {e}")
+
+        except Exception as e:
+            logging.warning(f"Error checking update status: {e}")
+
     # Main main
     def main(self):
 
@@ -1983,6 +2080,9 @@ WshShell.Run "{vbs_command}", 0, False
             self.environment = None
 
         logging.info("Service initialization complete")
+
+        # Check for update marker (indicates a self-update was in progress)
+        self._check_update_status()
 
         # Start Firebase client and upload local config
         if self.firebase_client:
@@ -2016,6 +2116,16 @@ WshShell.Run "{vbs_command}", 0, False
                 # At this point, Firestore has our local config, and the hash is set
                 self.firebase_client.start()
                 logging.info("Firebase client started successfully")
+
+                # Log any pending update event (from self-update check)
+                if hasattr(self, '_pending_update_event') and self._pending_update_event:
+                    event_type, message, level = self._pending_update_event
+                    try:
+                        self.firebase_client.log_event(event_type, message, level)
+                        logging.info(f"Update event logged to Firebase: {event_type}")
+                    except Exception as e:
+                        logging.warning(f"Failed to log update event to Firebase: {e}")
+                    self._pending_update_event = None
 
                 # Register atexit handler to ensure machine is marked offline even if killed abruptly
                 def emergency_offline_handler():

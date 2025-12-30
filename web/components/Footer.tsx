@@ -51,6 +51,21 @@ export function Footer() {
             TEC
           </Link>
         </p>
+        <p className="text-center text-xs text-slate-600 mt-2 flex items-center justify-center gap-2">
+          <Link
+            href="/privacy"
+            className="hover:text-slate-400 transition-colors"
+          >
+            Privacy
+          </Link>
+          <span>&middot;</span>
+          <Link
+            href="/terms"
+            className="hover:text-slate-400 transition-colors"
+          >
+            Terms
+          </Link>
+        </p>
       </div>
     </footer>
   );

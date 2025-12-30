@@ -8,7 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Thermometer } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield } from 'lucide-react';
+import Link from 'next/link';
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -199,38 +200,54 @@ export function AccountSettingsDialog({ open, onOpenChange }: AccountSettingsDia
             <p className="text-xs text-slate-500">Email cannot be changed</p>
           </div>
 
-          {/* Preferences Section */}
+          {/* Temperature Unit */}
+          <Separator className="bg-slate-700" />
+
+          <div className="space-y-2">
+            <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
+            <Select
+              value={temperatureUnit}
+              onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
+              disabled={loading}
+            >
+              <SelectTrigger
+                id="temperatureUnit"
+                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="border-slate-700 bg-slate-800 text-white">
+                <SelectItem value="C" className="cursor-pointer hover:bg-slate-700">
+                  Celsius (°C)
+                </SelectItem>
+                <SelectItem value="F" className="cursor-pointer hover:bg-slate-700">
+                  Fahrenheit (°F)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Security Section */}
           <Separator className="bg-slate-700" />
 
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Thermometer className="h-4 w-4 text-slate-400" />
-              <Label className="text-white">Preferences</Label>
+              <Shield className="h-4 w-4 text-slate-400" />
+              <Label className="text-white">Security</Label>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="temperatureUnit" className="text-white">Temperature Unit</Label>
-              <Select
-                value={temperatureUnit}
-                onValueChange={(value: 'C' | 'F') => setTemperatureUnit(value)}
-                disabled={loading}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-white">Two-Factor Authentication</p>
+                <p className="text-xs text-slate-500">Add an extra layer of security to your account</p>
+              </div>
+              <Link
+                href="/setup-2fa"
+                onClick={() => onOpenChange(false)}
+                className="text-sm text-blue-400 hover:text-blue-300"
               >
-                <SelectTrigger
-                  id="temperatureUnit"
-                  className="border-slate-700 bg-slate-900 text-white hover:bg-slate-800"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="border-slate-700 bg-slate-800 text-white">
-                  <SelectItem value="C" className="cursor-pointer hover:bg-slate-700">
-                    Celsius (°C)
-                  </SelectItem>
-                  <SelectItem value="F" className="cursor-pointer hover:bg-slate-700">
-                    Fahrenheit (°F)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">Display temperature in Celsius or Fahrenheit</p>
+                Manage
+              </Link>
             </div>
           </div>
 

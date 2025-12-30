@@ -6,6 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { validatePassword, validateEmail } from '@/lib/validators';
@@ -18,12 +20,19 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check terms agreement
+    if (!agreedToTerms) {
+      toast.error('You must agree to the Terms of Service and Privacy Policy');
+      return;
+    }
 
     // Validate email
     const emailValidation = validateEmail(email);
@@ -60,6 +69,12 @@ export default function RegisterPage() {
   };
 
   const handleGoogleSignup = async () => {
+    // Check terms agreement
+    if (!agreedToTerms) {
+      toast.error('You must agree to the Terms of Service and Privacy Policy');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -163,7 +178,26 @@ export default function RegisterPage() {
                 className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
               />
             </div>
-            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+            <div className="flex items-start space-x-2">
+              <Checkbox
+                id="terms"
+                checked={agreedToTerms}
+                onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
+                disabled={loading}
+                className="mt-0.5 border-slate-600 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
+              />
+              <Label htmlFor="terms" className="text-sm text-slate-400 leading-tight cursor-pointer">
+                I agree to the{' '}
+                <Link href="/terms" className="text-blue-400 hover:text-blue-300 hover:underline" target="_blank">
+                  Terms of Service
+                </Link>
+                {' '}and{' '}
+                <Link href="/privacy" className="text-blue-400 hover:text-blue-300 hover:underline" target="_blank">
+                  Privacy Policy
+                </Link>
+              </Label>
+            </div>
+            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
               {loading ? 'Creating account...' : 'Create account'}
             </Button>
           </form>
@@ -184,7 +218,7 @@ export default function RegisterPage() {
             variant="outline"
             className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleSignup}
-            disabled={loading}
+            disabled={loading || !agreedToTerms}
           >
             <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
               <path
