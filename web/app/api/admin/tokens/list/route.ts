@@ -46,9 +46,9 @@ export async function GET(request: NextRequest) {
     const db = adminDb.value;
 
     // Get all tokens for the site
+    // Note: We avoid using orderBy to prevent needing a composite index
     const tokensSnapshot = await db.collection('agent_refresh_tokens')
       .where('siteId', '==', siteId)
-      .orderBy('createdAt', 'desc')
       .get();
 
     const tokens = tokensSnapshot.docs.map(doc => {
@@ -63,6 +63,13 @@ export async function GET(request: NextRequest) {
         expiresAt: data.expiresAt?.toDate?.()?.toISOString() || null, // null = never expires
         agentUid: data.agentUid,
       };
+    });
+
+    // Sort by createdAt descending (newest first) in memory
+    tokens.sort((a, b) => {
+      if (!a.createdAt) return 1;
+      if (!b.createdAt) return -1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     return NextResponse.json({
