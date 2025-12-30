@@ -1011,29 +1011,55 @@ WshShell.Run "{vbs_command}", 0, False
             return None  # Return None if the process was not started
 
     # If process not responding, attempt to kill and relaunch
+    # Uses confirmation-based detection: process must be hung for HANG_CONFIRM_SECONDS before killing
+    HANG_CONFIRM_SECONDS = 15  # Require ~3 consecutive checks (at 5s intervals) before killing
+
     def handle_unresponsive_process(self, pid, process):
+        # Check if hang detection is disabled for this process
+        if not process.get('check_responsive', True):
+            return None
+
         # Check JSON for process response status
         process_name = Util.get_process_name(process)
         try:
-            responsive = self.results.get(str(pid), {}).get('responsive', True)
+            process_results = self.results.get(str(pid), {})
+            responsive = process_results.get('responsive', True)
+            hung_since = process_results.get('hung_since', None)
         except json.JSONDecodeError:
             logging.error("Failed to decode JSON from result file")
             responsive = True
+            hung_since = None
         except Exception:
             logging.error("An unexpected error occurred")
             responsive = True
+            hung_since = None
 
-        # Attempt to kill and relaunch if unresponsive
-        if not responsive:
-            self.log_and_notify(
-                process,
-                f"Process {process_name} (PID {pid}) is not responding"
-            )
-            # Status message - sync to Firebase immediately
-            shared_utils.update_process_status_in_json(pid, 'STALLED', self.firebase_client)
-            time.sleep(1)
-            new_pid = self.kill_and_relaunch_process(pid, process)
-            return new_pid
+        # Check if process is unresponsive
+        if not responsive and hung_since:
+            current_time = int(time.time())
+            hung_duration = current_time - hung_since
+
+            # Log when first detected as hung (hung_duration will be small on first detection)
+            if hung_duration < 10:  # First detection (within first check cycle)
+                logging.warning(f"Process {process_name} (PID {pid}) appears to be not responding, monitoring...")
+                # Set status to STALLED but don't kill yet
+                shared_utils.update_process_status_in_json(pid, 'STALLED', self.firebase_client)
+                return None  # Don't kill yet, wait for confirmation
+
+            # Only kill after confirmed hang (multiple checks)
+            if hung_duration >= self.HANG_CONFIRM_SECONDS:
+                self.log_and_notify(
+                    process,
+                    f"Process {process_name} (PID {pid}) not responding for {hung_duration}s, restarting"
+                )
+                time.sleep(1)
+                new_pid = self.kill_and_relaunch_process(pid, process)
+                return new_pid
+            else:
+                # Still waiting for confirmation
+                logging.info(f"Process {process_name} (PID {pid}) hung for {hung_duration}s, waiting for confirmation ({self.HANG_CONFIRM_SECONDS}s threshold)")
+                return None
+
         return None
 
     # Main process handler

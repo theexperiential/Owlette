@@ -13,69 +13,120 @@ import time
 from typing import Optional, Callable, Dict
 
 
-def download_file(url: str, dest_path: str, progress_callback: Optional[Callable[[int], None]] = None) -> tuple[bool, str]:
+def download_file(
+    url: str,
+    dest_path: str,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    max_retries: int = 3,
+    connect_timeout: int = 30,
+    read_timeout: int = 600
+) -> tuple[bool, str]:
     """
-    Download a file from a URL with progress tracking.
+    Download a file from a URL with progress tracking and retry logic.
 
     Args:
         url: URL to download from
         dest_path: Destination file path
         progress_callback: Optional callback function that receives progress percentage (0-100)
+        max_retries: Maximum number of retry attempts (default: 3)
+        connect_timeout: Connection timeout in seconds (default: 30)
+        read_timeout: Read timeout in seconds (default: 600 = 10 minutes for large files)
 
     Returns:
         Tuple of (success, actual_path):
         - success: True if download succeeded, False otherwise
         - actual_path: The actual path where the file was saved (may differ from dest_path if file was in use)
     """
-    try:
-        logging.info(f"Starting download from {url}")
+    logging.info(f"Starting download from {url}")
 
-        # Create destination directory if it doesn't exist
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    # Create destination directory if it doesn't exist
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
-        # Pre-download cleanup: handle existing files
+    # Pre-download cleanup: handle existing files
+    if os.path.exists(dest_path):
+        logging.info(f"File already exists at {dest_path}, attempting cleanup...")
+        try:
+            os.remove(dest_path)
+            logging.info("Existing file removed successfully")
+        except PermissionError as e:
+            # File is locked by another process - generate unique filename
+            timestamp = int(time.time())
+            base_name, ext = os.path.splitext(dest_path)
+            dest_path = f"{base_name}_{timestamp}{ext}"
+            logging.warning(f"Could not remove existing file (in use), using unique filename: {dest_path}")
+        except Exception as e:
+            logging.error(f"Error removing existing file: {e}")
+            return False, ""
+
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attempt > 1:
+                # Exponential backoff: 5s, 10s, 20s...
+                wait_time = 5 * (2 ** (attempt - 2))
+                logging.info(f"Retry attempt {attempt}/{max_retries} after {wait_time}s delay...")
+                time.sleep(wait_time)
+
+            # Stream the download to avoid loading entire file into memory
+            # Use separate connect and read timeouts - large files need more read time
+            response = requests.get(
+                url,
+                stream=True,
+                timeout=(connect_timeout, read_timeout),
+                allow_redirects=True  # Follow redirects (important for Dropbox/cloud storage)
+            )
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+
+            # Use larger chunk size for better performance on large files
+            chunk_size = 64 * 1024  # 64KB chunks
+
+            with open(dest_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+
+                        # Report progress
+                        if total_size > 0 and progress_callback:
+                            progress = int((downloaded_size / total_size) * 100)
+                            progress_callback(progress)
+
+            # Verify we got a complete file (if content-length was provided)
+            if total_size > 0 and downloaded_size < total_size:
+                raise requests.exceptions.RequestException(
+                    f"Incomplete download: got {downloaded_size} bytes, expected {total_size}"
+                )
+
+            logging.info(f"Download completed: {dest_path} ({downloaded_size:,} bytes)")
+            return True, dest_path
+
+        except requests.exceptions.Timeout as e:
+            last_error = f"Timeout on attempt {attempt}: {e}"
+            logging.warning(last_error)
+        except requests.exceptions.ConnectionError as e:
+            last_error = f"Connection error on attempt {attempt}: {e}"
+            logging.warning(last_error)
+        except requests.exceptions.RequestException as e:
+            last_error = f"Request error on attempt {attempt}: {e}"
+            logging.warning(last_error)
+        except Exception as e:
+            last_error = f"Unexpected error on attempt {attempt}: {e}"
+            logging.warning(last_error)
+
+        # Clean up partial download before retry
         if os.path.exists(dest_path):
-            logging.info(f"File already exists at {dest_path}, attempting cleanup...")
             try:
                 os.remove(dest_path)
-                logging.info("Existing file removed successfully")
-            except PermissionError as e:
-                # File is locked by another process - generate unique filename
-                timestamp = int(time.time())
-                base_name, ext = os.path.splitext(dest_path)
-                dest_path = f"{base_name}_{timestamp}{ext}"
-                logging.warning(f"Could not remove existing file (in use), using unique filename: {dest_path}")
-            except Exception as e:
-                logging.error(f"Error removing existing file: {e}")
-                return False, ""
+            except:
+                pass
 
-        # Stream the download to avoid loading entire file into memory
-        response = requests.get(url, stream=True, timeout=30)
-        response.raise_for_status()
-
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded_size = 0
-
-        with open(dest_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded_size += len(chunk)
-
-                    # Report progress
-                    if total_size > 0 and progress_callback:
-                        progress = int((downloaded_size / total_size) * 100)
-                        progress_callback(progress)
-
-        logging.info(f"Download completed: {dest_path} ({downloaded_size} bytes)")
-        return True, dest_path
-
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Download failed: {e}")
-        return False, ""
-    except Exception as e:
-        logging.error(f"Unexpected error during download: {e}")
-        return False, ""
+    # All retries exhausted
+    logging.error(f"Download failed after {max_retries} attempts. Last error: {last_error}")
+    return False, ""
 
 
 def execute_installer(

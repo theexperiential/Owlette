@@ -18,7 +18,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
  *
  * Response (200 OK):
  * - accessToken: string - OAuth 2.0 access token for Firestore API (1 hour expiry)
- * - refreshToken: string - Long-lived refresh token (30 days expiry)
+ * - refreshToken: string - Long-lived refresh token (never expires, can be revoked by admin)
  * - expiresIn: number - Access token expiry in seconds (3600)
  * - siteId: string - Site ID this agent is authorized for
  *
@@ -169,13 +169,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       .digest('hex');
 
     // Store refresh token in Firestore
+    // Note: expiresAt is intentionally omitted - tokens never expire for long-duration installations
+    // Admins can manually revoke tokens via the admin panel if needed
     await adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash).set({
       siteId,
       machineId,
       version,
       createdBy,
       createdAt: FieldValue.serverTimestamp(),
-      expiresAt: new Date(now + 30 * 24 * 60 * 60 * 1000), // 30 days from now
       lastUsed: FieldValue.serverTimestamp(),
       agentUid,
     });

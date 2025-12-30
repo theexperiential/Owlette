@@ -376,7 +376,8 @@ def on_select(icon, item):
         #logging.info(f"Checkbox state after action: {start_on_login}")
         
         # Update menu
-        icon.update_menu(generate_menu())
+        icon.menu = generate_menu()
+        icon.update_menu()
 
     except Exception as e:
         logging.error(f"Failed to change service startup type: {e}")
@@ -433,11 +434,14 @@ def monitor_status(icon):
                         'firebase': firebase_msg
                     }
 
-                    # Always update tooltip (messages can change even if icon doesn't)
-                    hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
-                    tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
-                    icon.title = tooltip
+                # Update tooltip and menu OUTSIDE the lock (generate_menu also uses lock)
+                hostname = psutil.os.environ.get('COMPUTERNAME', 'Unknown')
+                tooltip = f"Owlette v{shared_utils.APP_VERSION}\nHostname: {hostname}\n{service_msg}\nStatus: {firebase_msg}"
+                icon.title = tooltip
+                icon.menu = generate_menu()  # Update menu object
+                icon.update_menu()  # Signal OS to refresh the menu display
 
+                with status_lock:
                     # Check if icon color should change
                     if last_status.get('code') != status_code:
                         # Update icon
@@ -627,7 +631,7 @@ if __name__ == "__main__":
             "owlette_icon",
             image,
             tooltip,
-            menu=generate_menu()
+            menu=generate_menu()  # Initial menu - will be updated by monitor_status
         )
 
         # Start status monitoring thread

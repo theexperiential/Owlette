@@ -99,6 +99,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 | `autolaunch` | Auto-start on service start | `true` or `false` |
 | `visibility` | Window visibility | `"Show"` or `"Hide"` |
 | `priority` | Process priority | `"Low"`, `"Normal"`, `"High"`, `"Realtime"` |
+| `check_responsive` | Enable "not responding" detection | `true` (default) or `false` |
 
 ### Firebase Settings
 
