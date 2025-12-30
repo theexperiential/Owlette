@@ -174,48 +174,38 @@ export default function TokensPage() {
 
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-2">Agent Token Management</h1>
-        <p className="text-slate-400">
-          View and revoke agent authentication tokens. Revoking a token will disconnect
-          the agent and require re-registration.
-        </p>
-      </div>
-
-      {/* Site Selector */}
-      <Card className="bg-slate-800 border-slate-700 mb-6">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-white text-lg">Select Site</CardTitle>
-          <CardDescription>Choose a site to manage its agent tokens</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-4 items-end">
-            <div className="flex-1 max-w-xs">
-              <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-                <SelectTrigger className="bg-slate-900 border-slate-600 text-white">
-                  <SelectValue placeholder="Select a site" />
-                </SelectTrigger>
-                <SelectContent className="bg-slate-800 border-slate-700">
-                  {sites.map((site) => (
-                    <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
-                      {site.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+      {/* Header with inline site selector */}
+      <div className="mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
+          <h1 className="text-2xl font-bold text-white">Agent Token Management</h1>
+          <div className="flex items-center gap-2">
+            <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
+              <SelectTrigger className="w-[180px] bg-slate-800 border-slate-600 text-white">
+                <SelectValue placeholder="Select site" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-800 border-slate-700">
+                {sites.map((site) => (
+                  <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
+                    {site.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               variant="outline"
+              size="icon"
               onClick={fetchTokens}
               disabled={!selectedSiteId || loading}
               className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <p className="text-slate-400 text-sm">
+          View and revoke agent authentication tokens. Revoking a token will disconnect the agent and require re-registration.
+        </p>
+      </div>
 
       {/* Tokens Table */}
       {selectedSiteId && (
@@ -231,6 +221,7 @@ export default function TokensPage() {
             {tokens.length > 0 && (
               <Button
                 variant="destructive"
+                size="sm"
                 onClick={() => setRevokeAllDialogOpen(true)}
                 className="bg-red-600 hover:bg-red-700"
               >
