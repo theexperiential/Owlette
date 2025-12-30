@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import Image from 'next/image';
 
 export default function Setup2FAPage() {
-  const { user, loading, signOut } = useAuth();
+  const { user, loading } = useAuth();
   const router = useRouter();
 
   const [secret, setSecret] = useState('');
@@ -189,16 +189,10 @@ export default function Setup2FAPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={async () => {
-                    await signOut();
-                    toast.info('Setup Cancelled', {
-                      description: 'You can complete 2FA setup when you sign in again.',
-                    });
-                    router.push('/login');
-                  }}
+                  onClick={() => router.back()}
                   className="w-full text-sm text-slate-400 hover:text-white"
                 >
-                  Cancel Setup
+                  Cancel
                 </Button>
               </div>
             </div>
@@ -243,17 +237,11 @@ export default function Setup2FAPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={async () => {
-                    await signOut();
-                    toast.info('Setup Cancelled', {
-                      description: 'You can complete 2FA setup when you sign in again.',
-                    });
-                    router.push('/login');
-                  }}
+                  onClick={() => router.back()}
                   disabled={isSubmitting}
                   className="w-full text-sm text-slate-400 hover:text-white"
                 >
-                  Cancel Setup
+                  Cancel
                 </Button>
               </div>
             </form>
