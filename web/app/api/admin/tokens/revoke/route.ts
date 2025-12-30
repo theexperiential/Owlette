@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
+import { withRateLimit } from '@/lib/withRateLimit';
 
 /**
  * POST /api/admin/tokens/revoke
@@ -26,7 +27,7 @@ import { adminDb } from '@/lib/firebase-admin';
  * - 401: Unauthorized
  * - 500: Server error
  */
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     // Verify user is authenticated by checking session cookie
     const cookieStore = await cookies();
@@ -151,4 +152,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, {
+  strategy: 'user',
+  identifier: 'ip',
+});

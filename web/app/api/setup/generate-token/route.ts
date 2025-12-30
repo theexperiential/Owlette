@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
+import { withRateLimit } from '@/lib/withRateLimit';
 
 /**
  * POST /api/setup/generate-token
@@ -15,7 +16,7 @@ import { adminDb } from '@/lib/firebase-admin';
  * Response:
  * - token: string - Registration code to pass to the agent (24h expiry)
  */
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     // Parse request body
     const body = await request.json();
@@ -75,4 +76,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, {
+  strategy: 'user',
+  identifier: 'ip',
+});
