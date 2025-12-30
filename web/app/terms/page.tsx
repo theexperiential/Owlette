@@ -1,24 +1,22 @@
-import Link from 'next/link';
-import { Metadata } from 'next';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'Terms of Service - Owlette',
-  description: 'Terms of Service for Owlette - Cloud-Connected Process Management System',
-};
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 export default function TermsPage() {
   const lastUpdated = 'December 30, 2025';
+  const router = useRouter();
 
   return (
     <div className="min-h-screen bg-slate-950 py-12 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="mb-8">
-          <Link
-            href="/login"
+          <button
+            onClick={() => router.back()}
             className="text-blue-400 hover:text-blue-300 text-sm"
           >
-            &larr; Back to Login
-          </Link>
+            &larr; Back
+          </button>
         </div>
 
         <article className="prose prose-invert prose-slate max-w-none">
@@ -29,8 +27,8 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">1. Acceptance of Terms</h2>
               <p>
-                By accessing or using Owlette (&quot;the Service&quot;), operated by TEC (&quot;we,&quot;
-                &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these Terms of Service
+                By accessing or using Owlette (&quot;the Service&quot;), operated by The Experiential Company, LLC
+                (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these Terms of Service
                 (&quot;Terms&quot;). If you do not agree to these Terms, you may not use the Service.
               </p>
               <p className="mt-4">
@@ -240,7 +238,7 @@ export default function TermsPage() {
                 </a>
               </p>
               <p className="mt-2">
-                <strong>Company:</strong> TEC
+                <strong>Company:</strong> The Experiential Company, LLC
               </p>
               <p className="mt-2">
                 <strong>Location:</strong> California, USA
@@ -255,8 +253,8 @@ export default function TermsPage() {
               Privacy Policy
             </Link>
             {' '}&middot;{' '}
-            <Link href="/login" className="text-slate-400 hover:text-slate-300">
-              Login
+            <Link href="/dashboard" className="text-slate-400 hover:text-slate-300">
+              Dashboard
             </Link>
           </p>
         </div>
