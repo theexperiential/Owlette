@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date(now + 24 * 60 * 60 * 1000);
 
     // Store registration code in Firestore
+    const adminDb = getAdminDb();
     await adminDb.collection('agent_tokens').doc(registrationCode).set({
       siteId,
       createdBy: userId,
