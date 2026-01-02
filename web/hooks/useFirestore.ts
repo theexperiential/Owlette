@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, query, setDoc, getDocs, deleteDoc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, query, setDoc, deleteDoc, updateDoc, getDoc, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -47,7 +47,7 @@ export interface Site {
   createdAt: number;
 }
 
-export function useSites(userSites?: string[], isAdmin?: boolean) {
+export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,18 +60,11 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
     }
 
     // If user data not loaded yet, wait
-    if (userSites === undefined || isAdmin === undefined) {
+    if (userSites === undefined || isAdmin === undefined || userId === undefined) {
       setLoading(true);
       return;
     }
 
-    // If user has no sites, return empty immediately
-    if (!isAdmin && userSites.length === 0) {
-      console.log('⚠️ User has no sites assigned');
-      setSites([]);
-      setLoading(false);
-      return;
-    }
 
     try {
       // ADMINS: Query all sites
@@ -103,13 +96,56 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
         return () => unsubscribe();
       }
 
-      // NON-ADMINS: Query specific site documents by ID
-      console.log('🔒 Non-admin user - fetching sites:', userSites);
+      // NON-ADMINS: Combine owned sites + assigned sites
+      console.log('Non-admin user - fetching sites:', userSites);
 
-      // Create listeners for each site document
       const unsubscribes: (() => void)[] = [];
       const siteDataMap = new Map<string, Site>();
+      let ownedSiteIds = new Set<string>();
+      const assignedSiteIds = new Set<string>(userSites);
 
+      const updateStateFromMap = () => {
+        const siteArray = Array.from(siteDataMap.values());
+        siteArray.sort((a, b) => a.name.localeCompare(b.name));
+        console.log('dY?? User sites loaded:', siteArray.map(s => s.id));
+        setSites(siteArray);
+        setLoading(false);
+      };
+
+      // Listen to sites owned by the user
+      const ownedQuery = query(collection(db, 'sites'), where('owner', '==', userId));
+      const ownedUnsub = onSnapshot(
+        ownedQuery,
+        (snapshot) => {
+          const nextOwned = new Set<string>();
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            nextOwned.add(docSnap.id);
+            siteDataMap.set(docSnap.id, {
+              id: docSnap.id,
+              name: data.name || docSnap.id,
+              createdAt: data.createdAt || Date.now(),
+            });
+          });
+
+          // Remove sites that are no longer owned and not assigned
+          ownedSiteIds.forEach((siteId) => {
+            if (!nextOwned.has(siteId) && !assignedSiteIds.has(siteId)) {
+              siteDataMap.delete(siteId);
+            }
+          });
+
+          ownedSiteIds = nextOwned;
+          updateStateFromMap();
+        },
+        (err) => {
+          console.error('Error fetching owned sites:', err);
+          setLoading(false);
+        }
+      );
+      unsubscribes.push(ownedUnsub);
+
+      // Listen to assigned sites from user document
       userSites.forEach((siteId) => {
         const siteDocRef = doc(db!, 'sites', siteId);
         const unsubscribe = onSnapshot(
@@ -122,18 +158,12 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
                 name: data.name || siteId,
                 createdAt: data.createdAt || Date.now(),
               });
-            } else {
-              // Site document doesn't exist - remove from map
+            } else if (!ownedSiteIds.has(siteId)) {
               siteDataMap.delete(siteId);
-              console.warn(`⚠️ Site "${siteId}" not found in Firestore`);
+              console.warn(`?s??,? Site "${siteId}" not found in Firestore`);
             }
 
-            // Update state with current map
-            const siteArray = Array.from(siteDataMap.values());
-            siteArray.sort((a, b) => a.name.localeCompare(b.name));
-            console.log('🏢 User sites loaded:', siteArray.map(s => s.id));
-            setSites(siteArray);
-            setLoading(false);
+            updateStateFromMap();
           },
           (err) => {
             console.error(`Error fetching site ${siteId}:`, err);
@@ -151,7 +181,7 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
       setError(err.message);
       setLoading(false);
     }
-  }, [userSites, isAdmin]);
+  }, [userId, userSites, isAdmin]);
 
   const createSite = async (siteId: string, name: string, userId: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
@@ -177,29 +207,6 @@ export function useSites(userSites?: string[], isAdmin?: boolean) {
       owner: userId,
     });
 
-    // Add site to user's sites array
-    const userRef = doc(db, 'users', userId);
-    const userDoc = await getDoc(userRef);
-
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      const currentSites = userData.sites || [];
-
-      // Only add if not already in array
-      if (!currentSites.includes(siteId)) {
-        await setDoc(userRef, {
-          sites: [...currentSites, siteId]
-        }, { merge: true });
-      }
-    } else {
-      // Create user document if it doesn't exist (edge case: user document creation failed)
-      await setDoc(userRef, {
-        email: '', // Will be populated by AuthContext later
-        role: 'user',
-        sites: [siteId],
-        createdAt: new Date(),
-      });
-    }
 
     // Return the created site ID so caller can auto-switch to it
     return siteId;

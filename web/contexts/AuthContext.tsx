@@ -22,12 +22,12 @@ import { toast } from 'sonner';
 import { clearMfaSession } from '@/lib/mfaSession';
 
 // Helper functions for server-side session management
-const createSessionCookie = async (userId: string): Promise<void> => {
+const createSessionCookie = async (userId: string, idToken: string): Promise<void> => {
   try {
     const response = await fetch('/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ userId, idToken }),
     });
 
     if (!response.ok) {
@@ -117,11 +117,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authMethod: 'email' | 'google'
   ) => {
     try {
+      let idToken: string | null = null;
+      if (auth?.currentUser) {
+        try {
+          idToken = await auth.currentUser.getIdToken();
+        } catch (tokenError) {
+          console.warn('Failed to get ID token for notification:', tokenError);
+        }
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (idToken) {
+        headers.Authorization = `Bearer ${idToken}`;
+      }
+
       const response = await fetch('/api/webhooks/user-created', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           email,
           displayName,
@@ -162,7 +177,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (user) {
         // User is logged in - create server-side session with HTTPOnly cookie
-        createSessionCookie(user.uid);
+        try {
+          const idToken = await user.getIdToken();
+          await createSessionCookie(user.uid, idToken);
+        } catch (error) {
+          console.error('[Session] Failed to get ID token:', error);
+        }
 
         // Listen to user document for real-time updates
         if (db) {

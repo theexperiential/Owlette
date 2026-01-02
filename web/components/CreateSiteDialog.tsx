@@ -71,8 +71,14 @@ export function CreateSiteDialog({
         setAvailabilityStatus('available');
         setValidationError('');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error checking site availability:', error);
+      if (error?.code === 'permission-denied') {
+        // Fall back to allowing creation; server-side will enforce uniqueness.
+        setAvailabilityStatus('available');
+        setValidationError('');
+        return;
+      }
       setAvailabilityStatus('invalid');
       setValidationError('Failed to check availability');
     }

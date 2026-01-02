@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { ApiAuthError, requireSessionOrIdToken } from '@/lib/apiAuth.server';
 
 // Lazy initialization to avoid build-time errors when env var is missing
 let resend: Resend | null = null;
@@ -29,6 +31,8 @@ interface UserCreatedPayload {
 
 export async function POST(request: NextRequest) {
   try {
+    const sessionUserId = await requireSessionOrIdToken(request);
+
     // Parse request body
     const payload: UserCreatedPayload = await request.json();
 
@@ -37,6 +41,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
+      );
+    }
+
+    // Ensure the payload matches the authenticated user
+    const db = getAdminDb();
+    const userDoc = await db.collection('users').doc(sessionUserId).get();
+    const userData = userDoc.exists ? userDoc.data() : null;
+    if (!userData || userData.email !== payload.email) {
+      return NextResponse.json(
+        { error: 'Unauthorized: User mismatch' },
+        { status: 403 }
       );
     }
 
@@ -127,6 +142,9 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error sending user creation notification:', error);
     return NextResponse.json(
       {

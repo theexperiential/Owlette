@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { cookies } from 'next/headers';
 import { FieldValue } from 'firebase-admin/firestore';
+import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 
 /**
  * POST /api/agent/generate-installer
@@ -12,7 +12,7 @@ import { FieldValue } from 'firebase-admin/firestore';
  *
  * Request body:
  * - siteId: string - Site ID to associate the agent with
- * - userId: string - User ID requesting the installer
+ * - userId: string - Deprecated (derived from session)
  *
  * Response (200 OK):
  * - registrationCode: string - Single-use code to embed in installer
@@ -29,54 +29,19 @@ export async function POST(request: NextRequest) {
   try {
     // Parse request body
     const body = await request.json();
-    const { siteId, userId } = body;
+    const { siteId } = body;
 
-    if (!siteId || !userId) {
+    if (!siteId) {
       return NextResponse.json(
-        { error: 'Missing required fields: siteId, userId' },
+        { error: 'Missing required field: siteId' },
         { status: 400 }
       );
     }
 
-    // Verify user is authenticated by checking session cookie
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('__session');
-    const authCookie = cookieStore.get('auth');
-
-    if (!sessionCookie && !authCookie) {
-      return NextResponse.json(
-        { error: 'Unauthorized: No session found' },
-        { status: 401 }
-      );
-    }
+    const userId = await requireSession(request);
 
     // Verify user has access to the site
-    // Check if user is listed as owner/member of the site
-    const adminDb = getAdminDb();
-    const siteRef = adminDb.collection('sites').doc(siteId);
-    const siteDoc = await siteRef.get();
-
-    if (!siteDoc.exists) {
-      return NextResponse.json(
-        { error: 'Site not found' },
-        { status: 404 }
-      );
-    }
-
-    const siteData = siteDoc.data();
-    const isOwner = siteData?.owners?.[userId] === true;
-    const isMember = siteData?.members?.includes(userId);
-
-    if (!isOwner && !isMember) {
-      console.warn(
-        `User ${userId} attempted to generate installer for site ${siteId} without permission`
-      );
-
-      return NextResponse.json(
-        { error: 'Forbidden: You do not have access to this site' },
-        { status: 403 }
-      );
-    }
+    await assertUserHasSiteAccess(userId, siteId);
 
     // Generate cryptographically secure registration code
     const crypto = await import('crypto');
@@ -112,6 +77,9 @@ export async function POST(request: NextRequest) {
     );
 
   } catch (error: any) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error generating registration code:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },

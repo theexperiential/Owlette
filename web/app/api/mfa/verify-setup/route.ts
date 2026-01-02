@@ -18,6 +18,7 @@ import { verifyTOTP, hashBackupCode } from '@/lib/totp';
 import { encrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -45,6 +46,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         { status: 400 }
       );
     }
+
+    await requireSessionUser(request, userId);
 
     // Check encryption is configured
     if (!isEncryptionConfigured()) {
@@ -117,6 +120,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       success: true,
     });
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[MFA Verify Setup] Error:', error);
     return NextResponse.json(
       { error: 'Failed to verify MFA setup' },

@@ -18,6 +18,7 @@ import {
   getSessionData,
 } from '@/lib/sessionManager.server';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { getAdminAuth } from '@/lib/firebase-admin';
 
 /**
  * POST /api/auth/session
@@ -25,7 +26,8 @@ import { withRateLimit } from '@/lib/withRateLimit';
  *
  * Request Body:
  * {
- *   "userId": "firebase-user-id",
+ *   "userId": "firebase-user-id" (optional, must match idToken),
+ *   "idToken": "firebase-id-token",
  *   "durationDays": 7 (optional)
  * }
  *
@@ -34,13 +36,34 @@ import { withRateLimit } from '@/lib/withRateLimit';
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const body = await request.json();
-    const { userId, durationDays = 7 } = body;
+    const { userId, durationDays = 7, idToken } = body;
 
-    // Validate userId
-    if (!userId || typeof userId !== 'string') {
+    // Validate ID token
+    if (!idToken || typeof idToken !== 'string') {
       return NextResponse.json(
-        { error: 'Invalid user ID' },
+        { error: 'Missing or invalid ID token' },
         { status: 400 }
+      );
+    }
+
+    // Verify Firebase ID token
+    let verifiedUserId: string;
+    try {
+      const adminAuth = getAdminAuth();
+      const decoded = await adminAuth.verifyIdToken(idToken);
+      verifiedUserId = decoded.uid;
+    } catch (error) {
+      return NextResponse.json(
+        { error: 'Invalid or expired ID token' },
+        { status: 401 }
+      );
+    }
+
+    // Optional userId must match verified token
+    if (userId && userId !== verifiedUserId) {
+      return NextResponse.json(
+        { error: 'User ID does not match token' },
+        { status: 403 }
       );
     }
 
@@ -53,7 +76,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     // Create session
-    await createSession(userId, durationDays);
+    await createSession(verifiedUserId, durationDays);
 
     return NextResponse.json({
       success: true,

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, Timestamp, getDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, Timestamp, getDoc, doc, setDoc, query, where } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,11 +93,25 @@ export default function SetupPage() {
           if (fetchedSites.length === 1) {
             setSelectedSiteId(fetchedSites[0].id);
           }
-        } else if (userSites.length > 0) {
-          // Fetch only sites the user has access to
+        } else {
+          // Fetch owned sites and assigned sites
           const fetchedSites: Site[] = [];
+          const ownedIds = new Set<string>();
+
+          const ownedQuery = query(collection(db, 'sites'), where('owner', '==', user.uid));
+          const ownedSnapshot = await getDocs(ownedQuery);
+          ownedSnapshot.forEach((docSnap) => {
+            ownedIds.add(docSnap.id);
+            fetchedSites.push({
+              id: docSnap.id,
+              ...docSnap.data() as Omit<Site, 'id'>
+            });
+          });
 
           for (const siteId of userSites) {
+            if (ownedIds.has(siteId)) {
+              continue;
+            }
             try {
               const siteDoc = await getDoc(doc(db, 'sites', siteId));
               if (siteDoc.exists()) {
@@ -117,9 +131,6 @@ export default function SetupPage() {
           if (fetchedSites.length === 1) {
             setSelectedSiteId(fetchedSites[0].id);
           }
-        } else {
-          // User has no sites, show empty state
-          setSites([]);
         }
       } catch (error: any) {
         console.error('Error fetching sites:', error);
@@ -179,25 +190,6 @@ export default function SetupPage() {
         ownerEmail: user.email,
       });
 
-      // Add site ID to user's sites array
-      const userDocRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        const currentSites = userDoc.data().sites || [];
-        await updateDoc(userDocRef, {
-          sites: [...currentSites, siteId]
-        });
-      } else {
-        // Create user document if it doesn't exist
-        await setDoc(userDocRef, {
-          email: user.email,
-          role: 'user',
-          sites: [siteId],
-          createdAt: Timestamp.now(),
-        });
-      }
-
       // Use the generated siteId
       const newSite: Site = {
         id: siteId,
@@ -245,7 +237,6 @@ export default function SetupPage() {
         },
         body: JSON.stringify({
           siteId: selectedSiteId,
-          userId: user.uid,
         }),
       });
 

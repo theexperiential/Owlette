@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
 
 /**
  * POST /api/setup/generate-token
@@ -11,7 +11,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
  *
  * Request body:
  * - siteId: string - The site ID the agent will be associated with
- * - userId: string - The user ID authorizing this agent
+ * - userId: string - Deprecated (derived from session)
  *
  * Response:
  * - token: string - Registration code to pass to the agent (24h expiry)
@@ -20,26 +20,17 @@ export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     // Parse request body
     const body = await request.json();
-    const { siteId, userId } = body;
+    const { siteId } = body;
 
-    if (!siteId || !userId) {
+    if (!siteId) {
       return NextResponse.json(
-        { error: 'Missing required fields: siteId and userId' },
+        { error: 'Missing required field: siteId' },
         { status: 400 }
       );
     }
 
-    // Verify user is authenticated by checking session cookie
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('__session');
-    const authCookie = cookieStore.get('auth');
-
-    if (!sessionCookie && !authCookie) {
-      return NextResponse.json(
-        { error: 'Unauthorized: No session found' },
-        { status: 401 }
-      );
-    }
+    const userId = await requireSession(request);
+    await assertUserHasSiteAccess(userId, siteId);
 
     // Generate a secure registration code (URL-safe)
     const crypto = await import('crypto');
@@ -70,6 +61,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     );
 
   } catch (error: any) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error generating registration code:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },

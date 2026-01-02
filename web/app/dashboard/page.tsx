@@ -56,7 +56,7 @@ MemoizedTableHeader.displayName = 'MemoizedTableHeader';
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);

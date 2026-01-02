@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateTOTPSecret, generateQRCode } from '@/lib/totp';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -37,6 +38,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
+    await requireSessionUser(request, userId);
+
     // Generate TOTP secret
     const secret = generateTOTPSecret();
 
@@ -57,6 +60,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       qrCodeUrl,
     });
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[MFA Setup] Error:', error);
     return NextResponse.json(
       { error: 'Failed to generate MFA setup' },

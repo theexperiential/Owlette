@@ -20,6 +20,7 @@ import { decrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import admin from 'firebase-admin';
+import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -47,6 +48,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         { status: 400 }
       );
     }
+
+    await requireSessionUser(request, userId);
 
     const db = getAdminDb();
 
@@ -140,6 +143,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       backupCodeUsed,
     });
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[MFA Verify Login] Error:', error);
     return NextResponse.json(
       { error: 'Failed to verify MFA code' },

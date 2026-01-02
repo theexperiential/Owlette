@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Resend } from 'resend';
+import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 
 // Lazy initialization
 let resend: Resend | null = null;
@@ -22,6 +23,8 @@ const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
 export async function POST(request: NextRequest) {
   try {
+    await requireAdmin(request);
+
     // Check if Resend is configured
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json(
@@ -94,6 +97,9 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error sending test email:', error);
     return NextResponse.json(
       {
@@ -104,9 +110,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-// Optional: Allow GET request to send test email (for easy browser testing)
-export async function GET(request: NextRequest) {
-  return POST(request);
 }
