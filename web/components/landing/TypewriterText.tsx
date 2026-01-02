@@ -81,8 +81,13 @@ export function TypewriterText({
   return (
     <span className={className}>
       {lines.map((line, index) => (
-        <span key={index}>
-          <span className={line.className}>
+        <span key={index} className="relative block">
+          {/* Invisible placeholder to reserve space for full line */}
+          <span className="invisible" aria-hidden="true">
+            {line.text}
+          </span>
+          {/* Visible typed text overlaid on placeholder */}
+          <span className={`absolute left-0 top-0 ${line.className || ''}`}>
             {displayedLines[index]}
             {/* Show cursor on current line being typed */}
             {index === currentLineIndex && !isComplete && (
@@ -93,7 +98,6 @@ export function TypewriterText({
               </span>
             )}
           </span>
-          {index < lines.length - 1 && <br />}
         </span>
       ))}
       {/* Show cursor at end when complete */}
