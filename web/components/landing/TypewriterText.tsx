@@ -80,34 +80,40 @@ export function TypewriterText({
 
   return (
     <span className={className}>
-      {lines.map((line, index) => (
-        <span key={index} className="relative block">
-          {/* Invisible placeholder to reserve space for full line */}
-          <span className="invisible" aria-hidden="true">
-            {line.text}
+      {lines.map((line, index) => {
+        const isLastLine = index === lines.length - 1;
+        const showCursorOnThisLine = index === currentLineIndex && !isComplete;
+        const showFinalCursor = isLastLine && isComplete;
+
+        return (
+          <span key={index} className="relative block">
+            {/* Invisible placeholder to reserve space for full line + cursor */}
+            <span className="invisible" aria-hidden="true">
+              {line.text}_
+            </span>
+            {/* Visible typed text overlaid on placeholder */}
+            <span className={`absolute left-0 top-0 ${line.className || ''}`}>
+              {displayedLines[index]}
+              {/* Show cursor while typing this line */}
+              {showCursorOnThisLine && (
+                <span
+                  className={`inline-block w-[0.6em] ${showCursor ? 'opacity-100' : 'opacity-0'} transition-opacity duration-100`}
+                >
+                  _
+                </span>
+              )}
+              {/* Show cursor at end when complete (on last line) */}
+              {showFinalCursor && (
+                <span
+                  className={`inline-block w-[0.6em] text-accent-cyan ${showCursor ? 'opacity-100' : 'opacity-0'} transition-opacity duration-100`}
+                >
+                  _
+                </span>
+              )}
+            </span>
           </span>
-          {/* Visible typed text overlaid on placeholder */}
-          <span className={`absolute left-0 top-0 ${line.className || ''}`}>
-            {displayedLines[index]}
-            {/* Show cursor on current line being typed */}
-            {index === currentLineIndex && !isComplete && (
-              <span
-                className={`inline-block w-[0.6em] ${showCursor ? 'opacity-100' : 'opacity-0'} transition-opacity duration-100`}
-              >
-                _
-              </span>
-            )}
-          </span>
-        </span>
-      ))}
-      {/* Show cursor at end when complete */}
-      {isComplete && (
-        <span
-          className={`inline-block w-[0.6em] text-accent-cyan ${showCursor ? 'opacity-100' : 'opacity-0'} transition-opacity duration-100`}
-        >
-          _
-        </span>
-      )}
+        );
+      })}
     </span>
   );
 }
