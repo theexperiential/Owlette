@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, memo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, Square, Copy, Pencil, Trash2, Download } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody } from '@/components/ui/table';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -29,29 +29,18 @@ import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
+import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import { MachineCardView } from './components/MachineCardView';
+import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
 
 type ViewType = 'card' | 'list';
 
-// Memoized table header to prevent flickering on data updates
-const MemoizedTableHeader = memo(() => {
-  return (
-    <TableHeader className="sticky top-0 z-10 bg-card">
-      <TableRow className="border-border hover:bg-muted">
-        <TableHead className="text-foreground w-8" style={{ willChange: 'auto' }}></TableHead>
-        <TableHead className="text-foreground w-32" style={{ willChange: 'auto' }}>Hostname</TableHead>
-        <TableHead className="text-foreground w-20" style={{ willChange: 'auto' }}>Status</TableHead>
-        <TableHead className="text-foreground w-36" style={{ willChange: 'auto' }}>CPU</TableHead>
-        <TableHead className="text-foreground w-28" style={{ willChange: 'auto' }}>Memory</TableHead>
-        <TableHead className="text-foreground w-28" style={{ willChange: 'auto' }}>Disk</TableHead>
-        <TableHead className="text-foreground w-32" style={{ willChange: 'auto' }}>GPU</TableHead>
-        <TableHead className="text-foreground w-36" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
-        <TableHead className="text-foreground w-8" style={{ willChange: 'auto' }}></TableHead>
-      </TableRow>
-    </TableHeader>
-  );
-});
-
-MemoizedTableHeader.displayName = 'MemoizedTableHeader';
+// State for metrics detail panel
+interface DetailPanelState {
+  machineId: string;
+  machineName: string;
+  metric: MetricType;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -94,6 +83,9 @@ export default function DashboardPage() {
   // Remove Machine Dialog state
   const [removeMachineDialogOpen, setRemoveMachineDialogOpen] = useState(false);
   const [machineToRemove, setMachineToRemove] = useState<{ id: string; name: string; isOnline: boolean } | null>(null);
+
+  // Metrics Detail Panel state (replaces top stats cards when active)
+  const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
 
   // Multilingual welcome messages with language info
   const welcomeMessages = [
@@ -443,6 +435,21 @@ export default function DashboardPage() {
     localStorage.setItem('owlette_current_site', siteId);
   };
 
+  // Handle metric click to open detail panel
+  const handleMetricClick = (machineId: string, metric: MetricType) => {
+    const machine = machines.find(m => m.machineId === machineId);
+    setDetailPanel({
+      machineId,
+      machineName: machine?.machineId || machineId,
+      metric,
+    });
+  };
+
+  // Close detail panel and return to stats cards
+  const handleCloseDetailPanel = () => {
+    setDetailPanel(null);
+  };
+
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
@@ -541,43 +548,55 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Quick stats */}
-        <div className="mb-6 grid grid-cols-3 gap-2 md:gap-4">
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-              <CardTitle className="text-xs md:text-sm font-medium text-foreground">Machines</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-2 md:pb-6">
-              <div className="text-xl md:text-2xl font-bold text-foreground">{machines.length}</div>
-              <p className="text-xs text-muted-foreground hidden md:block">
-                {machines.length === 0 ? 'No machines' : `${machines.length} registered`}
-              </p>
-            </CardContent>
-          </Card>
+        {/* Quick stats OR Metrics Detail Panel */}
+        <div className="mb-6">
+          {detailPanel ? (
+            <MetricsDetailPanel
+              machineId={detailPanel.machineId}
+              machineName={detailPanel.machineName}
+              siteId={currentSiteId}
+              initialMetric={detailPanel.metric}
+              onClose={handleCloseDetailPanel}
+            />
+          ) : (
+            <div className="grid grid-cols-3 gap-2 md:gap-4">
+              <Card className="border-border bg-card">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Machines</CardTitle>
+                </CardHeader>
+                <CardContent className="pb-2 md:pb-6">
+                  <div className="text-xl md:text-2xl font-bold text-foreground">{machines.length}</div>
+                  <p className="text-xs text-muted-foreground hidden md:block">
+                    {machines.length === 0 ? 'No machines' : `${machines.length} registered`}
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-              <CardTitle className="text-xs md:text-sm font-medium text-foreground">Online</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-2 md:pb-6">
-              <div className="text-xl md:text-2xl font-bold text-foreground">{onlineMachines}</div>
-              <p className="text-xs text-muted-foreground hidden md:block">
-                {onlineMachines === 0 ? 'None online' : `${onlineMachines} online`}
-              </p>
-            </CardContent>
-          </Card>
+              <Card className="border-border bg-card">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Online</CardTitle>
+                </CardHeader>
+                <CardContent className="pb-2 md:pb-6">
+                  <div className="text-xl md:text-2xl font-bold text-foreground">{onlineMachines}</div>
+                  <p className="text-xs text-muted-foreground hidden md:block">
+                    {onlineMachines === 0 ? 'None online' : `${onlineMachines} online`}
+                  </p>
+                </CardContent>
+              </Card>
 
-          <Card className="border-border bg-card">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
-              <CardTitle className="text-xs md:text-sm font-medium text-foreground">Processes</CardTitle>
-            </CardHeader>
-            <CardContent className="pb-2 md:pb-6">
-              <div className="text-xl md:text-2xl font-bold text-foreground">{totalProcesses}</div>
-              <p className="text-xs text-muted-foreground hidden md:block">
-                Managed
-              </p>
-            </CardContent>
-          </Card>
+              <Card className="border-border bg-card">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 md:pb-2">
+                  <CardTitle className="text-xs md:text-sm font-medium text-foreground">Processes</CardTitle>
+                </CardHeader>
+                <CardContent className="pb-2 md:pb-6">
+                  <div className="text-xl md:text-2xl font-bold text-foreground">{totalProcesses}</div>
+                  <p className="text-xs text-muted-foreground hidden md:block">
+                    Managed
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
 
         {/* Machines list */}
@@ -608,372 +627,46 @@ export default function DashboardPage() {
             </div>
 
             {/* Card View - Always shown on mobile, toggle on desktop */}
-            <div className={`grid gap-4 md:grid-cols-2 animate-in fade-in duration-300 ${viewType === 'list' ? 'md:hidden' : ''}`}>
-              {machines.map((machine) => (
-                <Card key={machine.machineId} className="border-border bg-card">
-                  <CardHeader className="pb-3 md:pb-6">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base md:text-lg text-foreground select-text">{machine.machineId}</CardTitle>
-                      <div className="flex items-center gap-2">
-                        <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                          {machine.online ? 'Online' : 'Offline'}
-                        </Badge>
-                        <MachineContextMenu
-                          machineId={machine.machineId}
-                          machineName={machine.machineId}
-                          siteId={currentSiteId}
-                          isOnline={machine.online}
-                          onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
-                        />
-                      </div>
-                    </div>
-                    <CardDescription className="text-xs md:text-sm text-muted-foreground select-none hidden md:block">
-                      Last heartbeat: {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
-                    </CardDescription>
-                  </CardHeader>
-                  {machine.metrics && (
-                    <CardContent className="space-y-2 select-none">
-                      {machine.metrics.cpu && (
-                        <div className="flex text-sm gap-2">
-                          <span className="text-muted-foreground flex-shrink-0">CPU:</span>
-                          <span className="text-foreground truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
-                            {machine.metrics.cpu.name || 'Unknown CPU'}
-                          </span>
-                          <span className="text-foreground flex-shrink-0 ml-auto">
-                            {machine.metrics.cpu.percent}%
-                            {machine.metrics.cpu.temperature !== undefined && (
-                              <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                                {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Memory:</span>
-                        <span className="text-foreground">
-                          {machine.metrics.memory?.percent}%
-                          {machine.metrics.memory?.used_gb && machine.metrics.memory?.total_gb && (
-                            <span className="text-muted-foreground ml-1 hidden md:inline">
-                              ({formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)})
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Disk:</span>
-                        <span className="text-foreground">
-                          {machine.metrics.disk?.percent}%
-                          {machine.metrics.disk?.used_gb && machine.metrics.disk?.total_gb && (
-                            <span className="text-muted-foreground ml-1 hidden md:inline">
-                              ({formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)})
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      {machine.metrics.gpu && (
-                        <div className="flex text-sm gap-2">
-                          <span className="text-muted-foreground flex-shrink-0">GPU:</span>
-                          <span className="text-foreground truncate" title={machine.metrics.gpu.name}>
-                            {machine.metrics.gpu.name}
-                          </span>
-                          <span className="text-foreground flex-shrink-0 ml-auto">
-                            {machine.metrics.gpu.usage_percent}%
-                            {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                              <span className="text-muted-foreground ml-1">
-                                ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
-                              </span>
-                            )}
-                            {machine.metrics.gpu.temperature !== undefined && (
-                              <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                                {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-                    </CardContent>
-                  )}
-
-                  {/* Expandable Process List */}
-                  {machine.processes && machine.processes.length > 0 && (
-                    <Collapsible open={expandedMachines.has(machine.machineId)} onOpenChange={() => toggleMachineExpanded(machine.machineId)}>
-                      <CollapsibleTrigger asChild>
-                        <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-muted/30 cursor-pointer">
-                          <div className="flex items-center justify-between w-full select-none">
-                            <span className="text-muted-foreground text-sm">
-                              {machine.processes.length} Process{machine.processes.length > 1 ? 'es' : ''}
-                            </span>
-                            {expandedMachines.has(machine.machineId) ? <ChevronUp className="h-4 w-4 text-foreground" /> : <ChevronDown className="h-4 w-4 text-foreground" />}
-                          </div>
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="space-y-2 p-2 md:p-4 border-t border-border bg-card">
-                          {machine.processes.map((process) => (
-                            <div key={process.id} className="flex items-center justify-between p-2 md:p-3 rounded bg-muted hover:bg-input transition-colors">
-                              <div className="flex-1 min-w-0 flex items-center gap-2">
-                                <span className="text-sm md:text-base text-foreground font-medium truncate select-text">{process.name}</span>
-                                <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted-foreground/50 hover:bg-muted-foreground/60' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-muted-foreground/50 hover:bg-muted-foreground/60' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                  {!machine.online ? 'UNKNOWN' : process.status}
-                                </Badge>
-                              </div>
-                              <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
-                                <div className="flex items-center gap-2">
-                                  <Label htmlFor={`autolaunch-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none hidden md:inline">
-                                    Autolaunch
-                                  </Label>
-                                  <Switch
-                                    id={`autolaunch-${machine.machineId}-${process.id}`}
-                                    checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                    onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name, process.exe_path)}
-                                    className="cursor-pointer"
-                                  />
-                                </div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => openEditProcessDialog(machine.machineId, process)}
-                                  className="bg-muted border-border text-foreground hover:bg-input hover:border-border hover:text-foreground cursor-pointer p-2"
-                                  title="Edit"
-                                >
-                                  <Pencil className="h-3 w-3" />
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                  className="bg-muted border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                  disabled={process.status !== 'RUNNING'}
-                                  title="Kill"
-                                >
-                                  <Square className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                          {/* New Process Button */}
-                          <div className="flex justify-center pt-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openCreateProcessDialog(machine.machineId)}
-                              className="bg-muted border-border text-accent-cyan hover:bg-accent-cyan-hover hover:border-accent-cyan hover:text-foreground cursor-pointer"
-                            >
-                              <Plus className="h-3 w-3 mr-1" />
-                              New Process
-                            </Button>
-                          </div>
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
-                  )}
-
-                  {/* New Process button for machines with no processes */}
-                  {(!machine.processes || machine.processes.length === 0) && (
-                    <div className="border-t border-border p-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openCreateProcessDialog(machine.machineId)}
-                        className="w-full bg-muted border-border text-accent-cyan hover:bg-accent-cyan-hover hover:border-accent-cyan hover:text-foreground cursor-pointer"
-                      >
-                        <Plus className="h-3 w-3 mr-1" />
-                        New Process
-                      </Button>
-                    </div>
-                  )}
-                </Card>
-              ))}
+            <div className={`animate-in fade-in duration-300 ${viewType === 'list' ? 'md:hidden' : ''}`}>
+              <MachineCardView
+                machines={machines}
+                expandedMachines={expandedMachines}
+                currentSiteId={currentSiteId}
+                onToggleExpanded={toggleMachineExpanded}
+                onEditProcess={openEditProcessDialog}
+                onCreateProcess={openCreateProcessDialog}
+                onKillProcess={handleKillProcess}
+                onToggleAutolaunch={handleToggleAutolaunch}
+                onRemoveMachine={openRemoveMachineDialog}
+                onMetricClick={handleMetricClick}
+              />
             </div>
 
             {/* List View - Hidden on mobile, only shown on desktop when selected */}
             <div className={`rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300 ${viewType === 'card' ? 'hidden' : 'hidden md:block'}`}>
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
-                  <MemoizedTableHeader />
+                  <ListViewTableHeader />
                   <TableBody>
                     {machines.map((machine) => (
-                      <React.Fragment key={machine.machineId}>
-                        <TableRow
-                          className="border-border hover:bg-muted cursor-pointer"
-                          onClick={() => handleRowClick(machine.machineId, true)}
-                        >
-                          <TableCell>
-                            <div className="flex items-center justify-center">
-                              {expandedMachines.has(machine.machineId) ? (
-                                <ChevronUp className="h-4 w-4 text-foreground" />
-                              ) : (
-                                <ChevronDown className="h-4 w-4 text-foreground" />
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-medium text-foreground select-text max-w-32">
-                            <div className="truncate" title={machine.machineId}>{machine.machineId}</div>
-                          </TableCell>
-                          <TableCell className="max-w-20">
-                            <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                              {machine.online ? 'Online' : 'Offline'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-foreground max-w-36">
-                            {machine.metrics?.cpu ? (
-                              <>
-                                <div className="text-xs text-muted-foreground truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>{machine.metrics.cpu.name || 'Unknown CPU'}</div>
-                                <div className="text-sm">
-                                  {machine.metrics.cpu.percent}%
-                                  {machine.metrics.cpu.temperature !== undefined && (
-                                    <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                                      {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
-                                    </span>
-                                  )}
-                                </div>
-                              </>
-                            ) : '-'}
-                          </TableCell>
-                          <TableCell className="text-foreground max-w-28">
-                            {machine.metrics?.memory ? (
-                              <>
-                                <div className="text-xs text-muted-foreground">
-                                  {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
-                                </div>
-                                <div className="text-sm">
-                                  {machine.metrics.memory.percent}%
-                                </div>
-                              </>
-                            ) : '-'}
-                          </TableCell>
-                          <TableCell className="text-foreground max-w-28">
-                            {machine.metrics?.disk ? (
-                              <>
-                                <div className="text-xs text-muted-foreground">
-                                  {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
-                                </div>
-                                <div className="text-sm">
-                                  {machine.metrics.disk.percent}%
-                                </div>
-                              </>
-                            ) : '-'}
-                          </TableCell>
-                          <TableCell className="text-foreground max-w-32">
-                            {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
-                              <>
-                                <div className="text-xs text-muted-foreground truncate" title={machine.metrics.gpu.name}>{machine.metrics.gpu.name}</div>
-                                <div className="text-sm" title={machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb ? formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb) : undefined}>
-                                  {machine.metrics.gpu.usage_percent}%
-                                  {machine.metrics.gpu.temperature !== undefined && (
-                                    <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                                      {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
-                                    </span>
-                                  )}
-                                </div>
-                              </>
-                            ) : (
-                              <span className="text-muted-foreground">N/A</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-xs max-w-36">
-                            <div className="truncate" title={new Date(machine.lastHeartbeat * 1000).toLocaleString()}>
-                              {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
-                            </div>
-                          </TableCell>
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <MachineContextMenu
-                              machineId={machine.machineId}
-                              machineName={machine.machineId}
-                              siteId={currentSiteId}
-                              isOnline={machine.online}
-                              onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
-                            />
-                          </TableCell>
-                        </TableRow>
-
-                        {/* Expanded Process Details Row */}
-                        {expandedMachines.has(machine.machineId) && (
-                          <TableRow key={`${machine.machineId}-processes`} className="border-border bg-card">
-                            <TableCell colSpan={9} className="p-0 bg-card">
-                              <div className="p-4 space-y-2 bg-card">
-                                {machine.processes && machine.processes.length > 0 ? (
-                                  <>
-                                    {machine.processes.map((process) => (
-                                  <div key={process.id} className="flex items-center justify-between p-3 rounded bg-muted hover:bg-input transition-colors">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-foreground font-medium truncate select-text">{process.name}</span>
-                                        <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted-foreground/50 hover:bg-muted-foreground/60' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-muted-foreground/50 hover:bg-muted-foreground/60' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                          {!machine.online ? 'UNKNOWN' : process.status}
-                                        </Badge>
-                                      </div>
-                                      <div className="flex items-center gap-3 text-xs text-muted-foreground select-text">
-                                        {process.pid && <span>PID: {process.pid}</span>}
-                                        <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                                      <div className="flex items-center gap-2">
-                                        <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-muted-foreground cursor-pointer select-none">
-                                          Autolaunch
-                                        </Label>
-                                        <Switch
-                                          id={`autolaunch-list-${machine.machineId}-${process.id}`}
-                                          checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                          onCheckedChange={(checked) => handleToggleAutolaunch(machine.machineId, process.id, checked, process.name, process.exe_path)}
-                                          className="cursor-pointer"
-                                        />
-                                      </div>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openEditProcessDialog(machine.machineId, process)}
-                                        className="bg-muted border-border text-foreground hover:bg-input hover:border-border hover:text-foreground cursor-pointer"
-                                      >
-                                        <Pencil className="h-3 w-3 mr-1" />
-                                        Edit
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleKillProcess(machine.machineId, process.id, process.name)}
-                                        className="bg-muted border-border text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                                        disabled={process.status !== 'RUNNING'}
-                                      >
-                                        <Square className="h-3 w-3 mr-1" />
-                                        Kill
-                                      </Button>
-                                    </div>
-                                  </div>
-                                    ))}
-                                    {/* New Process Button */}
-                                    <div className="flex justify-center pt-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openCreateProcessDialog(machine.machineId)}
-                                        className="bg-muted border-border text-accent-cyan hover:bg-accent-cyan-hover hover:border-accent-cyan hover:text-foreground cursor-pointer"
-                                      >
-                                        <Plus className="h-3 w-3 mr-1" />
-                                        New Process
-                                      </Button>
-                                    </div>
-                                  </>
-                                ) : (
-                                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                                    <p className="mb-4 text-sm">No processes configured for this machine</p>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => openCreateProcessDialog(machine.machineId)}
-                                      className="bg-muted border-border text-accent-cyan hover:bg-accent-cyan-hover hover:border-accent-cyan hover:text-foreground cursor-pointer"
-                                    >
-                                      <Plus className="h-3 w-3 mr-1" />
-                                      New Process
-                                    </Button>
-                                  </div>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </React.Fragment>
+                      <MachineRow
+                        key={machine.machineId}
+                        machine={machine}
+                        isExpanded={expandedMachines.has(machine.machineId)}
+                        currentSiteId={currentSiteId}
+                        userPreferences={userPreferences}
+                        onToggleExpanded={() => handleRowClick(machine.machineId, true)}
+                        onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
+                        onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
+                        onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
+                        onToggleAutolaunch={(processId, enabled) => {
+                          const process = machine.processes?.find(p => p.id === processId);
+                          if (process) {
+                            handleToggleAutolaunch(machine.machineId, processId, enabled, process.name, process.exe_path);
+                          }
+                        }}
+                        onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
+                        onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
+                      />
                     ))}
                   </TableBody>
                 </Table>

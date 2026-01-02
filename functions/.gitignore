@@ -1,0 +1,14 @@
+# Compiled output
+lib/
+
+# Dependencies
+node_modules/
+
+# Local env files
+.env
+.env.local
+
+# IDE
+.idea/
+*.swp
+*.swo

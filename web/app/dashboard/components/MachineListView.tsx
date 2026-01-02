@@ -10,6 +10,7 @@
  * - Process controls (autolaunch, edit, kill)
  * - Create new process button
  * - Memoized table header for performance
+ * - Sparkline charts behind metric cells
  *
  * Used by: Dashboard page for list view display
  */
@@ -23,26 +24,30 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
+import { getUsageColorClass } from '@/lib/usageColorUtils';
+import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process } from '@/hooks/useFirestore';
+import type { MetricType } from '@/components/charts';
 
 // Memoized table header to prevent flickering on data updates
-const MemoizedTableHeader = memo(() => {
+export const MemoizedTableHeader = memo(() => {
   return (
     <TableHeader className="sticky top-0 z-10 bg-slate-900">
-      <TableRow className="border-slate-800 hover:bg-slate-800">
-        <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Hostname</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Status</TableHead>
-        <TableHead className="text-slate-200 w-[140px]" style={{ willChange: 'auto' }}>CPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Memory</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Disk</TableHead>
-        <TableHead className="text-slate-200 w-[160px]" style={{ willChange: 'auto' }}>GPU</TableHead>
-        <TableHead className="text-slate-200" style={{ willChange: 'auto' }}>Last Heartbeat</TableHead>
-        <TableHead className="text-slate-200 w-8" style={{ willChange: 'auto' }}></TableHead>
+      <TableRow className="border-slate-800">
+        <TableHead className="text-slate-200 w-8"></TableHead>
+        <TableHead className="text-slate-200 w-[100px]">Hostname</TableHead>
+        <TableHead className="text-slate-200 w-[72px]">Status</TableHead>
+        <TableHead className="text-slate-200 w-[160px]">CPU</TableHead>
+        <TableHead className="text-slate-200 w-[120px]">Memory</TableHead>
+        <TableHead className="text-slate-200 w-[100px]">Disk</TableHead>
+        <TableHead className="text-slate-200 w-[200px]">GPU</TableHead>
+        <TableHead className="text-slate-200 w-[150px]">Last Heartbeat</TableHead>
+        <TableHead className="text-slate-200 w-8"></TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -60,6 +65,281 @@ interface MachineListViewProps {
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
   onToggleAutolaunch: (machineId: string, processId: string, newValue: boolean, processName: string, exePath: string) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
+  onMetricClick?: (machineId: string, metricType: MetricType) => void;
+}
+
+/**
+ * Individual machine row component with sparkline support
+ */
+interface MachineRowProps {
+  machine: Machine;
+  isExpanded: boolean;
+  currentSiteId: string;
+  userPreferences: { temperatureUnit: 'C' | 'F' };
+  onToggleExpanded: () => void;
+  onEditProcess: (process: Process) => void;
+  onCreateProcess: () => void;
+  onKillProcess: (processId: string, processName: string) => void;
+  onToggleAutolaunch: (processId: string, newValue: boolean, processName: string, exePath: string) => void;
+  onRemoveMachine: () => void;
+  onMetricClick?: (metricType: MetricType) => void;
+}
+
+export function MachineRow({
+  machine,
+  isExpanded,
+  currentSiteId,
+  userPreferences,
+  onToggleExpanded,
+  onEditProcess,
+  onCreateProcess,
+  onKillProcess,
+  onToggleAutolaunch,
+  onRemoveMachine,
+  onMetricClick,
+}: MachineRowProps) {
+  const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
+
+  const handleRowClick = () => {
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) return;
+    onToggleExpanded();
+  };
+
+  return (
+    <>
+      <TableRow
+        className="border-slate-800 hover:bg-slate-800/30 cursor-pointer"
+        onClick={handleRowClick}
+      >
+        <TableCell className="w-8 p-2">
+          <div className="flex items-center justify-center">
+            {isExpanded ? (
+              <ChevronUp className="h-4 w-4 text-slate-300" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-slate-300" />
+            )}
+          </div>
+        </TableCell>
+        <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
+          <span className="truncate block">{machine.machineId}</span>
+        </TableCell>
+        <TableCell className="w-[72px] p-2">
+          <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
+            {machine.online ? 'Online' : 'Offline'}
+          </Badge>
+        </TableCell>
+        {/* CPU with Sparkline */}
+        <TableCell
+          className="text-white p-0 w-[160px] overflow-hidden"
+          onClick={(e) => { e.stopPropagation(); onMetricClick?.('cpu'); }}
+        >
+          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+            <div className="opacity-80">
+              <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
+            </div>
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.cpu?.percent ?? 0)}`} />
+            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
+              {machine.metrics?.cpu ? (
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
+                    {machine.metrics.cpu.name || 'Unknown CPU'}
+                  </div>
+                  <div className="text-sm font-semibold whitespace-nowrap">
+                    {machine.metrics.cpu.percent}%
+                    {machine.metrics.cpu.temperature !== undefined && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
+                        {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : '-'}
+            </div>
+          </div>
+        </TableCell>
+        {/* Memory with Sparkline */}
+        <TableCell
+          className="text-white p-0 w-[120px] overflow-hidden"
+          onClick={(e) => { e.stopPropagation(); onMetricClick?.('memory'); }}
+        >
+          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+            <div className="opacity-80">
+              <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
+            </div>
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.memory?.percent ?? 0)}`} />
+            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
+              {machine.metrics?.memory ? (
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">{machine.metrics.memory.percent}%</div>
+                  <div className="text-slate-400 text-xs truncate">
+                    {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
+                  </div>
+                </div>
+              ) : '-'}
+            </div>
+          </div>
+        </TableCell>
+        {/* Disk with Sparkline */}
+        <TableCell
+          className="text-white p-0 w-[100px] overflow-hidden"
+          onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
+        >
+          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+            <div className="opacity-80">
+              <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
+            </div>
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.disk?.percent ?? 0)}`} />
+            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
+              {machine.metrics?.disk ? (
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">{machine.metrics.disk.percent}%</div>
+                  <div className="text-slate-400 text-xs truncate">
+                    {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
+                  </div>
+                </div>
+              ) : '-'}
+            </div>
+          </div>
+        </TableCell>
+        {/* GPU with Sparkline */}
+        <TableCell
+          className="text-white p-0 w-[200px] overflow-hidden"
+          onClick={(e) => { e.stopPropagation(); onMetricClick?.('gpu'); }}
+        >
+          <div className="relative cursor-pointer hover:bg-slate-700/50 transition-colors overflow-hidden">
+            <div className="opacity-80">
+              <SparklineChart data={sparklineData.gpu.length > 0 ? sparklineData.gpu : []} color="gpu" height={52} loading={sparklineData.loading} />
+            </div>
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.gpu?.usage_percent ?? 0)}`} />
+            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
+              {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>
+                    {machine.metrics.gpu.name}
+                  </div>
+                  <div className="text-sm font-semibold whitespace-nowrap">
+                    {machine.metrics.gpu.usage_percent}%
+                    {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                      <span className="text-slate-400 text-xs ml-1 font-normal">
+                        ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
+                      </span>
+                    )}
+                    {machine.metrics.gpu.temperature !== undefined && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
+                        {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <span className="text-slate-500">N/A</span>
+              )}
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="text-slate-400 text-xs w-[150px] overflow-hidden">
+          <span className="truncate block">{new Date(machine.lastHeartbeat * 1000).toLocaleString()}</span>
+        </TableCell>
+        <TableCell className="w-8 p-2" onClick={(e) => e.stopPropagation()}>
+          <MachineContextMenu
+            machineId={machine.machineId}
+            machineName={machine.machineId}
+            siteId={currentSiteId}
+            isOnline={machine.online}
+            onRemoveMachine={onRemoveMachine}
+          />
+        </TableCell>
+      </TableRow>
+
+      {/* Expanded Process Details Row */}
+      {isExpanded && (
+        <TableRow key={`${machine.machineId}-processes`} className="border-slate-800 bg-slate-900">
+          <TableCell colSpan={9} className="p-0 bg-slate-900">
+            <div className="p-4 space-y-2 bg-slate-900">
+              {machine.processes && machine.processes.length > 0 ? (
+                <>
+                  {machine.processes.map((process) => (
+                    <div key={process.id} className="flex items-center justify-between p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-white font-medium truncate select-text">{process.name}</span>
+                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                            {!machine.online ? 'UNKNOWN' : process.status}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
+                          {process.pid && <span>PID: {process.pid}</span>}
+                          <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
+                            Autolaunch
+                          </Label>
+                          <Switch
+                            id={`autolaunch-list-${machine.machineId}-${process.id}`}
+                            checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
+                            onCheckedChange={(checked) => onToggleAutolaunch(process.id, checked, process.name, process.exe_path)}
+                            className="cursor-pointer"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onEditProcess(process)}
+                          className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
+                        >
+                          <Pencil className="h-3 w-3 mr-1" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onKillProcess(process.id, process.name)}
+                          className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={process.status !== 'RUNNING'}
+                        >
+                          <Square className="h-3 w-3 mr-1" />
+                          Kill
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {/* New Process Button */}
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onCreateProcess}
+                      className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      New Process
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                  <p className="mb-4 text-sm">No processes configured for this machine</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onCreateProcess}
+                    className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    New Process
+                  </Button>
+                </div>
+              )}
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
 }
 
 export function MachineListView({
@@ -72,209 +352,32 @@ export function MachineListView({
   onKillProcess,
   onToggleAutolaunch,
   onRemoveMachine,
+  onMetricClick,
 }: MachineListViewProps) {
   const { userPreferences } = useAuth();
 
-  const handleRowClick = (machineId: string, canExpand: boolean) => {
-    // Don't toggle if user is selecting text
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) {
-      return;
-    }
-
-    if (canExpand) {
-      onToggleExpanded(machineId);
-    }
-  };
-
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-900 overflow-hidden">
-      <Table style={{ contain: 'layout' }}>
+      <Table className="table-fixed" style={{ contain: 'layout' }}>
         <MemoizedTableHeader />
         <TableBody>
           {machines.map((machine) => (
-            <React.Fragment key={machine.machineId}>
-              <TableRow
-                className="border-slate-800 hover:bg-slate-800 cursor-pointer"
-                onClick={() => handleRowClick(machine.machineId, true)}
-              >
-                <TableCell>
-                  <div className="flex items-center justify-center">
-                    {expandedMachines.has(machine.machineId) ? (
-                      <ChevronUp className="h-4 w-4 text-slate-300" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-slate-300" />
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="font-medium text-white select-text">{machine.machineId}</TableCell>
-                <TableCell>
-                  <Badge className={`text-xs select-none ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                    {machine.online ? 'Online' : 'Offline'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-white overflow-hidden">
-                  {machine.metrics?.cpu ? (
-                    <>
-                      <div className="text-xs text-slate-400 truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
-                        {machine.metrics.cpu.name || 'Unknown CPU'}
-                      </div>
-                      <div className="text-sm">
-                        {machine.metrics.cpu.percent}%
-                        {machine.metrics.cpu.temperature !== undefined && (
-                          <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                            {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  ) : '-'}
-                </TableCell>
-                <TableCell className="text-white">
-                  {machine.metrics?.memory ? (
-                    <>
-                      {machine.metrics.memory.percent}%
-                      <span className="text-slate-500 text-xs ml-1">
-                        ({formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)})
-                      </span>
-                    </>
-                  ) : '-'}
-                </TableCell>
-                <TableCell className="text-white">
-                  {machine.metrics?.disk ? (
-                    <>
-                      {machine.metrics.disk.percent}%
-                      <span className="text-slate-500 text-xs ml-1">
-                        ({formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)})
-                      </span>
-                    </>
-                  ) : '-'}
-                </TableCell>
-                <TableCell className="text-white overflow-hidden">
-                  {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
-                    <>
-                      <div className="text-xs text-slate-400 truncate" title={machine.metrics.gpu.name}>
-                        {machine.metrics.gpu.name}
-                      </div>
-                      <div className="text-sm">
-                        {machine.metrics.gpu.usage_percent}%
-                        {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
-                          <span className="text-slate-500 text-xs ml-1">
-                            ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
-                          </span>
-                        )}
-                        {machine.metrics.gpu.temperature !== undefined && (
-                          <span className={`ml-2 text-xs ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                            {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-slate-500">N/A</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-slate-400 text-xs">
-                  {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
-                </TableCell>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <MachineContextMenu
-                    machineId={machine.machineId}
-                    machineName={machine.machineId}
-                    siteId={currentSiteId}
-                    isOnline={machine.online}
-                    onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
-                  />
-                </TableCell>
-              </TableRow>
-
-              {/* Expanded Process Details Row */}
-              {expandedMachines.has(machine.machineId) && (
-                <TableRow key={`${machine.machineId}-processes`} className="border-slate-800 bg-slate-900">
-                  <TableCell colSpan={9} className="p-0 bg-slate-900">
-                    <div className="p-4 space-y-2 bg-slate-900">
-                      {machine.processes && machine.processes.length > 0 ? (
-                        <>
-                          {machine.processes.map((process) => (
-                            <div key={process.id} className="flex items-center justify-between p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-white font-medium truncate select-text">{process.name}</span>
-                                  <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                                    {!machine.online ? 'UNKNOWN' : process.status}
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
-                                  {process.pid && <span>PID: {process.pid}</span>}
-                                  <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                                <div className="flex items-center gap-2">
-                                  <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
-                                    Autolaunch
-                                  </Label>
-                                  <Switch
-                                    id={`autolaunch-list-${machine.machineId}-${process.id}`}
-                                    checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                                    onCheckedChange={(checked) => onToggleAutolaunch(machine.machineId, process.id, checked, process.name, process.exe_path)}
-                                    className="cursor-pointer"
-                                  />
-                                </div>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => onEditProcess(machine.machineId, process)}
-                                  className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
-                                >
-                                  <Pencil className="h-3 w-3 mr-1" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => onKillProcess(machine.machineId, process.id, process.name)}
-                                  className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                                  disabled={process.status !== 'RUNNING'}
-                                >
-                                  <Square className="h-3 w-3 mr-1" />
-                                  Kill
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                          {/* New Process Button */}
-                          <div className="flex justify-center pt-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => onCreateProcess(machine.machineId)}
-                              className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
-                            >
-                              <Plus className="h-3 w-3 mr-1" />
-                              New Process
-                            </Button>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-8 text-slate-400">
-                          <p className="mb-4 text-sm">No processes configured for this machine</p>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onCreateProcess(machine.machineId)}
-                            className="bg-slate-800 border-slate-700 text-blue-400 hover:bg-blue-900 hover:border-blue-800 hover:text-blue-200 cursor-pointer"
-                          >
-                            <Plus className="h-3 w-3 mr-1" />
-                            New Process
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
-            </React.Fragment>
+            <MachineRow
+              key={machine.machineId}
+              machine={machine}
+              isExpanded={expandedMachines.has(machine.machineId)}
+              currentSiteId={currentSiteId}
+              userPreferences={userPreferences}
+              onToggleExpanded={() => onToggleExpanded(machine.machineId)}
+              onEditProcess={(process) => onEditProcess(machine.machineId, process)}
+              onCreateProcess={() => onCreateProcess(machine.machineId)}
+              onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
+              onToggleAutolaunch={(processId, newValue, processName, exePath) =>
+                onToggleAutolaunch(machine.machineId, processId, newValue, processName, exePath)
+              }
+              onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
+              onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
+            />
           ))}
         </TableBody>
       </Table>

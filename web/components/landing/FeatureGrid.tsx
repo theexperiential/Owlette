@@ -13,7 +13,7 @@ const features = [
   {
     icon: Activity,
     title: 'Real-time Monitoring',
-    description: 'Live CPU, memory, GPU, and disk metrics. Know the health of every machine at a glance.',
+    description: 'Live CPU, memory, GPU, and disk metrics with inline sparkline charts. Track trends and spot issues instantly.',
   },
   {
     icon: RefreshCw,
