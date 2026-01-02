@@ -10,7 +10,6 @@ interface MousePosition {
 export function InteractiveBackground() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mousePos, setMousePos] = useState<MousePosition>({ x: 0.5, y: 0.5 });
-  const [isHovering, setIsHovering] = useState(false);
   const animationRef = useRef<number | null>(null);
   const targetPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
   const currentPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
@@ -26,16 +25,9 @@ export function InteractiveBackground() {
       targetPos.current = { x, y };
     };
 
-    const handleMouseEnter = () => setIsHovering(true);
-    const handleMouseLeave = () => {
-      setIsHovering(false);
-      // Slowly drift back to center
-      targetPos.current = { x: 0.5, y: 0.5 };
-    };
-
-    // Smooth animation loop
+    // Smooth animation loop with simple lerp
     const animate = () => {
-      const lerp = 0.05; // Smoothing factor (lower = smoother)
+      const lerp = 0.08;
 
       currentPos.current = {
         x: currentPos.current.x + (targetPos.current.x - currentPos.current.x) * lerp,
@@ -49,8 +41,6 @@ export function InteractiveBackground() {
     const container = containerRef.current;
     if (container) {
       container.addEventListener('mousemove', handleMouseMove);
-      container.addEventListener('mouseenter', handleMouseEnter);
-      container.addEventListener('mouseleave', handleMouseLeave);
     }
 
     animationRef.current = requestAnimationFrame(animate);
@@ -58,8 +48,6 @@ export function InteractiveBackground() {
     return () => {
       if (container) {
         container.removeEventListener('mousemove', handleMouseMove);
-        container.removeEventListener('mouseenter', handleMouseEnter);
-        container.removeEventListener('mouseleave', handleMouseLeave);
       }
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
@@ -67,50 +55,22 @@ export function InteractiveBackground() {
     };
   }, []);
 
-  // Calculate displacement based on mouse position
-  const offsetX = (mousePos.x - 0.5) * 100; // -50 to 50 range
-  const offsetY = (mousePos.y - 0.5) * 100;
-
-  // Subtle rotation based on mouse position
-  const rotateX = (mousePos.y - 0.5) * -5; // -2.5 to 2.5 degrees
-  const rotateY = (mousePos.x - 0.5) * 5;
+  // Subtle parallax offset
+  const offsetX = (mousePos.x - 0.5) * 40;
+  const offsetY = (mousePos.y - 0.5) * 40;
 
   return (
     <div
       ref={containerRef}
       className="absolute inset-0 overflow-hidden"
-      style={{ perspective: '1000px' }}
     >
       {/* Primary glow - follows mouse */}
       <div
-        className="absolute w-[600px] h-[600px] rounded-full blur-3xl transition-opacity duration-500"
+        className="absolute w-[900px] h-[900px] rounded-full blur-3xl"
         style={{
-          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.08) 0%, transparent 70%)',
-          left: `calc(${mousePos.x * 100}% - 300px)`,
-          top: `calc(${mousePos.y * 100}% - 300px)`,
-          opacity: isHovering ? 1 : 0.6,
-          transform: `translate3d(${offsetX * 0.2}px, ${offsetY * 0.2}px, 0)`,
-        }}
-      />
-
-      {/* Secondary glow - opposite direction for depth */}
-      <div
-        className="absolute w-[500px] h-[500px] rounded-full blur-3xl"
-        style={{
-          background: 'radial-gradient(circle, oklch(0.65 0.25 250 / 0.06) 0%, transparent 70%)',
-          left: `calc(${(1 - mousePos.x) * 80 + 10}% - 250px)`,
-          top: `calc(${(1 - mousePos.y) * 80 + 10}% - 250px)`,
-          transform: `translate3d(${-offsetX * 0.15}px, ${-offsetY * 0.15}px, 0)`,
-        }}
-      />
-
-      {/* Tertiary subtle glow */}
-      <div
-        className="absolute w-[400px] h-[400px] rounded-full blur-2xl opacity-40"
-        style={{
-          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.04) 0%, transparent 70%)',
-          left: `calc(50% + ${offsetX * 0.5}px - 200px)`,
-          top: `calc(60% + ${offsetY * 0.5}px - 200px)`,
+          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.12) 0%, transparent 60%)',
+          left: `calc(${mousePos.x * 100}% - 450px)`,
+          top: `calc(${mousePos.y * 100}% - 450px)`,
         }}
       />
 
@@ -124,35 +84,20 @@ export function InteractiveBackground() {
 
       {/* Dot grid spotlight - brighter dots near mouse */}
       <div
-        className="absolute w-[600px] h-[600px] pointer-events-none"
+        className="absolute w-[800px] h-[800px] pointer-events-none"
         style={{
-          left: `calc(${mousePos.x * 100}% - 300px)`,
-          top: `calc(${mousePos.y * 100}% - 300px)`,
-          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.15) 0%, transparent 50%)',
-          maskImage: 'radial-gradient(circle, black 0%, transparent 70%)',
-          WebkitMaskImage: 'radial-gradient(circle, black 0%, transparent 70%)',
+          left: `calc(${mousePos.x * 100}% - 400px)`,
+          top: `calc(${mousePos.y * 100}% - 400px)`,
+          maskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
+          WebkitMaskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
         }}
       >
-        <div className="absolute inset-0 dot-grid opacity-80" />
+        <div className="absolute inset-0 dot-grid opacity-70" />
       </div>
 
-      {/* Blueprint grid with subtle 3D tilt */}
-      <div
-        className="absolute inset-0 blueprint-grid opacity-20"
-        style={{
-          transform: `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
-          transformOrigin: 'center center',
-          transition: 'transform 0.1s ease-out',
-        }}
-      />
-      <div
-        className="absolute inset-0 blueprint-grid-accent opacity-10"
-        style={{
-          transform: `rotateX(${rotateX * 0.5}deg) rotateY(${rotateY * 0.5}deg)`,
-          transformOrigin: 'center center',
-          transition: 'transform 0.1s ease-out',
-        }}
-      />
+      {/* Blueprint grid - subtle */}
+      <div className="absolute inset-0 blueprint-grid opacity-15" />
+      <div className="absolute inset-0 blueprint-grid-accent opacity-8" />
 
       {/* Radial fade overlay */}
       <div className="absolute inset-0 blueprint-fade" />
