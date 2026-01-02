@@ -28,7 +28,7 @@ export function HeroSection() {
           <TypewriterText
             lines={[
               { text: 'Control Everything.' },
-              { text: 'Always Online.', className: 'text-accent-cyan' },
+              { text: 'Always Online', className: 'text-accent-cyan' },
             ]}
             typingSpeed={60}
             delayBetweenLines={300}
