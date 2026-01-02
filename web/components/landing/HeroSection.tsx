@@ -20,7 +20,7 @@ export function HeroSection() {
         {/* Badge */}
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-accent-cyan/30 bg-accent-cyan/5 mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
           <div className="w-2 h-2 rounded-full bg-accent-cyan animate-pulse" />
-          <span className="text-accent-cyan text-sm font-medium">Owlette — Mission Control for Your Installations</span>
+          <span className="text-accent-cyan text-sm font-medium">Mission Control for Your Installations</span>
         </div>
 
         {/* Headline */}
