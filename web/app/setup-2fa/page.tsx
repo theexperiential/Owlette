@@ -190,7 +190,7 @@ export default function Setup2FAPage() {
                   type="button"
                   variant="ghost"
                   onClick={() => router.back()}
-                  className="w-full text-sm text-slate-400 hover:text-white"
+                  className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
                   Cancel
                 </Button>
@@ -239,7 +239,7 @@ export default function Setup2FAPage() {
                   variant="ghost"
                   onClick={() => router.back()}
                   disabled={isSubmitting}
-                  className="w-full text-sm text-slate-400 hover:text-white"
+                  className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
                   Cancel
                 </Button>
@@ -260,12 +260,12 @@ export default function Setup2FAPage() {
                 </p>
               </div>
 
-              <div className="bg-slate-900 border border-slate-700 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <div className="grid grid-cols-2 gap-2 font-mono text-sm">
                   {backupCodes.map((code, index) => (
                     <div key={index} className="flex items-center gap-2">
-                      <span className="text-slate-400">{index + 1}.</span>
-                      <span className="font-bold text-white">{code}</span>
+                      <span className="text-muted-foreground">{index + 1}.</span>
+                      <span className="font-bold text-foreground">{code}</span>
                     </div>
                   ))}
                 </div>

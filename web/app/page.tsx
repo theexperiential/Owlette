@@ -1,26 +1,23 @@
-'use client';
+import {
+  LandingHeader,
+  HeroSection,
+  UseCaseSection,
+  FeatureGrid,
+  CTASection,
+  LandingFooter,
+} from '@/components/landing';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-
-export default function Home() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!loading) {
-      if (user) {
-        router.push('/dashboard');
-      } else {
-        router.push('/login');
-      }
-    }
-  }, [user, loading, router]);
-
+export default function LandingPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <p>Loading...</p>
+    <div className="min-h-screen bg-background">
+      <LandingHeader />
+      <main>
+        <HeroSection />
+        <UseCaseSection />
+        <FeatureGrid />
+        <CTASection />
+      </main>
+      <LandingFooter />
     </div>
   );
 }

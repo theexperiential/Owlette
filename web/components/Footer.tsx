@@ -36,7 +36,8 @@ export function Footer() {
   }, [pathname]);
 
   // Hide footer on admin pages (admin panel has its own footer)
-  if (pathname?.startsWith('/admin')) {
+  // Hide footer on landing page (has its own LandingFooter)
+  if (pathname?.startsWith('/admin') || pathname === '/') {
     return null;
   }
 

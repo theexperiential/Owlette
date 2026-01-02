@@ -188,15 +188,15 @@ export default function TokensPage() {
       {/* Header with inline site selector */}
       <div className="mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
-          <h1 className="text-2xl font-bold text-white">Agent Token Management</h1>
+          <h1 className="text-2xl font-bold text-foreground">Agent Token Management</h1>
           <div className="flex items-center gap-2">
             <Select value={selectedSiteId} onValueChange={handleSiteChange}>
-              <SelectTrigger className="w-[180px] bg-slate-800 border-slate-600 text-white">
+              <SelectTrigger className="w-[180px] bg-card border-border text-foreground">
                 <SelectValue placeholder="Select site" />
               </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-slate-700">
+              <SelectContent className="bg-card border-border">
                 {sites.map((site) => (
-                  <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
+                  <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted">
                     {site.name}
                   </SelectItem>
                 ))}
@@ -207,23 +207,23 @@ export default function TokensPage() {
               size="icon"
               onClick={fetchTokens}
               disabled={!selectedSiteId || loading}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
+              className="border-border text-foreground hover:bg-muted hover:text-foreground"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
         </div>
-        <p className="text-slate-400 text-sm">
+        <p className="text-muted-foreground text-sm">
           View and revoke agent authentication tokens. Revoking a token will disconnect the agent and require re-registration.
         </p>
       </div>
 
       {/* Tokens Table */}
       {selectedSiteId && (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardHeader className="pb-4 flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-white text-lg flex items-center gap-2">
+              <CardTitle className="text-foreground text-lg flex items-center gap-2">
                 <KeyRound className="h-5 w-5" />
                 Active Tokens ({tokens.length})
               </CardTitle>
@@ -243,9 +243,9 @@ export default function TokensPage() {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8 text-slate-400">Loading tokens...</div>
+              <div className="text-center py-8 text-muted-foreground">Loading tokens...</div>
             ) : tokens.length === 0 ? (
-              <div className="text-center py-8 text-slate-400">
+              <div className="text-center py-8 text-muted-foreground">
                 <KeyRound className="h-12 w-12 mx-auto mb-3 opacity-50" />
                 <p>No active tokens for this site</p>
                 <p className="text-sm mt-1">Tokens are created when agents register with the site</p>
@@ -254,22 +254,22 @@ export default function TokensPage() {
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-700 hover:bg-slate-800">
-                      <TableHead className="text-slate-300">Machine ID</TableHead>
-                      <TableHead className="text-slate-300">Version</TableHead>
-                      <TableHead className="text-slate-300">Status</TableHead>
-                      <TableHead className="text-slate-300">Created</TableHead>
-                      <TableHead className="text-slate-300">Last Used</TableHead>
-                      <TableHead className="text-slate-300 text-right">Actions</TableHead>
+                    <TableRow className="border-border hover:bg-card">
+                      <TableHead className="text-foreground">Machine ID</TableHead>
+                      <TableHead className="text-foreground">Version</TableHead>
+                      <TableHead className="text-foreground">Status</TableHead>
+                      <TableHead className="text-foreground">Created</TableHead>
+                      <TableHead className="text-foreground">Last Used</TableHead>
+                      <TableHead className="text-foreground text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {tokens.map((token) => {
                       const expiryStatus = getExpiryStatus(token.expiresAt);
                       return (
-                        <TableRow key={token.id} className="border-slate-700 hover:bg-slate-700/50">
-                          <TableCell className="font-mono text-white">{token.machineId}</TableCell>
-                          <TableCell className="text-slate-300">{token.version || 'N/A'}</TableCell>
+                        <TableRow key={token.id} className="border-border hover:bg-muted/50">
+                          <TableCell className="font-mono text-foreground">{token.machineId}</TableCell>
+                          <TableCell className="text-foreground">{token.version || 'N/A'}</TableCell>
                           <TableCell>
                             <Badge className={expiryStatus.color}>
                               {expiryStatus.label === 'Never expires' && <CheckCircle className="h-3 w-3 mr-1" />}
@@ -278,10 +278,10 @@ export default function TokensPage() {
                               {expiryStatus.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-slate-400 text-sm">
+                          <TableCell className="text-muted-foreground text-sm">
                             {formatDate(token.createdAt)}
                           </TableCell>
-                          <TableCell className="text-slate-400 text-sm">
+                          <TableCell className="text-muted-foreground text-sm">
                             {formatDate(token.lastUsed)}
                           </TableCell>
                           <TableCell className="text-right">
@@ -311,10 +311,10 @@ export default function TokensPage() {
 
       {/* Revoke Single Token Dialog */}
       <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
-        <DialogContent className="bg-slate-900 border-slate-700">
+        <DialogContent className="bg-background border-border">
           <DialogHeader>
             <DialogTitle>Revoke Token for {tokenToRevoke?.machineId}?</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               This will immediately invalidate the machine&apos;s authentication token.
               The agent will disconnect and cannot reconnect until re-registered with a new registration code.
             </DialogDescription>
@@ -323,7 +323,7 @@ export default function TokensPage() {
             <Button
               variant="outline"
               onClick={() => setRevokeDialogOpen(false)}
-              className="bg-slate-800 border-slate-700 hover:bg-slate-700"
+              className="bg-card border-border hover:bg-muted"
             >
               Cancel
             </Button>
@@ -340,13 +340,13 @@ export default function TokensPage() {
 
       {/* Revoke All Tokens Dialog */}
       <Dialog open={revokeAllDialogOpen} onOpenChange={setRevokeAllDialogOpen}>
-        <DialogContent className="bg-slate-900 border-slate-700">
+        <DialogContent className="bg-background border-border">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-400">
               <AlertTriangle className="h-5 w-5" />
               Revoke All Tokens?
             </DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               This will immediately invalidate ALL agent tokens for this site ({tokens.length} tokens).
               All agents will disconnect and require re-registration to reconnect.
               <br /><br />
@@ -357,7 +357,7 @@ export default function TokensPage() {
             <Button
               variant="outline"
               onClick={() => setRevokeAllDialogOpen(false)}
-              className="bg-slate-800 border-slate-700 hover:bg-slate-700"
+              className="bg-card border-border hover:bg-muted"
             >
               Cancel
             </Button>
