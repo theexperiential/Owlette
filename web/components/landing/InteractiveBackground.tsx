@@ -114,9 +114,31 @@ export function InteractiveBackground() {
         }}
       />
 
+      {/* Dot grid - base layer */}
+      <div
+        className="absolute inset-0 dot-grid opacity-40"
+        style={{
+          transform: `translate3d(${offsetX * 0.02}px, ${offsetY * 0.02}px, 0)`,
+        }}
+      />
+
+      {/* Dot grid spotlight - brighter dots near mouse */}
+      <div
+        className="absolute w-[600px] h-[600px] pointer-events-none"
+        style={{
+          left: `calc(${mousePos.x * 100}% - 300px)`,
+          top: `calc(${mousePos.y * 100}% - 300px)`,
+          background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.15) 0%, transparent 50%)',
+          maskImage: 'radial-gradient(circle, black 0%, transparent 70%)',
+          WebkitMaskImage: 'radial-gradient(circle, black 0%, transparent 70%)',
+        }}
+      >
+        <div className="absolute inset-0 dot-grid opacity-80" />
+      </div>
+
       {/* Blueprint grid with subtle 3D tilt */}
       <div
-        className="absolute inset-0 blueprint-grid opacity-30"
+        className="absolute inset-0 blueprint-grid opacity-20"
         style={{
           transform: `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
           transformOrigin: 'center center',
@@ -124,7 +146,7 @@ export function InteractiveBackground() {
         }}
       />
       <div
-        className="absolute inset-0 blueprint-grid-accent opacity-15"
+        className="absolute inset-0 blueprint-grid-accent opacity-10"
         style={{
           transform: `rotateX(${rotateX * 0.5}deg) rotateY(${rotateY * 0.5}deg)`,
           transformOrigin: 'center center',

@@ -241,6 +241,12 @@
     background-size: 40px 40px;
   }
 
+  /* Dot grid pattern */
+  .dot-grid {
+    background-image: radial-gradient(circle, oklch(0.5 0.1 250 / 0.3) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
   .blueprint-grid-accent {
     background-image:
       linear-gradient(var(--grid-line-accent) 1px, transparent 1px),
