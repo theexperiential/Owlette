@@ -92,7 +92,7 @@ export function TypewriterText({
               {line.text}_
             </span>
             {/* Visible typed text overlaid on placeholder */}
-            <span className={`absolute left-0 top-0 ${line.className || ''}`}>
+            <span className={`absolute inset-0 ${line.className || ''}`}>
               {displayedLines[index]}
               {/* Show cursor while typing this line */}
               {showCursorOnThisLine && (
