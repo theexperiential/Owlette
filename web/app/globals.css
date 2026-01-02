@@ -136,8 +136,10 @@
   }
 
   /* Headings use Space Grotesk for display typography */
-  h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-heading);
+  h1, h2, h3, h4, h5, h6,
+  [data-slot="card-title"],
+  [data-slot="dialog-title"] {
+    font-family: var(--font-space-grotesk);
   }
 
   /* Tabular figures for aligned numbers in data tables */
@@ -204,12 +206,12 @@
 @layer components {
   /* Utility to apply heading font to any element */
   .font-heading {
-    font-family: var(--font-heading);
+    font-family: var(--font-space-grotesk);
   }
 
   /* Hero typography - Mission Control aesthetic */
   .hero-headline {
-    font-family: var(--font-heading);
+    font-family: var(--font-space-grotesk);
     @apply text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1];
   }
 
@@ -218,12 +220,17 @@
   }
 
   .section-headline {
-    font-family: var(--font-heading);
+    font-family: var(--font-space-grotesk);
     @apply text-3xl md:text-4xl font-semibold tracking-tight;
   }
 
   .section-subheadline {
     @apply text-lg md:text-xl font-light text-muted-foreground;
+  }
+
+  /* Stats/metrics display text */
+  .stat-value {
+    font-family: var(--font-space-grotesk);
   }
 
   /* Blueprint grid background */

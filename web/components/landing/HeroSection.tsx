@@ -55,15 +55,15 @@ export function HeroSection() {
         {/* Stats */}
         <div className="flex flex-wrap justify-center gap-8 md:gap-16 mt-16 pt-16 border-t border-border/50 animate-in fade-in duration-700 delay-500">
           <div className="text-center">
-            <div className="text-3xl md:text-4xl font-bold text-foreground">24/7</div>
+            <div className="text-3xl md:text-4xl font-bold text-foreground font-heading">24/7</div>
             <div className="text-sm text-muted-foreground mt-1">Uptime Monitoring</div>
           </div>
           <div className="text-center">
-            <div className="text-3xl md:text-4xl font-bold text-foreground">Unlimited</div>
+            <div className="text-3xl md:text-4xl font-bold text-foreground font-heading">Unlimited</div>
             <div className="text-sm text-muted-foreground mt-1">Machines & Sites</div>
           </div>
           <div className="text-center">
-            <div className="text-3xl md:text-4xl font-bold text-accent-cyan">Real-time</div>
+            <div className="text-3xl md:text-4xl font-bold text-accent-cyan font-heading">Real-time</div>
             <div className="text-sm text-muted-foreground mt-1">Cloud Sync</div>
           </div>
         </div>
