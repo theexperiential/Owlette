@@ -114,9 +114,9 @@ export function InteractiveBackground() {
         }}
       />
 
-      {/* Dot grid - base layer */}
+      {/* Dot grid - base layer (rendered twice: under and over the fade) */}
       <div
-        className="absolute inset-0 dot-grid opacity-40"
+        className="absolute inset-0 dot-grid opacity-30"
         style={{
           transform: `translate3d(${offsetX * 0.02}px, ${offsetY * 0.02}px, 0)`,
         }}
@@ -156,6 +156,14 @@ export function InteractiveBackground() {
 
       {/* Radial fade overlay */}
       <div className="absolute inset-0 blueprint-fade" />
+
+      {/* Dot grid - top layer visible outside fade */}
+      <div
+        className="absolute inset-0 dot-grid opacity-50 pointer-events-none"
+        style={{
+          transform: `translate3d(${offsetX * 0.02}px, ${offsetY * 0.02}px, 0)`,
+        }}
+      />
     </div>
   );
 }
