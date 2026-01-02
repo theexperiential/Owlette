@@ -72,18 +72,13 @@ export function SparklineChart({
     );
   }
 
-  // No data state
+  // No data state - render empty placeholder (no text, no background)
   if (!data || data.length === 0) {
     return (
       <div
-        className={cn(
-          'bg-muted/20 rounded flex items-center justify-center',
-          className
-        )}
+        className={cn('rounded', className)}
         style={{ height }}
-      >
-        <span className="text-[10px] text-muted-foreground">No data yet</span>
-      </div>
+      />
     );
   }
 
