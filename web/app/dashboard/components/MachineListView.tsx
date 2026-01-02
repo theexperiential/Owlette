@@ -254,61 +254,83 @@ export function MachineRow({
 
       {/* Expanded Process Details Row */}
       {isExpanded && (
-        <TableRow key={`${machine.machineId}-processes`} className="border-slate-800 bg-slate-900">
-          <TableCell colSpan={9} className="p-0 bg-slate-900">
-            <div className="p-4 space-y-2 bg-slate-900">
+        <TableRow key={`${machine.machineId}-processes`} className="border-slate-800">
+          <TableCell colSpan={9} className="p-0">
+            <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
               {machine.processes && machine.processes.length > 0 ? (
                 <>
-                  {machine.processes.map((process) => (
-                    <div key={process.id} className="flex items-center justify-between p-3 rounded bg-slate-800 hover:bg-slate-700 transition-colors">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-white font-medium truncate select-text">{process.name}</span>
-                          <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
-                            {!machine.online ? 'UNKNOWN' : process.status}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
-                          {process.pid && <span>PID: {process.pid}</span>}
-                          <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
+                  <div className="space-y-2">
+                    {machine.processes.map((process, index) => (
+                      <div key={process.id} className="relative flex items-stretch">
+                        {/* Vertical line: from container top for first row, from row top for others */}
+                        <div
+                          className="absolute w-px bg-slate-700/50"
+                          style={{
+                            left: '4px',
+                            top: index === 0 ? '-8px' : 0,
+                            height: index === 0 ? 'calc(50% + 8px)' : '50%'
+                          }}
+                        />
+                        {/* Extension for non-last rows bridging the gap */}
+                        {index < machine.processes!.length - 1 && (
+                          <div className="absolute w-px bg-slate-700/50" style={{ left: '4px', top: '50%', bottom: '-8px' }} />
+                        )}
+                        {/* Horizontal branch */}
+                        <div className="relative w-5 flex-shrink-0">
+                          <div className="absolute h-px bg-slate-700/50" style={{ left: '4px', top: '50%', width: '12px' }} />
+                          </div>
+                          {/* Process card */}
+                          <div className="flex-1 flex items-center justify-between p-3 rounded border border-slate-700/50">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-white font-medium truncate select-text">{process.name}</span>
+                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-slate-600 hover:bg-slate-700' : process.status === 'RUNNING' ? 'bg-green-600 hover:bg-green-700' : process.status === 'INACTIVE' ? 'bg-slate-600 hover:bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}>
+                                {!machine.online ? 'UNKNOWN' : process.status}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-slate-400 select-text">
+                              {process.pid && <span>PID: {process.pid}</span>}
+                              <span className="truncate" title={process.exe_path}>{process.exe_path}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 ml-4 flex-shrink-0">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
+                                Autolaunch
+                              </Label>
+                              <Switch
+                                id={`autolaunch-list-${machine.machineId}-${process.id}`}
+                                checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
+                                onCheckedChange={(checked) => onToggleAutolaunch(process.id, checked, process.name, process.exe_path)}
+                                className="cursor-pointer"
+                              />
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => onEditProcess(process)}
+                              className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
+                            >
+                              <Pencil className="h-3 w-3 mr-1" />
+                              Edit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => onKillProcess(process.id, process.name)}
+                              className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={process.status !== 'RUNNING'}
+                            >
+                              <Square className="h-3 w-3 mr-1" />
+                              Kill
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor={`autolaunch-list-${machine.machineId}-${process.id}`} className="text-xs text-slate-400 cursor-pointer select-none">
-                            Autolaunch
-                          </Label>
-                          <Switch
-                            id={`autolaunch-list-${machine.machineId}-${process.id}`}
-                            checked={process._optimisticAutolaunch !== undefined ? process._optimisticAutolaunch : process.autolaunch}
-                            onCheckedChange={(checked) => onToggleAutolaunch(process.id, checked, process.name, process.exe_path)}
-                            className="cursor-pointer"
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => onEditProcess(process)}
-                          className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700 hover:border-slate-600 hover:text-white cursor-pointer"
-                        >
-                          <Pencil className="h-3 w-3 mr-1" />
-                          Edit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => onKillProcess(process.id, process.name)}
-                          className="bg-slate-800 border-slate-700 text-red-400 hover:bg-red-900 hover:border-red-800 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={process.status !== 'RUNNING'}
-                        >
-                          <Square className="h-3 w-3 mr-1" />
-                          Kill
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                   {/* New Process Button */}
-                  <div className="flex justify-center pt-2">
+                  <div className="flex justify-center pt-3 ml-4">
                     <Button
                       variant="outline"
                       size="sm"

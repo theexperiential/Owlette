@@ -1,11 +1,12 @@
 /**
  * Usage-based color utility functions
  *
- * Maps resource usage percentage to a color spectrum:
- * - Low usage (0-30%): Cool colors (green -> cyan)
- * - Medium usage (30-60%): Neutral colors (cyan -> blue)
- * - High usage (60-80%): Warm colors (yellow -> orange)
- * - Critical usage (80-100%): Hot colors (orange -> red)
+ * Maps resource usage percentage to a color spectrum with high contrast:
+ * - Low usage (0-30%): Green (healthy)
+ * - Medium-low (30-50%): Violet (distinct from green)
+ * - Medium (50-70%): Sky blue (distinct from violet)
+ * - High usage (70-85%): Amber (warning)
+ * - Critical usage (85-100%): Red (danger)
  */
 
 /**
@@ -19,9 +20,9 @@ export function getUsageColorClass(percent: number): string {
   if (percent < 30) {
     return 'bg-emerald-500';
   } else if (percent < 50) {
-    return 'bg-cyan-500';
+    return 'bg-violet-500';
   } else if (percent < 70) {
-    return 'bg-blue-500';
+    return 'bg-sky-500';
   } else if (percent < 85) {
     return 'bg-amber-500';
   } else {
@@ -40,9 +41,9 @@ export function getUsageColor(percent: number): string {
   if (percent < 30) {
     return 'rgb(16, 185, 129)';   // emerald-500
   } else if (percent < 50) {
-    return 'rgb(6, 182, 212)';    // cyan-500
+    return 'rgb(139, 92, 246)';   // violet-500
   } else if (percent < 70) {
-    return 'rgb(59, 130, 246)';   // blue-500
+    return 'rgb(14, 165, 233)';   // sky-500
   } else if (percent < 85) {
     return 'rgb(245, 158, 11)';   // amber-500
   } else {
@@ -61,9 +62,9 @@ export function getUsageRingClass(percent: number): string {
   if (percent < 30) {
     return 'hover:ring-emerald-500/30';
   } else if (percent < 50) {
-    return 'hover:ring-cyan-500/30';
+    return 'hover:ring-violet-500/30';
   } else if (percent < 70) {
-    return 'hover:ring-blue-500/30';
+    return 'hover:ring-sky-500/30';
   } else if (percent < 85) {
     return 'hover:ring-amber-500/30';
   } else {
