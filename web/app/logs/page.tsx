@@ -71,7 +71,7 @@ const formatAction = (action: string) => {
 export default function LogsPage() {
   const router = useRouter();
   const { user, loading, isAdmin, userSites } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
@@ -385,13 +385,13 @@ export default function LogsPage() {
   if (loading || sitesLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-slate-400">Loading...</div>
+        <div className="text-muted-foreground">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-8">
+    <div className="min-h-screen bg-background pb-8">
       <PageHeader
         currentPage="Logs"
         sites={sites}
@@ -438,14 +438,14 @@ export default function LogsPage() {
       <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">Event Logs</h2>
-            <p className="text-sm md:text-base text-slate-400">Monitor process events and system activities</p>
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">Event Logs</h2>
+            <p className="text-sm md:text-base text-muted-foreground">Monitor process events and system activities</p>
           </div>
           <div className="flex gap-2 flex-shrink-0">
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
-              className="gap-2 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              className="gap-2 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
               <Filter className="w-4 h-4" />
               {showFilters ? 'Hide Filters' : 'Show Filters'}
@@ -453,7 +453,7 @@ export default function LogsPage() {
             <Button
               onClick={() => setShowClearDialog(true)}
               disabled={isClearing || logs.length === 0}
-              className="gap-2 bg-slate-800 border border-red-400 text-red-400 hover:bg-red-900 hover:border-red-200 hover:text-red-200 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              className="gap-2 bg-muted border border-red-400 text-red-400 hover:bg-red-900 hover:border-red-200 hover:text-red-200 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Trash2 className="w-4 h-4" />
               {isClearing ? 'Clearing...' : 'Clear Logs'}
@@ -463,12 +463,12 @@ export default function LogsPage() {
 
         {/* Filters */}
         {showFilters && (
-          <Card className="p-4 bg-slate-900 border-slate-800 mb-6">
+          <Card className="p-4 bg-card border-border mb-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <Label className="text-slate-200 text-sm mb-2">Action Type</Label>
+                <Label className="text-foreground text-sm mb-2">Action Type</Label>
                 <Select value={filterAction} onValueChange={setFilterAction}>
-                  <SelectTrigger className="bg-slate-800 border-slate-700">
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -482,9 +482,9 @@ export default function LogsPage() {
               </div>
 
               <div>
-                <Label className="text-slate-200 text-sm mb-2">Machine</Label>
+                <Label className="text-foreground text-sm mb-2">Machine</Label>
                 <Select value={filterMachine} onValueChange={setFilterMachine}>
-                  <SelectTrigger className="bg-slate-800 border-slate-700">
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -499,9 +499,9 @@ export default function LogsPage() {
               </div>
 
               <div>
-                <Label className="text-slate-200 text-sm mb-2">Level</Label>
+                <Label className="text-foreground text-sm mb-2">Level</Label>
                 <Select value={filterLevel} onValueChange={setFilterLevel}>
-                  <SelectTrigger className="bg-slate-800 border-slate-700">
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -514,7 +514,7 @@ export default function LogsPage() {
               </div>
 
               <div>
-                <Label className="text-slate-200 text-sm mb-2">&nbsp;</Label>
+                <Label className="text-foreground text-sm mb-2">&nbsp;</Label>
                 <Button
                   variant="outline"
                   onClick={resetFilters}
@@ -529,44 +529,44 @@ export default function LogsPage() {
         )}
 
         {/* Logs List */}
-        <Card className="bg-slate-900 border-slate-800">
-          <div className="divide-y divide-slate-800">
+        <Card className="bg-card border-border">
+          <div className="divide-y divide-border">
             {logsLoading ? (
-              <div className="p-8 text-center text-slate-400">
+              <div className="p-8 text-center text-muted-foreground">
                 Loading logs...
               </div>
             ) : logs.length === 0 ? (
-              <div className="p-8 text-center text-slate-400">
+              <div className="p-8 text-center text-muted-foreground">
                 No logs found for this site
               </div>
             ) : (
               logs.map((log) => (
                 <div
                   key={log.id}
-                  className="px-4 py-2 hover:bg-slate-800/50 transition-colors border-b border-slate-800 last:border-b-0"
+                  className="px-4 py-2 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0"
                 >
                   <div className="flex items-center justify-between gap-4 text-sm">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       {getLevelBadge(log.level)}
-                      <span className="text-slate-100 font-medium whitespace-nowrap">
+                      <span className="text-foreground font-medium whitespace-nowrap">
                         {formatAction(log.action)}
                       </span>
-                      <span className="text-slate-500">•</span>
-                      <span className="text-slate-300 whitespace-nowrap">{log.machineName}</span>
+                      <span className="text-muted-foreground">•</span>
+                      <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
                       {log.processName && (
                         <>
-                          <span className="text-slate-500">•</span>
-                          <span className="text-slate-300 whitespace-nowrap">{log.processName}</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-foreground whitespace-nowrap">{log.processName}</span>
                         </>
                       )}
                       {log.details && (
                         <>
-                          <span className="text-slate-500">•</span>
-                          <span className="text-slate-400 truncate">{log.details}</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-muted-foreground truncate">{log.details}</span>
                         </>
                       )}
                     </div>
-                    <div className="text-slate-400 whitespace-nowrap text-xs">
+                    <div className="text-muted-foreground whitespace-nowrap text-xs">
                       {log.timestamp?.toDate().toLocaleString()}
                     </div>
                   </div>
@@ -579,7 +579,7 @@ export default function LogsPage() {
         {/* Pagination */}
         {!logsLoading && logs.length > 0 && (
           <div className="flex items-center justify-between mt-6">
-            <div className="text-sm text-slate-400">
+            <div className="text-sm text-muted-foreground">
               Page {currentPage}
             </div>
             <div className="flex gap-2">

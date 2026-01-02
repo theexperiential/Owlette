@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, Timestamp, getDoc, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, Timestamp, getDoc, doc, setDoc, query, where } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,11 +93,25 @@ export default function SetupPage() {
           if (fetchedSites.length === 1) {
             setSelectedSiteId(fetchedSites[0].id);
           }
-        } else if (userSites.length > 0) {
-          // Fetch only sites the user has access to
+        } else {
+          // Fetch owned sites and assigned sites
           const fetchedSites: Site[] = [];
+          const ownedIds = new Set<string>();
+
+          const ownedQuery = query(collection(db, 'sites'), where('owner', '==', user.uid));
+          const ownedSnapshot = await getDocs(ownedQuery);
+          ownedSnapshot.forEach((docSnap) => {
+            ownedIds.add(docSnap.id);
+            fetchedSites.push({
+              id: docSnap.id,
+              ...docSnap.data() as Omit<Site, 'id'>
+            });
+          });
 
           for (const siteId of userSites) {
+            if (ownedIds.has(siteId)) {
+              continue;
+            }
             try {
               const siteDoc = await getDoc(doc(db, 'sites', siteId));
               if (siteDoc.exists()) {
@@ -117,9 +131,6 @@ export default function SetupPage() {
           if (fetchedSites.length === 1) {
             setSelectedSiteId(fetchedSites[0].id);
           }
-        } else {
-          // User has no sites, show empty state
-          setSites([]);
         }
       } catch (error: any) {
         console.error('Error fetching sites:', error);
@@ -179,25 +190,6 @@ export default function SetupPage() {
         ownerEmail: user.email,
       });
 
-      // Add site ID to user's sites array
-      const userDocRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userDocRef);
-
-      if (userDoc.exists()) {
-        const currentSites = userDoc.data().sites || [];
-        await updateDoc(userDocRef, {
-          sites: [...currentSites, siteId]
-        });
-      } else {
-        // Create user document if it doesn't exist
-        await setDoc(userDocRef, {
-          email: user.email,
-          role: 'user',
-          sites: [siteId],
-          createdAt: Timestamp.now(),
-        });
-      }
-
       // Use the generated siteId
       const newSite: Site = {
         id: siteId,
@@ -245,7 +237,6 @@ export default function SetupPage() {
         },
         body: JSON.stringify({
           siteId: selectedSiteId,
-          userId: user.uid,
         }),
       });
 
@@ -271,8 +262,8 @@ export default function SetupPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
       </div>
     );
   }
@@ -282,8 +273,8 @@ export default function SetupPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
-      <Card className="w-full max-w-2xl bg-slate-900/50 border-slate-800">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-2xl bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
             src="/owlette-icon.png"
@@ -294,32 +285,32 @@ export default function SetupPage() {
             priority
           />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-white">Owlette Agent Setup</CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardTitle className="text-2xl font-bold text-foreground">Owlette Agent Setup</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Configure your Owlette Agent by selecting a site or creating a new one.
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* User Info */}
-          <div className="bg-slate-800/50 border border-slate-700 p-4 rounded-lg">
-            <p className="text-sm text-slate-400">Logged in as</p>
-            <p className="font-medium text-white">{user.email}</p>
+          <div className="bg-muted/50 border border-border p-4 rounded-lg">
+            <p className="text-sm text-muted-foreground">Logged in as</p>
+            <p className="font-medium text-foreground">{user.email}</p>
           </div>
 
           {/* Site Selection */}
           {!creatingNewSite && (
             <div className="space-y-4">
-              <Label htmlFor="site-select" className="text-slate-200">Select Site</Label>
+              <Label htmlFor="site-select" className="text-foreground">Select Site</Label>
               {sites.length > 0 ? (
                 <div className="flex gap-2">
                   <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-                    <SelectTrigger id="site-select" className="bg-slate-800/50 border-slate-700 text-white flex-1">
+                    <SelectTrigger id="site-select" className="bg-muted/50 border-border text-foreground flex-1">
                       <SelectValue placeholder="Choose a site..." />
                     </SelectTrigger>
-                    <SelectContent className="bg-slate-800 border-slate-700">
+                    <SelectContent className="bg-muted border-border">
                       {sites.map((site) => (
-                        <SelectItem key={site.id} value={site.id} className="text-white hover:bg-slate-700">
+                        <SelectItem key={site.id} value={site.id} className="text-foreground hover:bg-muted">
                           {site.name}
                         </SelectItem>
                       ))}
@@ -328,7 +319,7 @@ export default function SetupPage() {
                   <Button
                     variant="outline"
                     onClick={() => setCreatingNewSite(true)}
-                    className="bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white whitespace-nowrap"
+                    className="bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground whitespace-nowrap"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     Create New Site
@@ -336,13 +327,13 @@ export default function SetupPage() {
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-slate-400">
+                  <p className="text-sm text-muted-foreground">
                     No sites available. Create a new site to get started.
                   </p>
                   <Button
                     variant="outline"
                     onClick={() => setCreatingNewSite(true)}
-                    className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+                    className="w-full bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     Create New Site
@@ -355,7 +346,7 @@ export default function SetupPage() {
           {/* Create New Site */}
           {creatingNewSite && (
             <div className="space-y-4">
-              <Label htmlFor="site-name" className="text-slate-200">New Site Name</Label>
+              <Label htmlFor="site-name" className="text-foreground">New Site Name</Label>
               <Input
                 id="site-name"
                 placeholder="e.g., My Studio, Client A, Production Floor"
@@ -366,14 +357,14 @@ export default function SetupPage() {
                     handleCreateSite();
                   }
                 }}
-                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
+                className="bg-muted/50 border-border text-foreground placeholder:text-muted-foreground"
               />
 
               <div className="flex gap-2">
                 <Button
                   onClick={handleCreateSite}
                   disabled={!newSiteName.trim() || loading}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
                     <>
@@ -391,7 +382,7 @@ export default function SetupPage() {
                     setNewSiteName('');
                   }}
                   disabled={loading}
-                  className="bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white"
+                  className="bg-muted/50 border-border text-foreground hover:bg-muted hover:text-foreground"
                 >
                   Cancel
                 </Button>
@@ -401,7 +392,7 @@ export default function SetupPage() {
 
           {/* Authorize Agent Button */}
           {!creatingNewSite && selectedSiteId && (
-            <div className="space-y-4 pt-4 border-t border-slate-700">
+            <div className="space-y-4 pt-4 border-t border-border">
               <div className="bg-blue-950/50 border border-blue-900/50 p-4 rounded-lg space-y-2">
                 <p className="text-sm font-medium text-blue-300">
                   Selected Site
@@ -417,7 +408,7 @@ export default function SetupPage() {
               <Button
                 onClick={handleAuthorizeAgent}
                 disabled={isRedirecting}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 size="lg"
               >
                 {isRedirecting ? (
@@ -433,7 +424,7 @@ export default function SetupPage() {
                 )}
               </Button>
 
-              <p className="text-xs text-slate-400 text-center">
+              <p className="text-xs text-muted-foreground text-center">
                 This will configure your agent and redirect you back to the installer.
               </p>
             </div>

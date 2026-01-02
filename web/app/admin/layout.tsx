@@ -72,7 +72,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <RequireAdmin>
       <TooltipProvider delayDuration={100}>
-        <div className="flex min-h-screen bg-slate-900">
+        <div className="flex min-h-screen bg-background">
         {/* Mobile Menu Button */}
         {!mobileMenuOpen && (
           <div className="lg:hidden fixed top-4 left-4 z-50">
@@ -80,7 +80,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               variant="outline"
               size="sm"
               onClick={() => setMobileMenuOpen(true)}
-              className="border-slate-600 bg-slate-800/95 backdrop-blur-sm text-white hover:bg-slate-700 cursor-pointer shadow-lg"
+              className="border-border bg-muted/95 backdrop-blur-sm text-foreground hover:bg-muted cursor-pointer shadow-lg"
             >
               <Menu className="h-5 w-5 stroke-[2.5]" />
             </Button>
@@ -97,36 +97,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Sidebar Navigation */}
         <aside className={`
-          w-64 lg:w-20 xl:w-64 bg-slate-800 border-r border-slate-700 flex flex-col
+          w-64 lg:w-20 xl:w-64 bg-card border-r border-border flex flex-col
           fixed lg:static inset-y-0 left-0 z-40
           transform transition-all duration-200 ease-in-out
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
           {/* Header */}
-          <div className="p-6 lg:p-3 xl:p-6 border-b border-slate-700">
+          <div className="p-6 lg:p-3 xl:p-6 border-b border-border">
             {/* Mobile Header */}
             <div className="lg:hidden mb-4">
               <div className="flex items-center justify-between mb-2">
-                <h1 className="text-xl font-bold text-white">Admin Panel</h1>
+                <h1 className="text-xl font-bold text-foreground">Admin Panel</h1>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
-                  className="p-2 hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+                  className="p-2 hover:bg-muted rounded-lg transition-colors cursor-pointer"
                   aria-label="Close menu"
                 >
-                  <X className="h-5 w-5 text-slate-400 hover:text-white" />
+                  <X className="h-5 w-5 text-muted-foreground hover:text-foreground" />
                 </button>
               </div>
-              <p className="text-sm text-slate-400">System Management</p>
+              <p className="text-sm text-muted-foreground">System Management</p>
             </div>
 
             {/* Desktop/Tablet Header */}
             <div className="hidden lg:flex items-center gap-3 mb-4 lg:justify-center xl:justify-start">
-              <div className="p-2 bg-blue-600 rounded-lg flex-shrink-0">
-                <Shield className="h-6 w-6 text-white" />
+              <div className="p-2 bg-accent-cyan rounded-lg flex-shrink-0">
+                <Shield className="h-6 w-6 text-foreground" />
               </div>
               <div className="hidden xl:block">
-                <h1 className="text-xl font-bold text-white">Admin Panel</h1>
-                <p className="text-xs text-slate-400">System Management</p>
+                <h1 className="text-xl font-bold text-foreground">Admin Panel</h1>
+                <p className="text-xs text-muted-foreground">System Management</p>
               </div>
             </div>
 
@@ -137,7 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-700 hover:text-white cursor-pointer lg:px-2 xl:px-3"
+                    className="w-full border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer lg:px-2 xl:px-3"
                   >
                     <ArrowLeft className="h-4 w-4 lg:mr-0 xl:mr-2" />
                     <span className="lg:hidden xl:inline">{getBackLabel()}</span>
@@ -165,8 +165,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           flex items-start gap-3 p-3 lg:p-2 lg:justify-center xl:justify-start xl:p-3 rounded-lg cursor-pointer transition-colors mb-2
                           ${
                             isActive
-                              ? 'bg-blue-600 text-white'
-                              : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                              ? 'bg-accent-cyan text-foreground'
+                              : 'text-foreground hover:bg-muted hover:text-foreground'
                           }
                         `}
                       >
@@ -175,7 +175,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
                             className={`text-xs mt-0.5 ${
-                              isActive ? 'text-blue-100' : 'text-slate-500'
+                              isActive ? 'text-accent-cyan-foreground' : 'text-muted-foreground'
                             }`}
                           >
                             {item.description}
@@ -186,7 +186,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   </TooltipTrigger>
                   <TooltipContent side="right" className="hidden lg:block xl:hidden">
                     <p className="font-medium">{item.name}</p>
-                    <p className="text-xs text-slate-400">{item.description}</p>
+                    <p className="text-xs text-muted-foreground">{item.description}</p>
                   </TooltipContent>
                 </Tooltip>
               );

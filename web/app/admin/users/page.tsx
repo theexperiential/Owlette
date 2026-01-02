@@ -139,44 +139,44 @@ export default function UserManagementPage() {
       <div className="max-w-screen-2xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">User Management</h1>
-        <p className="text-slate-400">Manage user roles and permissions</p>
+        <h1 className="text-3xl font-bold text-foreground mb-2">User Management</h1>
+        <p className="text-muted-foreground">Manage user roles and permissions</p>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
+        <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-600 rounded-lg">
-              <Users className="h-6 w-6 text-white" />
+            <div className="p-3 bg-accent-cyan rounded-lg">
+              <Users className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{counts.total}</p>
-              <p className="text-sm text-slate-400">Total Users</p>
+              <p className="text-2xl font-bold text-foreground">{counts.total}</p>
+              <p className="text-sm text-muted-foreground">Total Users</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
+        <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-green-600 rounded-lg">
-              <Shield className="h-6 w-6 text-white" />
+              <Shield className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{counts.admins}</p>
-              <p className="text-sm text-slate-400">Administrators</p>
+              <p className="text-2xl font-bold text-foreground">{counts.admins}</p>
+              <p className="text-sm text-muted-foreground">Administrators</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-6">
+        <div className="bg-card border border-border rounded-lg p-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-slate-600 rounded-lg">
-              <Users className="h-6 w-6 text-white" />
+            <div className="p-3 bg-muted rounded-lg">
+              <Users className="h-6 w-6 text-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{counts.users}</p>
-              <p className="text-sm text-slate-400">Regular Users</p>
+              <p className="text-2xl font-bold text-foreground">{counts.users}</p>
+              <p className="text-sm text-muted-foreground">Regular Users</p>
             </div>
           </div>
         </div>
@@ -192,28 +192,28 @@ export default function UserManagementPage() {
       {/* Loading State */}
       {loading && (
         <div className="flex justify-center items-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-          <span className="ml-3 text-slate-400">Loading users...</span>
+          <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
+          <span className="ml-3 text-muted-foreground">Loading users...</span>
         </div>
       )}
 
       {/* Users Table */}
       {!loading && !error && (
-        <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-slate-700 bg-slate-900/50">
-                <th className="text-left p-4 text-sm font-medium text-slate-300">User</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Role</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Sites</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Joined</th>
-                <th className="text-right p-4 text-sm font-medium text-slate-300">Actions</th>
+              <tr className="border-b border-border bg-background/50">
+                <th className="text-left p-4 text-sm font-medium text-foreground">User</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Role</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Sites</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Joined</th>
+                <th className="text-right p-4 text-sm font-medium text-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-400">
+                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
                     No users found
                   </td>
                 </tr>
@@ -221,15 +221,15 @@ export default function UserManagementPage() {
                 users.map((user) => (
                   <tr
                     key={user.uid}
-                    className="border-b border-slate-700 hover:bg-slate-700/50 transition-colors"
+                    className="border-b border-border hover:bg-muted/50 transition-colors"
                   >
                     {/* User Info */}
                     <td className="p-4">
                       <div>
                         {user.displayName && (
-                          <p className="text-white font-medium">{user.displayName}</p>
+                          <p className="text-foreground font-medium">{user.displayName}</p>
                         )}
-                        <p className="text-sm text-slate-400">{user.email}</p>
+                        <p className="text-sm text-muted-foreground">{user.email}</p>
                         {user.uid === currentUser?.uid && (
                           <Badge className="mt-1 bg-blue-600 text-xs">You</Badge>
                         )}
@@ -253,14 +253,14 @@ export default function UserManagementPage() {
 
                     {/* Sites Count */}
                     <td className="p-4">
-                      <span className="text-white">{user.sites?.length || 0}</span>
-                      <span className="text-slate-400 text-sm ml-1">
+                      <span className="text-foreground">{user.sites?.length || 0}</span>
+                      <span className="text-muted-foreground text-sm ml-1">
                         site{user.sites?.length !== 1 ? 's' : ''}
                       </span>
                     </td>
 
                     {/* Join Date */}
-                    <td className="p-4 text-slate-400 text-sm">
+                    <td className="p-4 text-muted-foreground text-sm">
                       {formatDate(user.createdAt)}
                     </td>
 
@@ -271,15 +271,15 @@ export default function UserManagementPage() {
                           <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
-                              className="h-8 w-8 p-0 text-slate-400 hover:text-white hover:bg-slate-700 cursor-pointer"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-slate-800 border-slate-700">
+                          <DropdownMenuContent align="end" className="bg-card border-border">
                             <DropdownMenuItem
                               onClick={() => handleOpenManageSites(user.uid, user.email, user.role, user.sites || [])}
-                              className="text-slate-200 hover:bg-slate-700 cursor-pointer focus:bg-slate-700 focus:text-white"
+                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
                             >
                               <Settings className="h-4 w-4 mr-2" />
                               Manage Sites
@@ -287,7 +287,7 @@ export default function UserManagementPage() {
                             <DropdownMenuItem
                               onClick={() => handleOpenRoleChangeDialog(user.uid, user.email, user.role)}
                               disabled={updatingUser === user.uid || user.uid === currentUser?.uid && user.role === 'admin'}
-                              className="text-slate-200 hover:bg-slate-700 cursor-pointer focus:bg-slate-700 focus:text-white"
+                              className="text-foreground hover:bg-muted cursor-pointer focus:bg-muted focus:text-foreground"
                             >
                               {updatingUser === user.uid ? (
                                 <>
@@ -306,7 +306,7 @@ export default function UserManagementPage() {
                                 </>
                               )}
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator className="bg-slate-700" />
+                            <DropdownMenuSeparator className="bg-border" />
                             <DropdownMenuItem
                               onClick={() => handleOpenDeleteDialog(user.uid, user.email)}
                               disabled={deletingUser === user.uid || user.uid === currentUser?.uid}
@@ -363,19 +363,19 @@ export default function UserManagementPage() {
 
       {/* Role Change Confirmation Dialog */}
       <Dialog open={roleChangeDialogOpen} onOpenChange={setRoleChangeDialogOpen}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+        <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white flex items-center gap-2">
+            <DialogTitle className="text-foreground flex items-center gap-2">
               {userToChangeRole?.newRole === 'admin' ? (
-                <UserCog className="h-5 w-5 text-blue-400" />
+                <UserCog className="h-5 w-5 text-accent-cyan" />
               ) : (
-                <UserMinus className="h-5 w-5 text-slate-400" />
+                <UserMinus className="h-5 w-5 text-muted-foreground" />
               )}
               {userToChangeRole?.newRole === 'admin' ? 'Promote to Admin' : 'Demote to User'}
             </DialogTitle>
-            <DialogDescription className="text-slate-300">
+            <DialogDescription className="text-foreground">
               Are you sure you want to {userToChangeRole?.newRole === 'admin' ? 'promote' : 'demote'}{' '}
-              <strong className="text-white">{userToChangeRole?.email}</strong> to {userToChangeRole?.newRole}?
+              <strong className="text-foreground">{userToChangeRole?.email}</strong> to {userToChangeRole?.newRole}?
             </DialogDescription>
           </DialogHeader>
           <div className="bg-blue-950/30 border border-blue-900/50 rounded-lg p-4 my-4">
@@ -389,13 +389,13 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setRoleChangeDialogOpen(false)}
-              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={handleConfirmRoleChange}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
             >
               {userToChangeRole?.newRole === 'admin' ? (
                 <>
@@ -415,14 +415,14 @@ export default function UserManagementPage() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteConfirmDialogOpen} onOpenChange={setDeleteConfirmDialogOpen}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+        <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white flex items-center gap-2">
+            <DialogTitle className="text-foreground flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-red-400" />
               Delete User
             </DialogTitle>
-            <DialogDescription className="text-slate-300">
-              Are you sure you want to delete <strong className="text-white">{userToDelete?.email}</strong>?
+            <DialogDescription className="text-foreground">
+              Are you sure you want to delete <strong className="text-foreground">{userToDelete?.email}</strong>?
             </DialogDescription>
           </DialogHeader>
           <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 my-4">
@@ -434,13 +434,13 @@ export default function UserManagementPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteConfirmDialogOpen(false)}
-              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={handleConfirmDelete}
-              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
               <Trash2 className="h-4 w-4 mr-2" />
               Delete User

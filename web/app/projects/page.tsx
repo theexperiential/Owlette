@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 
 export default function ProjectsPage() {
   const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
   const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
@@ -67,8 +67,8 @@ export default function ProjectsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
-        <p className="text-slate-400">Loading...</p>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -88,7 +88,7 @@ export default function ProjectsPage() {
       case 'partial':
         return <Clock className="h-5 w-5 text-yellow-500" />;
       default:
-        return <Clock className="h-5 w-5 text-slate-500" />;
+        return <Clock className="h-5 w-5 text-muted-foreground" />;
     }
   };
 
@@ -113,7 +113,7 @@ export default function ProjectsPage() {
   const selectedDistribution = distributions.find(d => d.id === selectedDistributionId);
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-8">
+    <div className="min-h-screen bg-background pb-8">
       {/* Header */}
       <PageHeader
         currentPage="Distribute Projects"
@@ -155,8 +155,8 @@ export default function ProjectsPage() {
       <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">Project Distributions</h2>
-            <p className="text-sm md:text-base text-slate-400">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">Project Distributions</h2>
+            <p className="text-sm md:text-base text-muted-foreground">
               Distribute project files (ZIPs, .toe files, etc.) across your machines
             </p>
           </div>
@@ -164,7 +164,7 @@ export default function ProjectsPage() {
           <div className="flex-shrink-0">
             <Button
               onClick={() => setDistributionDialogOpen(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Distribution
@@ -186,43 +186,43 @@ export default function ProjectsPage() {
 
         {/* Quick Stats */}
         <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4 animate-in fade-in duration-300">
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Total Distributions</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Total Distributions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{distributions.length}</div>
+              <div className="text-2xl font-bold text-foreground">{distributions.length}</div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">In Progress</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">In Progress</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">
+              <div className="text-2xl font-bold text-foreground">
                 {distributions.filter(d => d.status === 'in_progress').length}
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Completed</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Completed</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">
+              <div className="text-2xl font-bold text-foreground">
                 {distributions.filter(d => d.status === 'completed').length}
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Templates</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Templates</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{templates.length}</div>
+              <div className="text-2xl font-bold text-foreground">{templates.length}</div>
             </CardContent>
           </Card>
         </div>
@@ -230,24 +230,24 @@ export default function ProjectsPage() {
         {/* Distributions List */}
         <div className="space-y-4 animate-in fade-in duration-300">
           {distributionsLoading ? (
-            <Card className="border-slate-800 bg-slate-900">
+            <Card className="border-border bg-card">
               <CardContent className="p-8 text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" />
-                <p className="mt-2 text-slate-400">Loading distributions...</p>
+                <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+                <p className="mt-2 text-muted-foreground">Loading distributions...</p>
               </CardContent>
             </Card>
           ) : distributions.length === 0 ? (
-            <Card className="border-slate-800 bg-slate-900">
+            <Card className="border-border bg-card">
               <CardHeader>
-                <CardTitle className="text-white">No Distributions Yet</CardTitle>
-                <CardDescription className="text-slate-400">
+                <CardTitle className="text-foreground">No Distributions Yet</CardTitle>
+                <CardDescription className="text-muted-foreground">
                   Create your first distribution to sync project files across your machines
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button
                   onClick={() => setDistributionDialogOpen(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   New Distribution
@@ -258,7 +258,7 @@ export default function ProjectsPage() {
             distributions.map((distribution) => (
               <Card
                 key={distribution.id}
-                className="border-slate-800 bg-slate-900 cursor-pointer hover:border-slate-700 transition-colors"
+                className="border-border bg-card cursor-pointer hover:border-border transition-colors"
                 onClick={() => setSelectedDistributionId(distribution.id === selectedDistributionId ? null : distribution.id)}
               >
                 <CardHeader>
@@ -266,8 +266,8 @@ export default function ProjectsPage() {
                     <div className="flex items-center gap-3">
                       {getStatusIcon(distribution.status)}
                       <div>
-                        <CardTitle className="text-white select-text">{distribution.name}</CardTitle>
-                        <CardDescription className="text-slate-400 select-text text-xs">
+                        <CardTitle className="text-foreground select-text">{distribution.name}</CardTitle>
+                        <CardDescription className="text-muted-foreground select-text text-xs">
                           {(() => {
                             try {
                               const url = new URL(distribution.project_url);
@@ -282,7 +282,7 @@ export default function ProjectsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {getStatusBadge(distribution.status)}
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-muted-foreground">
                         {new Date(distribution.createdAt).toLocaleString()}
                       </span>
                       <Button
@@ -296,7 +296,7 @@ export default function ProjectsPage() {
                             console.error('Failed to delete distribution:', error);
                           }
                         }}
-                        className="h-7 px-2 text-slate-400 hover:text-red-400 hover:bg-red-950/30 cursor-pointer"
+                        className="h-7 px-2 text-muted-foreground hover:text-red-400 hover:bg-red-950/30 cursor-pointer"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -305,35 +305,35 @@ export default function ProjectsPage() {
                 </CardHeader>
 
                 {selectedDistributionId === distribution.id && (
-                  <CardContent className="space-y-4 border-t border-slate-800 pt-4">
+                  <CardContent className="space-y-4 border-t border-border pt-4">
                     <div className="grid gap-3 text-sm">
                       <div>
-                        <div className="text-slate-400 mb-1">Project URL:</div>
-                        <div className="text-white select-text break-all">{distribution.project_url}</div>
+                        <div className="text-muted-foreground mb-1">Project URL:</div>
+                        <div className="text-foreground select-text break-all">{distribution.project_url}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 mb-1">Extract Path:</div>
-                        <div className="text-white select-text break-all">
-                          {distribution.extract_path || <span className="text-slate-500 italic">~/Documents/OwletteProjects (default)</span>}
+                        <div className="text-muted-foreground mb-1">Extract Path:</div>
+                        <div className="text-foreground select-text break-all">
+                          {distribution.extract_path || <span className="text-muted-foreground italic">~/Documents/OwletteProjects (default)</span>}
                         </div>
                       </div>
                       {distribution.verify_files && distribution.verify_files.length > 0 && (
                         <div>
-                          <div className="text-slate-400 mb-1">Verify Files:</div>
-                          <div className="text-white select-text break-all">{distribution.verify_files.join(', ')}</div>
+                          <div className="text-muted-foreground mb-1">Verify Files:</div>
+                          <div className="text-foreground select-text break-all">{distribution.verify_files.join(', ')}</div>
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-medium text-white mb-2">Target Machines ({distribution.targets.length})</h4>
+                      <h4 className="text-sm font-medium text-foreground mb-2">Target Machines ({distribution.targets.length})</h4>
                       <div className="space-y-2">
                         {distribution.targets.map((target) => (
-                          <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-slate-800">
-                            <span className="text-white select-text">{target.machineId}</span>
+                          <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-muted">
+                            <span className="text-foreground select-text">{target.machineId}</span>
                             <div className="flex items-center gap-2">
                               {target.progress !== undefined && (target.status === 'downloading' || target.status === 'extracting') && (
-                                <span className="text-xs text-slate-400">{target.progress}%</span>
+                                <span className="text-xs text-muted-foreground">{target.progress}%</span>
                               )}
                               {getStatusBadge(target.status)}
                               {(target.status === 'pending' || target.status === 'downloading' || target.status === 'extracting') && (

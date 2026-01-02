@@ -25,7 +25,7 @@ import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
   const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
@@ -132,8 +132,8 @@ export default function DeploymentsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
-        <p className="text-slate-400">Loading...</p>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading...</p>
       </div>
     );
   }
@@ -157,7 +157,7 @@ export default function DeploymentsPage() {
       case 'partial':
         return <Clock className="h-5 w-5 text-yellow-500" />;
       default:
-        return <Clock className="h-5 w-5 text-slate-500" />;
+        return <Clock className="h-5 w-5 text-muted-foreground" />;
     }
   };
 
@@ -201,7 +201,7 @@ export default function DeploymentsPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="min-h-screen bg-slate-950 pb-8">
+    <div className="min-h-screen bg-background pb-8">
       {/* Header */}
       <PageHeader
         currentPage="Deploy Software"
@@ -243,8 +243,8 @@ export default function DeploymentsPage() {
       <main className="mx-auto max-w-screen-2xl p-3 md:p-4">
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-1">Software Deployments</h2>
-            <p className="text-sm md:text-base text-slate-400">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">Software Deployments</h2>
+            <p className="text-sm md:text-base text-muted-foreground">
               Deploy software installers across your machines
             </p>
           </div>
@@ -253,7 +253,7 @@ export default function DeploymentsPage() {
             <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Deployment
@@ -295,43 +295,43 @@ export default function DeploymentsPage() {
 
         {/* Quick Stats */}
         <div className="mb-6 grid gap-2 md:gap-4 grid-cols-2 md:grid-cols-4 animate-in fade-in duration-300">
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Total Deployments</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Total Deployments</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{deployments.length}</div>
+              <div className="text-2xl font-bold text-foreground">{deployments.length}</div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">In Progress</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">In Progress</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">
+              <div className="text-2xl font-bold text-foreground">
                 {deployments.filter(d => d.status === 'in_progress').length}
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Completed</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Completed</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">
+              <div className="text-2xl font-bold text-foreground">
                 {deployments.filter(d => d.status === 'completed').length}
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-slate-800 bg-slate-900">
+          <Card className="border-border bg-card">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-slate-200">Templates</CardTitle>
+              <CardTitle className="text-sm font-medium text-foreground">Templates</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{templates.length}</div>
+              <div className="text-2xl font-bold text-foreground">{templates.length}</div>
             </CardContent>
           </Card>
         </div>
@@ -339,24 +339,24 @@ export default function DeploymentsPage() {
         {/* Deployments List */}
         <div className="space-y-4 animate-in fade-in duration-300">
           {deploymentsLoading ? (
-            <Card className="border-slate-800 bg-slate-900">
+            <Card className="border-border bg-card">
               <CardContent className="p-8 text-center">
-                <Loader2 className="h-8 w-8 animate-spin mx-auto text-slate-400" />
-                <p className="mt-2 text-slate-400">Loading deployments...</p>
+                <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
+                <p className="mt-2 text-muted-foreground">Loading deployments...</p>
               </CardContent>
             </Card>
           ) : deployments.length === 0 ? (
-            <Card className="border-slate-800 bg-slate-900">
+            <Card className="border-border bg-card">
               <CardHeader>
-                <CardTitle className="text-white">No Deployments Yet</CardTitle>
-                <CardDescription className="text-slate-400">
+                <CardTitle className="text-foreground">No Deployments Yet</CardTitle>
+                <CardDescription className="text-muted-foreground">
                   Create your first deployment to install software across your machines
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button
                   onClick={() => setDeployDialogOpen(true)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   New Deployment
@@ -367,7 +367,7 @@ export default function DeploymentsPage() {
             deployments.map((deployment) => (
               <Card
                 key={deployment.id}
-                className="border-slate-800 bg-slate-900 cursor-pointer hover:border-slate-700 transition-colors"
+                className="border-border bg-card cursor-pointer hover:border-border transition-colors"
                 onClick={() => {
                   // Don't collapse/expand if user is selecting text
                   const selection = window.getSelection();
@@ -382,8 +382,8 @@ export default function DeploymentsPage() {
                     <div className="flex items-center gap-3">
                       {getStatusIcon(deployment.status)}
                       <div className="space-y-2">
-                        <CardTitle className="text-white select-text">{deployment.name}</CardTitle>
-                        <CardDescription className="text-slate-400 select-text">
+                        <CardTitle className="text-foreground select-text">{deployment.name}</CardTitle>
+                        <CardDescription className="text-muted-foreground select-text">
                           {deployment.installer_name}
                         </CardDescription>
                       </div>
@@ -395,7 +395,7 @@ export default function DeploymentsPage() {
                         const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
                         return getStatusBadge(deployment.status, errorMessages || undefined);
                       })()}
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-muted-foreground">
                         {new Date(deployment.createdAt).toLocaleString()}
                       </span>
                       <DropdownMenu>
@@ -404,19 +404,19 @@ export default function DeploymentsPage() {
                             size="sm"
                             variant="ghost"
                             onClick={(e) => e.stopPropagation()}
-                            className="h-7 w-7 p-0 text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                           >
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="border-slate-700 bg-slate-800">
+                        <DropdownMenuContent align="end" className="border-border bg-muted">
                           {deployment.targets.some((t: any) => t.status === 'failed') && (
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleRetryDeployment(deployment);
                               }}
-                              className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                              className="text-foreground focus:bg-muted focus:text-foreground cursor-pointer"
                             >
                               <RefreshCw className="h-4 w-4 mr-2" />
                               Retry Failed
@@ -430,7 +430,7 @@ export default function DeploymentsPage() {
                                 setUninstallDeploymentId(deployment.id);
                                 setUninstallDialogOpen(true);
                               }}
-                              className="text-white focus:bg-slate-700 focus:text-white cursor-pointer"
+                              className="text-foreground focus:bg-muted focus:text-foreground cursor-pointer"
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
                               Uninstall Software
@@ -454,33 +454,33 @@ export default function DeploymentsPage() {
                 </CardHeader>
 
                 {selectedDeploymentId === deployment.id && (
-                  <CardContent className="space-y-4 border-t border-slate-800 pt-4">
+                  <CardContent className="space-y-4 border-t border-border pt-4">
                     <div className="grid gap-3 text-sm">
                       <div>
-                        <div className="text-slate-400 mb-1">Installer URL:</div>
-                        <div className="text-white select-text break-all">{deployment.installer_url}</div>
+                        <div className="text-muted-foreground mb-1">Installer URL:</div>
+                        <div className="text-foreground select-text break-all">{deployment.installer_url}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 mb-1">Silent Flags:</div>
-                        <div className="text-white select-text break-all">{deployment.silent_flags || 'None'}</div>
+                        <div className="text-muted-foreground mb-1">Silent Flags:</div>
+                        <div className="text-foreground select-text break-all">{deployment.silent_flags || 'None'}</div>
                       </div>
                       {deployment.verify_path && (
                         <div>
-                          <div className="text-slate-400 mb-1">Verify Path:</div>
-                          <div className="text-white select-text break-all">{deployment.verify_path}</div>
+                          <div className="text-muted-foreground mb-1">Verify Path:</div>
+                          <div className="text-foreground select-text break-all">{deployment.verify_path}</div>
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <h4 className="text-sm font-medium text-white mb-2">Target Machines ({deployment.targets.length})</h4>
+                      <h4 className="text-sm font-medium text-foreground mb-2">Target Machines ({deployment.targets.length})</h4>
                       <div className="space-y-2">
                         {deployment.targets.map((target) => (
-                          <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-slate-800">
-                            <span className="text-white select-text">{target.machineId}</span>
+                          <div key={target.machineId} className="flex items-center justify-between p-2 rounded bg-muted">
+                            <span className="text-foreground select-text">{target.machineId}</span>
                             <div className="flex items-center gap-2">
                               {target.progress !== undefined && (target.status === 'downloading' || target.status === 'installing') && (
-                                <span className="text-xs text-slate-400">{target.progress}%</span>
+                                <span className="text-xs text-muted-foreground">{target.progress}%</span>
                               )}
                               {getStatusBadge(target.status, target.error)}
                               {(target.status === 'pending' || target.status === 'downloading' || target.status === 'installing') && (

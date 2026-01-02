@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 
 /**
  * POST /api/admin/tokens/revoke
@@ -29,17 +29,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
-    // Verify user is authenticated by checking session cookie
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('__session');
-    const authCookie = cookieStore.get('auth');
-
-    if (!sessionCookie && !authCookie) {
-      return NextResponse.json(
-        { error: 'Unauthorized: No session found' },
-        { status: 401 }
-      );
-    }
+    await requireAdmin(request);
 
     // Parse request body
     const body = await request.json();
@@ -146,6 +136,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
   } catch (error: any) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error revoking tokens:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },

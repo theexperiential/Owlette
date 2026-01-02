@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { adminDb } from '@/lib/firebase-admin';
+import { ApiAuthError, requireAdmin } from '@/lib/apiAuth.server';
 
 /**
  * GET /api/admin/tokens/list
@@ -20,17 +20,7 @@ import { adminDb } from '@/lib/firebase-admin';
  */
 export async function GET(request: NextRequest) {
   try {
-    // Verify user is authenticated by checking session cookie
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('__session');
-    const authCookie = cookieStore.get('auth');
-
-    if (!sessionCookie && !authCookie) {
-      return NextResponse.json(
-        { error: 'Unauthorized: No session found' },
-        { status: 401 }
-      );
-    }
+    await requireAdmin(request);
 
     // Get siteId from query params
     const { searchParams } = new URL(request.url);
@@ -78,6 +68,9 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('Error listing tokens:', error);
     return NextResponse.json(
       { error: error.message || 'Internal server error' },

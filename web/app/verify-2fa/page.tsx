@@ -183,11 +183,11 @@ function Verify2FAContent() {
                 id="trustDevice"
                 checked={trustThisDevice}
                 onCheckedChange={(checked) => setTrustThisDevice(checked === true)}
-                className="border-slate-600"
+                className="border-border"
               />
               <Label
                 htmlFor="trustDevice"
-                className="text-sm text-slate-300 cursor-pointer"
+                className="text-sm text-foreground cursor-pointer"
               >
                 Trust this device for 30 days
               </Label>

@@ -122,8 +122,8 @@ function LoginForm() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
-      <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-md bg-card/50 border-border">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <Image
             src="/owlette-icon.png"
@@ -134,8 +134,8 @@ function LoginForm() {
             priority
           />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-white">Owlette</CardTitle>
-            <CardDescription className="text-slate-400">
+            <CardTitle className="text-2xl font-bold text-foreground">Owlette</CardTitle>
+            <CardDescription className="text-muted-foreground">
               Always Watching
             </CardDescription>
           </div>
@@ -143,7 +143,7 @@ function LoginForm() {
         <CardContent className="space-y-4">
           <form onSubmit={handleEmailLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-slate-200">Email</Label>
+              <Label htmlFor="email" className="text-foreground">Email</Label>
               <Input
                 id="email"
                 type="email"
@@ -152,11 +152,11 @@ function LoginForm() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={loading}
-                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-slate-200">Password</Label>
+              <Label htmlFor="password" className="text-foreground">Password</Label>
               <Input
                 id="password"
                 type="password"
@@ -165,20 +165,20 @@ function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
-                className="bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-500"
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
-            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-slate-950 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign in with Email'}
             </Button>
           </form>
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-slate-700" />
+              <span className="w-full border-t border-border" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-slate-900/50 px-2 text-slate-400">
+              <span className="bg-card/50 px-2 text-muted-foreground">
                 Or continue with
               </span>
             </div>
@@ -187,7 +187,7 @@ function LoginForm() {
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-slate-800/50 border-slate-700 text-white hover:bg-slate-800 hover:text-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-input border-border text-foreground hover:bg-muted hover:text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleLogin}
             disabled={loading}
           >
@@ -212,9 +212,9 @@ function LoginForm() {
             Google
           </Button>
 
-          <div className="text-center text-sm text-slate-400">
+          <div className="text-center text-sm text-muted-foreground">
             Don't have an account?{' '}
-            <a href="/register" className="text-blue-400 hover:text-blue-300 hover:underline">
+            <a href="/register" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
               Sign up
             </a>
           </div>
@@ -227,8 +227,8 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 p-4">
-        <Card className="w-full max-w-md bg-slate-900/50 border-slate-800">
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md bg-card/50 border-border">
           <CardHeader className="space-y-4 flex flex-col items-center">
             <Image
               src="/owlette-icon.png"
@@ -239,14 +239,14 @@ export default function LoginPage() {
               priority
             />
             <div className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-bold text-white">Owlette</CardTitle>
-              <CardDescription className="text-slate-400">
+              <CardTitle className="text-2xl font-bold text-foreground">Owlette</CardTitle>
+              <CardDescription className="text-muted-foreground">
                 Always Watching
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-center text-slate-400">Loading...</div>
+            <div className="text-center text-muted-foreground">Loading...</div>
           </CardContent>
         </Card>
       </div>

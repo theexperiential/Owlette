@@ -131,12 +131,12 @@ export default function InstallerVersionsPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Installers</h1>
-          <p className="text-slate-400">Manage Owlette Agent installer versions and downloads</p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Installers</h1>
+          <p className="text-muted-foreground">Manage Owlette Agent installer versions and downloads</p>
         </div>
         <Button
           onClick={() => setUploadDialogOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+          className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
         >
           <Plus className="h-4 w-4 mr-2" />
           Upload New Version
@@ -145,21 +145,21 @@ export default function InstallerVersionsPage() {
 
       {/* Stats Card */}
       {latestVersion && (
-        <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-8">
+        <div className="bg-card border border-border rounded-lg p-6 mb-8">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-green-600 rounded-lg">
               <Package className="h-6 w-6 text-white" />
             </div>
             <div className="flex-1">
-              <p className="text-sm text-slate-400">Current Latest Version</p>
+              <p className="text-sm text-muted-foreground">Current Latest Version</p>
               <div className="flex items-center gap-2 mt-1">
-                <p className="text-2xl font-bold text-white">{latestVersion.version}</p>
+                <p className="text-2xl font-bold text-foreground">{latestVersion.version}</p>
                 <Badge className="bg-green-600">Latest</Badge>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-sm text-slate-400">File Size</p>
-              <p className="text-lg text-white font-medium">
+              <p className="text-sm text-muted-foreground">File Size</p>
+              <p className="text-lg text-foreground font-medium">
                 {formatFileSize(latestVersion.file_size)}
               </p>
             </div>
@@ -168,7 +168,7 @@ export default function InstallerVersionsPage() {
                 onClick={() => window.open(latestVersion.download_url, '_blank')}
                 variant="outline"
                 size="icon"
-                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                 title={`Download Owlette Agent v${latestVersion.version}`}
               >
                 <Download className="h-4 w-4" />
@@ -177,7 +177,7 @@ export default function InstallerVersionsPage() {
                 onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
                 variant="outline"
                 size="icon"
-                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                 title={`Copy download link for Owlette Agent v${latestVersion.version}`}
               >
                 <Copy className="h-4 w-4" />
@@ -197,29 +197,29 @@ export default function InstallerVersionsPage() {
       {/* Loading State */}
       {loading && (
         <div className="flex justify-center items-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-          <span className="ml-3 text-slate-400">Loading versions...</span>
+          <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
+          <span className="ml-3 text-muted-foreground">Loading versions...</span>
         </div>
       )}
 
       {/* Versions Table */}
       {!loading && !error && (
-        <div className="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden">
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-slate-700 bg-slate-900/50">
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Version</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">File Size</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Uploaded</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Uploaded By</th>
-                <th className="text-left p-4 text-sm font-medium text-slate-300">Release Notes</th>
-                <th className="text-right p-4 text-sm font-medium text-slate-300">Actions</th>
+              <tr className="border-b border-border bg-background/50">
+                <th className="text-left p-4 text-sm font-medium text-foreground">Version</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">File Size</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Uploaded</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Uploaded By</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">Release Notes</th>
+                <th className="text-right p-4 text-sm font-medium text-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {versions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-400">
+                  <td colSpan={6} className="p-8 text-center text-muted-foreground">
                     No versions uploaded yet. Click "Upload New Version" to get started.
                   </td>
                 </tr>
@@ -232,12 +232,12 @@ export default function InstallerVersionsPage() {
                   return (
                     <tr
                       key={version.id}
-                      className="border-b border-slate-700 hover:bg-slate-700/50 transition-colors"
+                      className="border-b border-border hover:bg-muted/50 transition-colors"
                     >
                       {/* Version */}
                       <td className="p-4">
                         <div className="flex items-center gap-2">
-                          <span className="text-white font-medium">{version.version}</span>
+                          <span className="text-foreground font-medium">{version.version}</span>
                           {isLatest && (
                             <Badge className="bg-green-600 flex items-center gap-1">
                               <CheckCircle className="h-3 w-3" />
@@ -248,28 +248,28 @@ export default function InstallerVersionsPage() {
                       </td>
 
                       {/* File Size */}
-                      <td className="p-4 text-slate-400">
+                      <td className="p-4 text-muted-foreground">
                         {formatFileSize(version.file_size)}
                       </td>
 
                       {/* Upload Date */}
-                      <td className="p-4 text-slate-400 text-sm">
+                      <td className="p-4 text-muted-foreground text-sm">
                         {formatDate(version.release_date)}
                       </td>
 
                       {/* Uploaded By */}
-                      <td className="p-4 text-slate-400 text-sm">
+                      <td className="p-4 text-muted-foreground text-sm">
                         {version.uploaded_by}
                       </td>
 
                       {/* Release Notes */}
                       <td className="p-4">
                         {version.release_notes ? (
-                          <p className="text-sm text-slate-400 line-clamp-2">
+                          <p className="text-sm text-muted-foreground line-clamp-2">
                             {version.release_notes}
                           </p>
                         ) : (
-                          <span className="text-xs text-slate-600">No notes</span>
+                          <span className="text-xs text-muted-foreground/60">No notes</span>
                         )}
                       </td>
 
@@ -284,7 +284,7 @@ export default function InstallerVersionsPage() {
                                 variant="outline"
                                 onClick={() => handleSetAsLatest(version.version)}
                                 disabled={isSetting || isDeleting}
-                                className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer text-xs"
+                                className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer text-xs"
                               >
                                 {isSetting ? (
                                   <>
@@ -304,7 +304,7 @@ export default function InstallerVersionsPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => window.open(version.download_url, '_blank')}
-                              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                               title={`Download Owlette Agent v${version.version}`}
                             >
                               <Download className="h-3 w-3" />
@@ -313,7 +313,7 @@ export default function InstallerVersionsPage() {
                               size="sm"
                               variant="outline"
                               onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="border-slate-700 bg-slate-900 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+                              className="border-border bg-background text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                               title={`Copy download link for Owlette Agent v${version.version}`}
                             >
                               <Copy className="h-3 w-3" />
@@ -324,7 +324,7 @@ export default function InstallerVersionsPage() {
                                 variant="outline"
                                 onClick={() => handleDelete(version.version)}
                                 disabled={isDeleting || isSetting}
-                                className="border-slate-700 bg-slate-900 text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
+                                className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer"
                               >
                                 {isDeleting ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -367,10 +367,10 @@ export default function InstallerVersionsPage() {
 
       {/* Set as Latest Confirmation Dialog */}
       <Dialog open={setLatestDialogOpen} onOpenChange={setSetLatestDialogOpen}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+        <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">Set as Latest Version</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogTitle className="text-foreground">Set as Latest Version</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
               Set version {versionToSetLatest} as the latest version?
             </DialogDescription>
           </DialogHeader>
@@ -378,13 +378,13 @@ export default function InstallerVersionsPage() {
             <Button
               variant="outline"
               onClick={() => setSetLatestDialogOpen(false)}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={confirmSetAsLatest}
-              className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+              className="bg-accent-cyan hover:bg-accent-cyan-hover text-foreground cursor-pointer"
             >
               OK
             </Button>
@@ -394,10 +394,10 @@ export default function InstallerVersionsPage() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="border-slate-700 bg-slate-800 text-white">
+        <DialogContent className="border-border bg-card text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">Delete Version</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogTitle className="text-foreground">Delete Version</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
               Are you sure you want to delete version {versionToDelete}? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
@@ -405,13 +405,13 @@ export default function InstallerVersionsPage() {
             <Button
               variant="outline"
               onClick={() => setDeleteDialogOpen(false)}
-              className="border-slate-700 bg-slate-800 text-white hover:bg-slate-700 hover:text-white cursor-pointer"
+              className="border-border bg-card text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
             >
               Cancel
             </Button>
             <Button
               onClick={confirmDelete}
-              className="bg-red-600 hover:bg-red-700 text-white cursor-pointer"
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
             >
               Delete
             </Button>

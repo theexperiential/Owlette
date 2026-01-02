@@ -64,6 +64,12 @@ service cloud.firestore {
              request.auth.token.machine_id is string;
     }
 
+    // Check if user owns a site (direct ownership)
+    function isSiteOwner(siteId) {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/sites/$(siteId)).data.owner == request.auth.uid;
+    }
+
     // Check if agent has access to a specific site
     // Agents can ONLY access their assigned site (from token claim)
     function agentCanAccessSite(siteId) {
@@ -84,9 +90,10 @@ service cloud.firestore {
     // Returns false if user document doesn't exist (graceful handling for new users)
     function canAccessSite(siteId) {
       return isAuthenticated() && (
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)
+        isSiteOwner(siteId) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites))
       );
     }
 
@@ -103,7 +110,7 @@ service cloud.firestore {
       // Site document access
       // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
       // UPDATE/DELETE: Only users with access to the site
-      allow read: if isAuthenticated();
+      allow read: if canAccessSite(siteId);
       allow create: if isAuthenticated(); // Any authenticated user can create a site
       allow update, delete: if canAccessSite(siteId);
 
@@ -160,6 +167,30 @@ service cloud.firestore {
           allow delete: if canAccessSite(siteId) ||
                            isServiceAccount() ||
                            agentCanAccessMachine(siteId, machineId); // Allow cleanup
+        }
+
+        // ----------------------------------------
+        // Historical Metrics Subcollection
+        // ----------------------------------------
+        // Stores time-series metrics for dashboard graphs
+        // Daily buckets: metrics_history/{YYYY-MM-DD}
+        // Fields: samples[] array with {t, c, m, d, g, ct, gt}
+        // Retention: 1min (today) -> 10min (week) -> 20min (month) -> 1hr (forever)
+
+        match /metrics_history/{bucketId} {
+          // Web dashboard reads historical metrics for charts
+          allow read: if canAccessSite(siteId) ||
+                         isServiceAccount() ||
+                         agentCanAccessMachine(siteId, machineId);
+
+          // Agents write metrics samples (append to daily bucket)
+          allow write: if isServiceAccount() ||
+                          agentCanAccessMachine(siteId, machineId);
+
+          // Cloud Functions need to aggregate and update buckets
+          // Service account has full access for aggregation jobs
+          allow update: if isServiceAccount() ||
+                           agentCanAccessMachine(siteId, machineId);
         }
       }
 
@@ -273,7 +304,8 @@ service cloud.firestore {
       // But cannot change their role or other sensitive fields
       allow update: if request.auth.uid == userId &&
                        request.resource.data.role == resource.data.role &&
-                       request.resource.data.email == resource.data.email;
+                       request.resource.data.email == resource.data.email &&
+                       request.resource.data.sites == resource.data.sites;
 
       // Only admins can delete users or update other users
       allow write: if isAdmin();
