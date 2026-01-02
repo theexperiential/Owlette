@@ -71,7 +71,7 @@ const formatAction = (action: string) => {
 export default function LogsPage() {
   const router = useRouter();
   const { user, loading, isAdmin, userSites } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
