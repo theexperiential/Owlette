@@ -7,7 +7,7 @@
  * Replaces the top stats cards when a sparkline is clicked.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   LineChart,
   Line,
@@ -43,6 +43,18 @@ export function MetricsDetailPanel({
 }: MetricsDetailPanelProps) {
   const [selectedMetrics, setSelectedMetrics] = useState<MetricType[]>([initialMetric]);
   const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+
+  // Sync selectedMetrics when initialMetric changes (user clicked different cell)
+  // For CPU/GPU, also select the corresponding temperature metric
+  useEffect(() => {
+    if (initialMetric === 'cpu') {
+      setSelectedMetrics(['cpu', 'cpuTemp']);
+    } else if (initialMetric === 'gpu') {
+      setSelectedMetrics(['gpu', 'gpuTemp']);
+    } else {
+      setSelectedMetrics([initialMetric]);
+    }
+  }, [initialMetric]);
 
   const { data, loading, error } = useHistoricalMetrics(siteId, machineId, timeRange);
 
