@@ -15,40 +15,37 @@ export function InteractiveBackground() {
   const currentPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
 
   useEffect(() => {
+    // Track mouse globally for smooth following anywhere
     const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-
+      // Normalize to viewport coordinates (0-1 range)
+      const x = e.clientX / window.innerWidth;
+      const y = e.clientY / window.innerHeight;
       targetPos.current = { x, y };
     };
 
-    // Smooth animation loop with simple lerp
+    // Exponential decay smoothing - very graceful falloff
     const animate = () => {
-      const lerp = 0.08;
+      const dx = targetPos.current.x - currentPos.current.x;
+      const dy = targetPos.current.y - currentPos.current.y;
+
+      // Exponential easing: slower as it approaches target
+      // Using a very low factor for graceful, slow movement
+      const factor = 0.025;
 
       currentPos.current = {
-        x: currentPos.current.x + (targetPos.current.x - currentPos.current.x) * lerp,
-        y: currentPos.current.y + (targetPos.current.y - currentPos.current.y) * lerp,
+        x: currentPos.current.x + dx * factor,
+        y: currentPos.current.y + dy * factor,
       };
 
       setMousePos({ ...currentPos.current });
       animationRef.current = requestAnimationFrame(animate);
     };
 
-    const container = containerRef.current;
-    if (container) {
-      container.addEventListener('mousemove', handleMouseMove);
-    }
-
+    window.addEventListener('mousemove', handleMouseMove);
     animationRef.current = requestAnimationFrame(animate);
 
     return () => {
-      if (container) {
-        container.removeEventListener('mousemove', handleMouseMove);
-      }
+      window.removeEventListener('mousemove', handleMouseMove);
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
