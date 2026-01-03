@@ -1,15 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pencil, Trash2, Check, X, Plus, Copy } from 'lucide-react';
 import { toast } from 'sonner';
+import { COMMON_TIMEZONES } from '@/lib/timeUtils';
 
 interface Site {
   id: string;
   name: string;
+  timezone?: string;
+  timeFormat?: '12h' | '24h';
 }
 
 interface ManageSitesDialogProps {
@@ -18,7 +23,7 @@ interface ManageSitesDialogProps {
   sites: Site[];
   currentSiteId: string;
   machineCount?: number;
-  onRenameSite: (siteId: string, newName: string) => Promise<void>;
+  onUpdateSite: (siteId: string, updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' }) => Promise<void>;
   onDeleteSite: (siteId: string) => Promise<void>;
   onCreateSite: () => void;
 }
@@ -29,38 +34,75 @@ export function ManageSitesDialog({
   sites,
   currentSiteId,
   machineCount = 0,
-  onRenameSite,
+  onUpdateSite,
   onDeleteSite,
   onCreateSite,
 }: ManageSitesDialogProps) {
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+  const [editingTimezone, setEditingTimezone] = useState('UTC');
+  const [editingTimeFormat, setEditingTimeFormat] = useState<'12h' | '24h'>('12h');
   const [deletingDialogOpen, setDeletingDialogOpen] = useState(false);
   const [siteToDelete, setSiteToDelete] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const startEditingSite = (siteId: string, siteName: string) => {
-    setEditingSiteId(siteId);
-    setEditingName(siteName);
+  // Reset editing state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setEditingSiteId(null);
+      setEditingName('');
+      setEditingTimezone('UTC');
+      setEditingTimeFormat('12h');
+    }
+  }, [open]);
+
+  const startEditingSite = (site: Site) => {
+    setEditingSiteId(site.id);
+    setEditingName(site.name);
+    setEditingTimezone(site.timezone || 'UTC');
+    setEditingTimeFormat(site.timeFormat || '12h');
   };
 
   const cancelEditingSite = () => {
     setEditingSiteId(null);
     setEditingName('');
+    setEditingTimezone('UTC');
+    setEditingTimeFormat('12h');
   };
 
-  const handleRenameSite = async (siteId: string) => {
+  const handleSaveSite = async (siteId: string) => {
     if (!editingName.trim()) {
       toast.error('Site name cannot be empty');
       return;
     }
 
+    const site = sites.find(s => s.id === siteId);
+    if (!site) return;
+
+    // Check if anything changed
+    const nameChanged = editingName.trim() !== site.name;
+    const timezoneChanged = editingTimezone !== (site.timezone || 'UTC');
+    const timeFormatChanged = editingTimeFormat !== (site.timeFormat || '12h');
+
+    if (!nameChanged && !timezoneChanged && !timeFormatChanged) {
+      cancelEditingSite();
+      return;
+    }
+
+    setIsSaving(true);
     try {
-      await onRenameSite(siteId, editingName);
-      toast.success('Site renamed successfully!');
-      setEditingSiteId(null);
-      setEditingName('');
+      const updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' } = {};
+      if (nameChanged) updates.name = editingName.trim();
+      if (timezoneChanged) updates.timezone = editingTimezone;
+      if (timeFormatChanged) updates.timeFormat = editingTimeFormat;
+
+      await onUpdateSite(siteId, updates);
+      toast.success('Site updated successfully!');
+      cancelEditingSite();
     } catch (error: any) {
-      toast.error(error.message || 'Failed to rename site');
+      toast.error(error.message || 'Failed to update site');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -96,95 +138,154 @@ export function ManageSitesDialog({
           <DialogHeader>
             <DialogTitle className="text-white">Manage Sites</DialogTitle>
             <DialogDescription className="text-slate-400">
-              Rename or delete your sites
+              Edit site names, timezones, or delete sites
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-4 max-h-96 overflow-y-auto">
+          <div className="space-y-2 py-4 pr-2 max-h-96 overflow-y-auto">
             {sites.map((site) => (
               <div
                 key={site.id}
-                className={`flex items-center justify-between p-3 rounded-lg border ${
+                className={`rounded-lg border transition-colors ${
                   site.id === currentSiteId
-                    ? 'border-blue-600 bg-slate-750'
-                    : 'border-slate-700 bg-slate-900'
+                    ? 'border-blue-600 bg-slate-900'
+                    : 'border-slate-700 bg-slate-800/50'
                 }`}
               >
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {site.id === currentSiteId && (
-                    <div className="h-2 w-2 rounded-full bg-blue-500 flex-shrink-0" />
-                  )}
-                  {editingSiteId === site.id ? (
-                    <Input
-                      value={editingName}
-                      onChange={(e) => setEditingName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleRenameSite(site.id);
-                        if (e.key === 'Escape') cancelEditingSite();
-                      }}
-                      className="border-slate-700 bg-slate-800 text-white flex-1"
-                      autoFocus
-                    />
-                  ) : (
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-medium truncate">{site.name}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <p className="text-xs font-mono text-blue-400">
-                          {site.id}
-                        </p>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            try {
-                              await navigator.clipboard.writeText(site.id);
-                              toast.success(`Site ID "${site.id}" copied!`);
-                            } catch (error) {
-                              toast.error('Failed to copy Site ID');
-                            }
-                          }}
-                          className="h-5 w-5 p-0 text-slate-400 hover:text-blue-400 hover:bg-slate-700"
-                          title="Copy Site ID"
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {site.id === currentSiteId
-                          ? `${machineCount} machine${machineCount !== 1 ? 's' : ''}`
-                          : 'Not loaded'}
-                      </p>
+                {editingSiteId === site.id ? (
+                  /* Edit Mode */
+                  <div className="p-4 space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor={`name-${site.id}`} className="text-slate-300 text-sm">
+                        Site Name
+                      </Label>
+                      <Input
+                        id={`name-${site.id}`}
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveSite(site.id);
+                          if (e.key === 'Escape') cancelEditingSite();
+                        }}
+                        className="border-slate-600 bg-slate-700 text-white"
+                        autoFocus
+                      />
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                  {editingSiteId === site.id ? (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRenameSite(site.id)}
-                        className="text-green-500 hover:text-green-400 hover:bg-slate-700 cursor-pointer"
-                      >
-                        <Check className="h-4 w-4" />
-                      </Button>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor={`timezone-${site.id}`} className="text-slate-300 text-sm">
+                          Timezone
+                        </Label>
+                        <Select value={editingTimezone} onValueChange={setEditingTimezone}>
+                          <SelectTrigger
+                            id={`timezone-${site.id}`}
+                            className="border-slate-600 bg-slate-700 text-white"
+                          >
+                            <SelectValue placeholder="Select timezone" />
+                          </SelectTrigger>
+                          <SelectContent className="border-slate-600 bg-slate-800 max-h-60">
+                            {COMMON_TIMEZONES.map((tz) => (
+                              <SelectItem
+                                key={tz.value}
+                                value={tz.value}
+                                className="text-white hover:bg-slate-700 cursor-pointer"
+                              >
+                                {tz.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`timeformat-${site.id}`} className="text-slate-300 text-sm">
+                          Time Format
+                        </Label>
+                        <Select value={editingTimeFormat} onValueChange={(v) => setEditingTimeFormat(v as '12h' | '24h')}>
+                          <SelectTrigger
+                            id={`timeformat-${site.id}`}
+                            className="border-slate-600 bg-slate-700 text-white"
+                          >
+                            <SelectValue placeholder="Select format" />
+                          </SelectTrigger>
+                          <SelectContent className="border-slate-600 bg-slate-800">
+                            <SelectItem value="12h" className="text-white hover:bg-slate-700 cursor-pointer">
+                              12-hour (3:30 PM)
+                            </SelectItem>
+                            <SelectItem value="24h" className="text-white hover:bg-slate-700 cursor-pointer">
+                              24-hour (15:30)
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-2">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={cancelEditingSite}
+                        disabled={isSaving}
                         className="text-slate-400 hover:text-slate-300 hover:bg-slate-700 cursor-pointer"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-4 w-4 mr-1" />
+                        Cancel
                       </Button>
-                    </>
-                  ) : (
-                    <>
+                      <Button
+                        size="sm"
+                        onClick={() => handleSaveSite(site.id)}
+                        disabled={isSaving}
+                        className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
+                      >
+                        <Check className="h-4 w-4 mr-1" />
+                        {isSaving ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* View Mode */
+                  <div className="flex items-center justify-between p-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-medium truncate">{site.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <p className="text-xs font-mono text-slate-500">
+                            {site.id}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await navigator.clipboard.writeText(site.id);
+                                toast.success(`Site ID copied!`);
+                              } catch {
+                                toast.error('Failed to copy Site ID');
+                              }
+                            }}
+                            className="h-5 w-5 p-0 text-slate-500 hover:text-blue-400 hover:bg-transparent cursor-pointer"
+                            title="Copy Site ID"
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        {site.id === currentSiteId && (
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {machineCount} machine{machineCount !== 1 ? 's' : ''} · {site.timezone || 'UTC'}
+                          </p>
+                        )}
+                        {site.id !== currentSiteId && site.timezone && site.timezone !== 'UTC' && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {site.timezone}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 ml-4 flex-shrink-0">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => startEditingSite(site.id, site.name)}
-                        className="text-blue-400 hover:text-blue-300 hover:bg-slate-700 cursor-pointer"
-                        title="Rename site"
+                        onClick={() => startEditingSite(site)}
+                        className="text-slate-400 hover:text-blue-400 hover:bg-slate-700 cursor-pointer"
+                        title="Edit site"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -192,15 +293,15 @@ export function ManageSitesDialog({
                         variant="ghost"
                         size="sm"
                         onClick={() => confirmDeleteSite(site.id)}
-                        className="text-red-400 hover:text-red-300 hover:bg-slate-700 cursor-pointer"
+                        className="text-slate-400 hover:text-red-400 hover:bg-slate-700 cursor-pointer"
                         disabled={sites.length === 1}
                         title={sites.length === 1 ? "Cannot delete the last site" : "Delete site"}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </>
-                  )}
-                </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

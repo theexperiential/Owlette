@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 
 export default function ProjectsPage() {
   const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
   const [selectedDistributionId, setSelectedDistributionId] = useState<string | null>(null);
@@ -131,7 +131,7 @@ export default function ProjectsPage() {
         onOpenChange={setManageDialogOpen}
         sites={sites}
         currentSiteId={currentSiteId}
-        onRenameSite={renameSite}
+        onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
           if (siteId === currentSiteId) {

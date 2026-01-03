@@ -45,6 +45,8 @@ export interface Site {
   id: string;
   name: string;
   createdAt: number;
+  timezone?: string;  // IANA timezone, e.g., "America/New_York"
+  timeFormat?: '12h' | '24h';  // Time display format (default: '12h')
 }
 
 export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
@@ -80,6 +82,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 id: doc.id,
                 name: data.name || doc.id,
                 createdAt: data.createdAt || Date.now(),
+                timezone: data.timezone,
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
@@ -125,6 +128,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
               id: docSnap.id,
               name: data.name || docSnap.id,
               createdAt: data.createdAt || Date.now(),
+              timezone: data.timezone,
             });
           });
 
@@ -157,6 +161,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 id: siteId,
                 name: data.name || siteId,
                 createdAt: data.createdAt || Date.now(),
+                timezone: data.timezone,
               });
             } else if (!ownedSiteIds.has(siteId)) {
               siteDataMap.delete(siteId);
@@ -183,7 +188,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     }
   }, [userId, userSites, isAdmin]);
 
-  const createSite = async (siteId: string, name: string, userId: string): Promise<string> => {
+  const createSite = async (siteId: string, name: string, userId: string, timezone?: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
 
     // Validate site ID format
@@ -200,11 +205,12 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
     }
 
-    // Create site document with owner field
+    // Create site document with owner field and timezone
     await setDoc(siteRef, {
       name,
       createdAt: Date.now(),
       owner: userId,
+      timezone: timezone || 'UTC',
     });
 
 
@@ -212,14 +218,21 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     return siteId;
   };
 
-  const renameSite = async (siteId: string, newName: string) => {
+  const updateSite = async (siteId: string, updates: { name?: string; timezone?: string; timeFormat?: '12h' | '24h' }) => {
     if (!db) throw new Error('Firebase not configured');
-    if (!newName.trim()) throw new Error('Site name cannot be empty');
+    if (updates.name !== undefined && !updates.name.trim()) {
+      throw new Error('Site name cannot be empty');
+    }
+
+    const updateData: Record<string, string> = {};
+    if (updates.name) updateData.name = updates.name.trim();
+    if (updates.timezone) updateData.timezone = updates.timezone;
+    if (updates.timeFormat) updateData.timeFormat = updates.timeFormat;
+
+    if (Object.keys(updateData).length === 0) return;
 
     const siteRef = doc(db, 'sites', siteId);
-    await updateDoc(siteRef, {
-      name: newName.trim(),
-    });
+    await updateDoc(siteRef, updateData);
   };
 
   const deleteSite = async (siteId: string) => {
@@ -259,7 +272,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     return !siteSnap.exists();
   };
 
-  return { sites, loading, error, createSite, renameSite, deleteSite, checkSiteIdAvailability };
+  return { sites, loading, error, createSite, updateSite, deleteSite, checkSiteIdAvailability };
 }
 
 export function useMachines(siteId: string) {
