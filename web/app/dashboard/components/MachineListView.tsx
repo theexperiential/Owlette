@@ -25,11 +25,12 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
+import { formatHeartbeatTime } from '@/lib/timeUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -59,6 +60,8 @@ interface MachineListViewProps {
   machines: Machine[];
   expandedMachines: Set<string>;
   currentSiteId: string;
+  siteTimezone?: string;
+  siteTimeFormat?: '12h' | '24h';
   onToggleExpanded: (machineId: string) => void;
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
@@ -75,6 +78,8 @@ interface MachineRowProps {
   machine: Machine;
   isExpanded: boolean;
   currentSiteId: string;
+  siteTimezone: string;
+  siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
@@ -89,6 +94,8 @@ export function MachineRow({
   machine,
   isExpanded,
   currentSiteId,
+  siteTimezone,
+  siteTimeFormat,
   userPreferences,
   onToggleExpanded,
   onEditProcess,
@@ -99,6 +106,9 @@ export function MachineRow({
   onMetricClick,
 }: MachineRowProps) {
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
+
+  // Format heartbeat time with timezone and time format support
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
 
   const handleRowClick = () => {
     const selection = window.getSelection();
@@ -238,8 +248,14 @@ export function MachineRow({
             </div>
           </div>
         </TableCell>
-        <TableCell className="text-slate-400 text-xs w-[150px] overflow-hidden">
-          <span className="truncate block">{new Date(machine.lastHeartbeat * 1000).toLocaleString()}</span>
+        <TableCell className="w-[150px] overflow-hidden p-2">
+          <span
+            className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-slate-400'}`}
+            title={heartbeat.tooltip}
+          >
+            <Clock className="h-3 w-3" />
+            {heartbeat.display}
+          </span>
         </TableCell>
         <TableCell className="w-8 p-2" onClick={(e) => e.stopPropagation()}>
           <MachineContextMenu
@@ -368,6 +384,8 @@ export function MachineListView({
   machines,
   expandedMachines,
   currentSiteId,
+  siteTimezone = 'UTC',
+  siteTimeFormat = '12h',
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
@@ -389,6 +407,8 @@ export function MachineListView({
               machine={machine}
               isExpanded={expandedMachines.has(machine.machineId)}
               currentSiteId={currentSiteId}
+              siteTimezone={siteTimezone}
+              siteTimeFormat={siteTimeFormat}
               userPreferences={userPreferences}
               onToggleExpanded={() => onToggleExpanded(machine.machineId)}
               onEditProcess={(process) => onEditProcess(machine.machineId, process)}

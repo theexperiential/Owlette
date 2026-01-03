@@ -45,7 +45,7 @@ interface DetailPanelState {
 export default function DashboardPage() {
   const router = useRouter();
   const { user, loading, signOut, isAdmin, userSites, requiresMfaSetup, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -502,7 +502,7 @@ export default function DashboardPage() {
         sites={sites}
         currentSiteId={currentSiteId}
         machineCount={machines.length}
-        onRenameSite={renameSite}
+        onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
           // If we deleted the current site, switch to another one
@@ -632,6 +632,8 @@ export default function DashboardPage() {
                 machines={machines}
                 expandedMachines={expandedMachines}
                 currentSiteId={currentSiteId}
+                siteTimezone={currentSite?.timezone}
+                siteTimeFormat={currentSite?.timeFormat}
                 onToggleExpanded={toggleMachineExpanded}
                 onEditProcess={openEditProcessDialog}
                 onCreateProcess={openCreateProcessDialog}
@@ -653,6 +655,8 @@ export default function DashboardPage() {
                         machine={machine}
                         isExpanded={expandedMachines.has(machine.machineId)}
                         currentSiteId={currentSiteId}
+                        siteTimezone={currentSite?.timezone || 'UTC'}
+                        siteTimeFormat={currentSite?.timeFormat || '12h'}
                         userPreferences={userPreferences}
                         onToggleExpanded={() => handleRowClick(machine.machineId, true)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}

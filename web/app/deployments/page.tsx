@@ -25,7 +25,7 @@ import { toast } from 'sonner';
 
 export default function DeploymentsPage() {
   const { user, loading: authLoading, signOut, userSites, isAdmin } = useAuth();
-  const { sites, loading: sitesLoading, createSite, renameSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
@@ -219,7 +219,7 @@ export default function DeploymentsPage() {
         onOpenChange={setManageDialogOpen}
         sites={sites}
         currentSiteId={currentSiteId}
-        onRenameSite={renameSite}
+        onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
           if (siteId === currentSiteId) {

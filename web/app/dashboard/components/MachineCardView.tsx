@@ -15,7 +15,7 @@
  * Used by: Dashboard page for card view display
  */
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -23,10 +23,11 @@ import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
+import { formatHeartbeatTime } from '@/lib/timeUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -35,6 +36,8 @@ interface MachineCardViewProps {
   machines: Machine[];
   expandedMachines: Set<string>;
   currentSiteId: string;
+  siteTimezone?: string;
+  siteTimeFormat?: '12h' | '24h';
   onToggleExpanded: (machineId: string) => void;
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
@@ -52,6 +55,8 @@ interface MachineCardProps {
   machine: Machine;
   isExpanded: boolean;
   currentSiteId: string;
+  siteTimezone: string;
+  siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
@@ -66,6 +71,8 @@ function MachineCard({
   machine,
   isExpanded,
   currentSiteId,
+  siteTimezone,
+  siteTimeFormat,
   userPreferences,
   onToggleExpanded,
   onEditProcess,
@@ -78,15 +85,25 @@ function MachineCard({
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
+  // Format heartbeat time with timezone and time format support
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+
   return (
     <Card className="border-slate-800 bg-slate-900">
-      <CardHeader className="pb-3 md:pb-6">
+      <CardHeader className="pb-3 md:pb-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base md:text-lg text-white select-text">{machine.machineId}</CardTitle>
+          <CardTitle className="text-lg font-semibold text-white select-text">{machine.machineId}</CardTitle>
           <div className="flex items-center gap-2">
             <Badge className={`select-none text-xs ${machine.online ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
               {machine.online ? 'Online' : 'Offline'}
             </Badge>
+            <span
+              className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-slate-400'}`}
+              title={heartbeat.tooltip}
+            >
+              <Clock className="h-3 w-3" />
+              {heartbeat.display}
+            </span>
             <MachineContextMenu
               machineId={machine.machineId}
               machineName={machine.machineId}
@@ -96,9 +113,6 @@ function MachineCard({
             />
           </div>
         </div>
-        <CardDescription className="text-xs md:text-sm text-slate-400 select-none hidden md:block">
-          Last heartbeat: {new Date(machine.lastHeartbeat * 1000).toLocaleString()}
-        </CardDescription>
       </CardHeader>
       {machine.metrics && (
         <CardContent className="space-y-1.5 select-none pt-0 pb-4">
@@ -117,7 +131,7 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-semibold text-white">CPU</span>
+                  <span className="text-sm font-medium text-slate-400">CPU</span>
                   <span className="text-xs text-slate-400 truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
                     {machine.metrics.cpu.name || 'Unknown'}
                   </span>
@@ -148,7 +162,7 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-white">Memory</span>
+                <span className="text-sm font-medium text-slate-400">Memory</span>
                 {machine.metrics.memory?.used_gb !== undefined && machine.metrics.memory?.total_gb !== undefined && (
                   <span className="text-xs text-slate-400 hidden sm:block">
                     {machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB
@@ -173,7 +187,7 @@ function MachineCard({
             {/* Content */}
             <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-white">Disk</span>
+                <span className="text-sm font-medium text-slate-400">Disk</span>
                 {machine.metrics.disk?.used_gb !== undefined && machine.metrics.disk?.total_gb !== undefined && (
                   <span className="text-xs text-slate-400 hidden sm:block">
                     {machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB
@@ -201,7 +215,7 @@ function MachineCard({
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-sm font-semibold text-white">GPU</span>
+                  <span className="text-sm font-medium text-slate-400">GPU</span>
                   <span className="text-xs text-slate-400 truncate hidden sm:block" title={machine.metrics.gpu.name}>
                     {machine.metrics.gpu.name}
                   </span>
@@ -343,6 +357,8 @@ export function MachineCardView({
   machines,
   expandedMachines,
   currentSiteId,
+  siteTimezone = 'UTC',
+  siteTimeFormat = '12h',
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
@@ -361,6 +377,8 @@ export function MachineCardView({
           machine={machine}
           isExpanded={expandedMachines.has(machine.machineId)}
           currentSiteId={currentSiteId}
+          siteTimezone={siteTimezone}
+          siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
           onToggleExpanded={() => onToggleExpanded(machine.machineId)}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}

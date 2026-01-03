@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { validateSiteId, generateSiteIdFromName } from '@/lib/validators';
+import { getBrowserTimezone } from '@/lib/timeUtils';
 import { CheckCircle2, XCircle, Loader2, Sparkles } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -15,7 +16,7 @@ import { doc, getDoc } from 'firebase/firestore';
 interface CreateSiteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreateSite: (siteId: string, siteName: string, userId: string) => Promise<string>;
+  onCreateSite: (siteId: string, siteName: string, userId: string, timezone?: string) => Promise<string>;
   onSiteCreated?: (siteId: string) => void;
 }
 
@@ -134,7 +135,9 @@ export function CreateSiteDialog({
 
     setIsCreating(true);
     try {
-      const createdSiteId = await onCreateSite(newSiteId, newSiteName, user.uid);
+      // Auto-detect browser timezone for new sites
+      const browserTimezone = getBrowserTimezone();
+      const createdSiteId = await onCreateSite(newSiteId, newSiteName, user.uid, browserTimezone);
       toast.success(`Site "${newSiteName}" created successfully!`);
       setNewSiteId('');
       setNewSiteName('');
