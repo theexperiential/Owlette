@@ -10,11 +10,24 @@ interface MousePosition {
 export function InteractiveBackground() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mousePos, setMousePos] = useState<MousePosition>({ x: 0.5, y: 0.5 });
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const animationRef = useRef<number | null>(null);
   const targetPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
   const currentPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
 
+  // Detect touch device and reduced motion preference
   useEffect(() => {
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setIsTouchDevice(isTouch);
+    setPrefersReducedMotion(reducedMotion);
+  }, []);
+
+  useEffect(() => {
+    // Skip animation for touch devices or reduced motion
+    if (isTouchDevice || prefersReducedMotion) return;
+
     // Track mouse globally for smooth following anywhere
     const handleMouseMove = (e: MouseEvent) => {
       // Normalize to viewport coordinates (0-1 range)
@@ -50,9 +63,34 @@ export function InteractiveBackground() {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, []);
+  }, [isTouchDevice, prefersReducedMotion]);
 
-  // Subtle parallax offset
+  // Static background for touch devices or reduced motion
+  if (isTouchDevice || prefersReducedMotion) {
+    return (
+      <div className="absolute inset-0 overflow-hidden">
+        {/* Static centered glow - no animation, responsive size */}
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(600px,90vw)] h-[min(600px,90vw)] rounded-full blur-3xl"
+          style={{
+            background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.15) 0%, transparent 60%)',
+          }}
+        />
+
+        {/* Static dot grid */}
+        <div className="absolute inset-0 dot-grid opacity-30" />
+
+        {/* Blueprint grid - subtle */}
+        <div className="absolute inset-0 blueprint-grid opacity-15" />
+        <div className="absolute inset-0 blueprint-grid-accent opacity-8" />
+
+        {/* Radial fade overlay */}
+        <div className="absolute inset-0 blueprint-fade" />
+      </div>
+    );
+  }
+
+  // Subtle parallax offset for desktop
   const offsetX = (mousePos.x - 0.5) * 40;
   const offsetY = (mousePos.y - 0.5) * 40;
 
@@ -61,13 +99,13 @@ export function InteractiveBackground() {
       ref={containerRef}
       className="absolute inset-0 overflow-hidden"
     >
-      {/* Primary glow - follows mouse */}
+      {/* Primary glow - follows mouse, responsive size */}
       <div
-        className="absolute w-[900px] h-[900px] rounded-full blur-3xl"
+        className="absolute w-[min(900px,150vw)] h-[min(900px,150vw)] rounded-full blur-3xl"
         style={{
           background: 'radial-gradient(circle, oklch(0.75 0.18 195 / 0.12) 0%, transparent 60%)',
-          left: `calc(${mousePos.x * 100}% - 450px)`,
-          top: `calc(${mousePos.y * 100}% - 450px)`,
+          left: `calc(${mousePos.x * 100}% - min(450px, 75vw))`,
+          top: `calc(${mousePos.y * 100}% - min(450px, 75vw))`,
         }}
       />
 
@@ -79,12 +117,12 @@ export function InteractiveBackground() {
         }}
       />
 
-      {/* Dot grid spotlight - brighter dots near mouse */}
+      {/* Dot grid spotlight - brighter dots near mouse, responsive size */}
       <div
-        className="absolute w-[800px] h-[800px] pointer-events-none"
+        className="absolute w-[min(800px,130vw)] h-[min(800px,130vw)] pointer-events-none"
         style={{
-          left: `calc(${mousePos.x * 100}% - 400px)`,
-          top: `calc(${mousePos.y * 100}% - 400px)`,
+          left: `calc(${mousePos.x * 100}% - min(400px, 65vw))`,
+          top: `calc(${mousePos.y * 100}% - min(400px, 65vw))`,
           maskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
           WebkitMaskImage: 'radial-gradient(circle, black 0%, transparent 60%)',
         }}
