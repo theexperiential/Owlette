@@ -81,7 +81,9 @@ function derivePerSiteRole(
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
-  apiKeyPermission: 'read',
+  // read AND admin: the inner gate asked for admin, the outer for read, and
+  // permissions are not hierarchical, so both were genuinely required.
+  apiKeyPermission: ['read', 'admin'],
 })(async (request: NextRequest, _ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
@@ -165,6 +167,10 @@ export const GET = authorizedSiteHandler<RouteParams>({
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // write AND admin: the inner gate asked for admin while the wrapper defaulted
+  // to write, and permissions are not hierarchical, so both were required. The
+  // inner gate is gone; the requirement it carried is stated here.
+  apiKeyPermission: ['write', 'admin'],
   targetKind: 'user',
 })(async (request: NextRequest, _ctx, routeContext) => {
   try {

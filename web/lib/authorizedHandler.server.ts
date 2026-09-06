@@ -101,10 +101,15 @@ export interface SiteHandlerOptions {
    */
   targetIdParam?: string;
   /**
-   * Permission an api-key caller needs (sessions/id-tokens bypass scope).
+   * Permission(s) an api-key caller needs (sessions/id-tokens bypass scope).
    * Default `'write'`; read-class routes must pass `'read'`.
+   *
+   * A LIST means ALL of them are required. Permissions are not hierarchical, so
+   * `['write', 'admin']` is a real requirement and not a redundant one — it is
+   * how the formerly double-gated routes keep the conjunction they always
+   * enforced.
    */
-  apiKeyPermission?: ApiKeyPermission;
+  apiKeyPermission?: ApiKeyPermission | ApiKeyPermission[];
   /**
    * Scope to enforce, default `site={siteId}:<permission>`. Nested public
    * routes can keep their pre-migration contract, e.g. `machine={id}:write`.
@@ -113,7 +118,8 @@ export interface SiteHandlerOptions {
     resource: ApiKeyResource;
     idParam?: string;
     id?: string;
-    permission?: ApiKeyPermission;
+    /** A list means ALL are required — see `apiKeyPermission`. */
+    permission?: ApiKeyPermission | ApiKeyPermission[];
   };
 }
 
@@ -144,6 +150,13 @@ export type PlatformRouteHandler<TParams = Record<string, string | undefined>> =
   ctx: PlatformHandlerContext,
   routeContext?: { params: Promise<TParams> },
 ) => Promise<NextResponse> | NextResponse;
+
+/** One permission or many; callers may write either and mean "all of these". */
+function toPermissionList(
+  p: ApiKeyPermission | ApiKeyPermission[],
+): ApiKeyPermission[] {
+  return Array.isArray(p) ? p : [p];
+}
 
 function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
   return {
@@ -482,14 +495,29 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       const config = await securityConfig.read();
 
       // 6. API-key scope check — ALWAYS runs (never bypassed).
+      //
+      // A LIST of permissions, ALL of which must be held. API-key permissions are
+      // NOT hierarchical — `scopeMatches` (lib/apiKeyTypes.ts) is exact
+      // membership, so `admin` does not imply `write`, nor `write` `read`. The
+      // double-gated routes therefore enforced a CONJUNCTION (the wrapper's
+      // permission AND the inner helper's), and collapsing them to one
+      // permission would have widened access for any custom-scoped key holding
+      // one but not the other. Task 1.4 keeps that conjunction and states it
+      // here, once, instead of leaving it an accident of two gates.
       let scopeCheck: ScopeCheckResult;
+      const requiredPermissions = toPermissionList(
+        options.apiKeyScope?.permission ?? options.apiKeyPermission ?? 'write',
+      );
       try {
-        scopeCheck = requireScope(
-          auth,
-          options.apiKeyScope?.resource ?? 'site',
-          apiKeyScopeId,
-          options.apiKeyScope?.permission ?? options.apiKeyPermission ?? 'write',
-        );
+        scopeCheck = { isLegacy: false };
+        for (const permission of requiredPermissions) {
+          scopeCheck = requireScope(
+            auth,
+            options.apiKeyScope?.resource ?? 'site',
+            apiKeyScopeId,
+            permission,
+          );
+        }
       } catch (err) {
         if (err instanceof ApiAuthError) {
           denyAudit(siteId, {

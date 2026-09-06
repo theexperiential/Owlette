@@ -26,6 +26,10 @@ type RouteParams = { siteId: string; deploymentId: string };
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // write AND admin: the inner gate asked for admin while the wrapper defaulted
+  // to write, and permissions are not hierarchical, so both were required. The
+  // inner gate is gone; the requirement it carried is stated here.
+  apiKeyPermission: ['write', 'admin'],
   targetKind: 'deployment',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {

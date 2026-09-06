@@ -54,6 +54,10 @@ type RouteParams = { siteId: string; uid: string };
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // write AND admin: the inner gate asked for admin while the wrapper defaulted
+  // to write, and permissions are not hierarchical, so both were required. The
+  // inner gate is gone; the requirement it carried is stated here.
+  apiKeyPermission: ['write', 'admin'],
   targetKind: 'user',
   targetIdParam: 'uid',
 })(async (request: NextRequest, ctx: SiteHandlerContext, routeContext) => {
@@ -250,6 +254,10 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
 export const PATCH = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // write AND admin: the inner gate asked for admin while the wrapper defaulted
+  // to write, and permissions are not hierarchical, so both were required. The
+  // inner gate is gone; the requirement it carried is stated here.
+  apiKeyPermission: ['write', 'admin'],
   targetKind: 'user',
   targetIdParam: 'uid',
 })(async (request: NextRequest, ctx: SiteHandlerContext, routeContext) => {

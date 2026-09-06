@@ -261,7 +261,7 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-import { POST as membersPOST } from '@/app/api/sites/[siteId]/members/route';
+import { GET as membersGET, POST as membersPOST } from '@/app/api/sites/[siteId]/members/route';
 import {
   DELETE as memberDELETE,
   PATCH as memberPATCH,
@@ -554,5 +554,38 @@ describe('7. an outsider cannot reach the membership surface at all', () => {
 
     expect(res.status).toBe(404);
     expect((docs.get(`sites/${SITE}/members/${ADMIN}`) as { role: string }).role).toBe('admin');
+  });
+});
+
+describe('8. the scope conjunction survives the gate collapse (task 1.4)', () => {
+  it('a read-only key is refused where the route needs read AND admin', async () => {
+    // GET /members declares apiKeyPermission ['read','admin']. Permissions are
+    // NOT hierarchical -- scopeMatches is exact membership -- so holding one is
+    // never enough. Before 1.4 this conjunction was an accident of two gates;
+    // it is now stated once on the wrapper, and this pins that it still holds.
+    authAsKey(ADMIN, ['read']);
+    const res = await membersGET(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, { method: 'GET' }),
+      params(),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('an admin-only key is refused on the same route', async () => {
+    authAsKey(ADMIN, ['admin']);
+    const res = await membersGET(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, { method: 'GET' }),
+      params(),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('POSITIVE CONTROL: read AND admin together succeed', async () => {
+    authAsKey(ADMIN, ['read', 'admin']);
+    const res = await membersGET(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, { method: 'GET' }),
+      params(),
+    );
+    expect(res.status).toBe(200);
   });
 });
