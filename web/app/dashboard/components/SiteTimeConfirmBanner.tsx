@@ -2,7 +2,7 @@
 
 /**
  * The one-time "whose clock runs your schedules?" prompt for a site that has
- * never answered (dev/active/site-time-schedules, wave 3a task 3.1).
+ * never answered (dev/completed/site-time-schedules, wave 3a task 3.1).
  *
  * `sites/{siteId}.schedulesFollowSiteTime` is three-state and the absence of the
  * field is a real state: it means the site predates the setting and its process

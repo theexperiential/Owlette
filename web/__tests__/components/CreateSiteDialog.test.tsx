@@ -3,7 +3,7 @@
  * @jest-environment jsdom
  *
  * CreateSiteDialog — a new site is born on site time
- * (dev/active/site-time-schedules, wave 3b task 3b.1).
+ * (dev/completed/site-time-schedules, wave 3b task 3b.1).
  *
  * The dialog detects the browser's timezone, shows it, lets it be changed, and
  * writes it together with `schedulesFollowSiteTime: true`. Only NEW sites start

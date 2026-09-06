@@ -1,6 +1,6 @@
 /**
  * The site-time confirmation banner on the dashboard — the one-time "whose clock
- * runs your schedules?" prompt (dev/active/site-time-schedules, wave 3a).
+ * runs your schedules?" prompt (dev/completed/site-time-schedules, wave 3a).
  *
  * `sites/{siteId}.schedulesFollowSiteTime` is three-state, and the ABSENCE of the
  * field is the state this banner exists for. Every shared fixture deliberately

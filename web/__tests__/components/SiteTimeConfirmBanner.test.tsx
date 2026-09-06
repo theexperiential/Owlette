@@ -3,7 +3,7 @@
  * @jest-environment jsdom
  *
  * SiteTimeConfirmBanner — the one-time "whose clock runs your schedules?"
- * prompt (dev/active/site-time-schedules, wave 3a task 3.1).
+ * prompt (dev/completed/site-time-schedules, wave 3a task 3.1).
  *
  * The matrix below is the whole contract: the banner appears for exactly one
  * combination (site admin × flag never asked × at least one scheduled process)

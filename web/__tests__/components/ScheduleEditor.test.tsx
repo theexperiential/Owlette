@@ -3,7 +3,7 @@
  * @jest-environment jsdom
  *
  * ScheduleEditor's timezone copy — the conditional half of `schedules follow
- * site time` (dev/active/site-time-schedules, wave 3a task 3.2).
+ * site time` (dev/completed/site-time-schedules, wave 3a task 3.2).
  *
  * TWO STRINGS IN HERE ARE FROZEN, and the `exact: true` matches below are the
  * guard that keeps them that way:

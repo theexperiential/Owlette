@@ -166,7 +166,7 @@ export function CreateSiteDialog({
 
     setIsCreating(true);
     try {
-      // New sites start on site time (dev/active/site-time-schedules, wave 3b):
+      // New sites start on site time (dev/completed/site-time-schedules, wave 3b):
       // the flag rides along with the timezone it depends on, in one write.
       //
       // The two ALWAYS travel together. `schedulesFollowSiteTime: true` on a site

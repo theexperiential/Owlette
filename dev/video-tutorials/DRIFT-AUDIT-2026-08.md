@@ -278,7 +278,7 @@ Gaps, in order:
    sync_state.list_pending_distributions() has no production caller — interrupted
    syncs resume only on server re-dispatch, not at agent startup.
 8. **SHIPPED (2026-09-05) — site time is wired, opt-in, and the copy now tracks it.**
-   The recommendation below was approved and built as `dev/active/site-time-schedules`:
+   The recommendation below was approved and built as `dev/completed/site-time-schedules`:
    `sites/{siteId}.schedulesFollowSiteTime` (three states — absent = never asked,
    `false` = declined, `true` = site time), `/api/agent/site` returns the timezone only
    for `true`, the agent caches it and refreshes every 900s (in the 3.2.3 installer,
