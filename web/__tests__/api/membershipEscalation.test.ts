@@ -1,0 +1,599 @@
+/** @jest-environment node */
+
+/**
+ * ESCALATION SUITE — Wave 2 task 2.5 of dev/active/per-site-roles.
+ *
+ * Every path the adversarial pass named, driven through the real routes with the
+ * real authorization wrappers. Each refusal is paired with a POSITIVE CONTROL —
+ * the same call under legitimate conditions — because a guard that refuses
+ * everything passes an it-refuses test exactly as well as a correct one.
+ *
+ * The Firestore double models the ONE property these guards actually depend on:
+ * a transaction aborts when a document it READ was written by another
+ * transaction that committed first. Without that, the concurrent-transfer test
+ * proves nothing at all — two racing transfers over a fake that never conflicts
+ * will always both "succeed".
+ *
+ * Paths covered:
+ *   1. site admin promotes THEMSELVES to owner        (PATCH role=owner)
+ *   2. site admin demotes the owner                    (PATCH on the owner)
+ *   3. POST /members used as an upsert on the owner row
+ *   4. two concurrent ownership transfers
+ *   5. removal of the site owner                       (DELETE the owner)
+ *   6. an api-key caller reaching a role change without site admin scope
+ *
+ * NEGATIVE CONTROLS RUN 2026-09-06, and they found something worth recording.
+ * Four of the six guards redden their own test when removed. TWO do not, and it
+ * is not because the tests are weak — those two paths are guarded TWICE, and
+ * either layer alone is sufficient:
+ *
+ *   role=owner       route-level role validation  +  changeRole's ASSIGNABLE_ROLES
+ *   remove-owner     the route's early 409        +  removeMember's owner vetoes
+ *
+ * Measured all three ways: removing only the inner guard leaves the suite green
+ * (the outer refuses), removing only the outer leaves it green (the inner
+ * refuses), and removing BOTH turns exactly that test red. So the pairs are real
+ * defence in depth rather than one live guard and one decorative one, and these
+ * tests are not vacuous. If you delete one layer, this suite will NOT tell you —
+ * by design, because the request is still correctly refused.
+ */
+
+import { createMockRequest } from './helpers/utils';
+
+jest.mock('@sentry/nextjs', () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
+
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitApiKeyUsed: jest.fn(),
+  emitMutation: (...a: unknown[]) => mockEmitMutation(...a),
+  scopeFingerprint: jest.fn(() => 'fp'),
+}));
+
+const mockResolveAuth = jest.fn();
+jest.mock('@/lib/apiAuth.server', () => {
+  const actual = jest.requireActual('@/lib/apiAuth.server');
+  return { ...actual, resolveAuth: (...a: unknown[]) => mockResolveAuth(...a) };
+});
+
+jest.mock('@/lib/rateLimit.server', () => ({
+  checkRateLimit: jest.fn(async () => ({ ok: true })),
+  rateLimitHeaders: jest.fn(() => ({})),
+}));
+
+jest.mock('@/lib/securityConfig.server', () => ({
+  securityConfig: {
+    read: jest.fn(async () => ({
+      capability_enforcement: true,
+      rate_limit_enforcement: true,
+    })),
+  },
+}));
+
+jest.mock('@/lib/auditLog.server', () => ({
+  generateCorrelationId: () => 'corr_esc',
+  writeAuditEntry: async () => {},
+  writeAuditEntryBlocking: async () => {},
+  writeGlobalAuditEntryBlocking: async () => {},
+}));
+
+jest.mock('firebase-admin/firestore', () => ({
+  FieldValue: {
+    arrayUnion: (...items: unknown[]) => ({ __op: 'arrayUnion', items }),
+    arrayRemove: (...items: unknown[]) => ({ __op: 'arrayRemove', items }),
+    serverTimestamp: () => ({ __op: 'serverTimestamp' }),
+    delete: () => ({ __op: 'delete' }),
+  },
+  Timestamp: { fromDate: (d: Date) => ({ toMillis: () => d.getTime() }) },
+}));
+
+// Talon store: this suite is about membership, not automations.
+jest.mock('@/lib/talons/store.server', () => ({
+  countTalonsAuthoredBy: jest.fn(async () => 0),
+  reassignTalons: jest.fn(async () => ({ reassignedTalonIds: [] })),
+  TalonStoreError: class TalonStoreError extends Error {},
+}));
+
+// --- Firestore double with optimistic concurrency ---------------------------
+
+const docs = new Map<string, Record<string, unknown> | null>();
+/** Bumped on every committed write so a reader can detect being overtaken. */
+const versions = new Map<string, number>();
+
+function versionOf(p: string): number {
+  return versions.get(p) ?? 0;
+}
+
+function bump(p: string): void {
+  versions.set(p, versionOf(p) + 1);
+}
+
+function applyOps(
+  existing: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...existing };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v && typeof v === 'object' && '__op' in (v as object)) {
+      const op = (v as { __op: string }).__op;
+      const items = (v as { items?: unknown[] }).items ?? [];
+      const cur = Array.isArray(next[k]) ? (next[k] as unknown[]).slice() : [];
+      if (op === 'arrayUnion') {
+        for (const it of items) if (!cur.includes(it)) cur.push(it);
+        next[k] = cur;
+      } else if (op === 'arrayRemove') {
+        next[k] = cur.filter((x) => !items.includes(x));
+      } else if (op === 'serverTimestamp') {
+        next[k] = 1;
+      } else if (op === 'delete') {
+        delete next[k];
+      } else {
+        next[k] = v;
+      }
+    } else {
+      next[k] = v;
+    }
+  }
+  return next;
+}
+
+function snapOf(path: string) {
+  const data = docs.get(path) ?? null;
+  return {
+    exists: data !== null,
+    id: path.split('/').pop() as string,
+    data: () => data ?? undefined,
+  };
+}
+
+function docRef(path: string): Record<string, unknown> {
+  return {
+    id: path.split('/').pop(),
+    path,
+    get: async () => snapOf(path),
+    set: async (d: Record<string, unknown>) => {
+      docs.set(path, d);
+      bump(path);
+    },
+    update: async (p: Record<string, unknown>) => {
+      docs.set(path, applyOps(docs.get(path) ?? {}, p));
+      bump(path);
+    },
+    delete: async () => {
+      docs.delete(path);
+      bump(path);
+    },
+    collection: (sub: string) => collRef(`${path}/${sub}`),
+  };
+}
+
+function collRef(path: string): Record<string, unknown> {
+  const wheres: Array<{ f: string; op: string; v: unknown }> = [];
+  const ref: Record<string, unknown> = {
+    doc: (id: string) => docRef(`${path}/${id}`),
+    where: (f: string, op: string, v: unknown) => {
+      wheres.push({ f, op, v });
+      return ref;
+    },
+    orderBy: () => ref,
+    limit: () => ref,
+    get: async () => {
+      const prefix = `${path}/`;
+      let rows = [...docs.entries()]
+        .filter(([k, v]) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/') && v)
+        .map(([k, v]) => ({ id: k.slice(prefix.length), data: v as Record<string, unknown> }));
+      for (const w of wheres) {
+        if (w.op === '==') rows = rows.filter((r) => r.data[w.f] === w.v);
+        else if (w.op === 'array-contains') {
+          rows = rows.filter((r) => Array.isArray(r.data[w.f]) && (r.data[w.f] as unknown[]).includes(w.v));
+        }
+      }
+      return {
+        docs: rows.map((r) => ({
+          id: r.id,
+          exists: true,
+          data: () => r.data,
+          ref: docRef(`${path}/${r.id}`),
+        })),
+      };
+    },
+  };
+  return ref;
+}
+
+const db = {
+  collection: (n: string) => collRef(n),
+  getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+    Promise.all(refs.map((r) => r.get())),
+  batch: () => {
+    const ops: Array<{ op: string; path: string; data?: Record<string, unknown> }> = [];
+    return {
+      create: (r: { path: string }, d: Record<string, unknown>) =>
+        ops.push({ op: 'create', path: r.path, data: d }),
+      set: (r: { path: string }, d: Record<string, unknown>) =>
+        ops.push({ op: 'set', path: r.path, data: d }),
+      update: (r: { path: string }, d: Record<string, unknown>) =>
+        ops.push({ op: 'update', path: r.path, data: d }),
+      delete: (r: { path: string }) => ops.push({ op: 'delete', path: r.path }),
+      commit: async () => {
+        // create() FAILS on an existing document. Modelling that difference is
+        // the entire reason addMember cannot overwrite an owner row.
+        for (const o of ops) {
+          if (o.op === 'create' && docs.get(o.path)) {
+            const e = new Error('Document already exists') as Error & { code: number };
+            e.code = 6;
+            throw e;
+          }
+        }
+        for (const o of ops) {
+          if (o.op === 'create' || o.op === 'set') docs.set(o.path, o.data ?? {});
+          else if (o.op === 'delete') docs.delete(o.path);
+          else docs.set(o.path, applyOps(docs.get(o.path) ?? {}, o.data ?? {}));
+          bump(o.path);
+        }
+      },
+    };
+  },
+  runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const readVersions = new Map<string, number>();
+      const writes: Array<{ op: string; path: string; data?: Record<string, unknown> }> = [];
+      const tx = {
+        get: async (r: { path: string }) => {
+          readVersions.set(r.path, versionOf(r.path));
+          return snapOf(r.path);
+        },
+        set: (r: { path: string }, d: Record<string, unknown>) =>
+          writes.push({ op: 'set', path: r.path, data: d }),
+        update: (r: { path: string }, d: Record<string, unknown>) =>
+          writes.push({ op: 'update', path: r.path, data: d }),
+        delete: (r: { path: string }) => writes.push({ op: 'delete', path: r.path }),
+      };
+      const result = await fn(tx);
+      // Yield, so a concurrently-started transaction can interleave here — the
+      // window a real race exploits.
+      await Promise.resolve();
+      if ([...readVersions].some(([p, v]) => versionOf(p) !== v)) continue;
+      for (const w of writes) {
+        if (w.op === 'set') docs.set(w.path, w.data ?? {});
+        else if (w.op === 'delete') docs.delete(w.path);
+        else docs.set(w.path, applyOps(docs.get(w.path) ?? {}, w.data ?? {}));
+        bump(w.path);
+      }
+      return result;
+    }
+    throw new Error('too much contention');
+  },
+};
+
+jest.mock('@/lib/firebase-admin', () => ({
+  getAdminDb: () => db,
+  getAdminAuth: () => ({
+    verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
+    getUserByEmail: jest.fn().mockRejectedValue(
+      Object.assign(new Error('nf'), { code: 'auth/user-not-found' }),
+    ),
+  }),
+  getAdminStorage: () => ({ bucket: () => ({}) }),
+}));
+
+// --- routes under test ------------------------------------------------------
+
+import { POST as membersPOST } from '@/app/api/sites/[siteId]/members/route';
+import {
+  DELETE as memberDELETE,
+  PATCH as memberPATCH,
+} from '@/app/api/sites/[siteId]/members/[uid]/route';
+import { POST as transferPOST } from '@/app/api/sites/[siteId]/transfer-ownership/route';
+
+const SITE = 'site-alpha';
+const OWNER = 'uid_owner';
+const ADMIN = 'uid_admin';
+const OUTSIDER = 'uid_outsider';
+
+function seedUser(uid: string, data: Record<string, unknown> = {}): void {
+  docs.set(`users/${uid}`, { email: `${uid}@example.test`, role: 'member', sites: [], ...data });
+}
+
+function seedMemberRow(uid: string, role: string): void {
+  docs.set(`sites/${SITE}/members/${uid}`, { uid, role, status: 'active' });
+}
+
+/** Session auth (no api key), so scope checks are bypassed and only role matters. */
+function authAs(uid: string): void {
+  mockResolveAuth.mockResolvedValue({ userId: uid, keyContext: null });
+}
+
+/**
+ * api-key auth carrying exactly `perms` on every site.
+ *
+ * Takes a LIST because the membership endpoints are DOUBLE-GATED and the two
+ * gates want different permissions: `authorizedSiteHandler` defaults its
+ * api-key scope to `site=<id>:write`, and the handler's first act is
+ * `requireSiteAuthAndScope(..., 'admin')`. A key therefore needs BOTH, which is
+ * not obvious from either call site. Wave 1 task 1.4 collapses these to the
+ * inner permission; when it lands, the `write`-only refusal below stays and the
+ * both-permissions control can drop to `['admin']`.
+ */
+function authAsKey(uid: string, perms: Array<'read' | 'write' | 'admin'>): void {
+  mockResolveAuth.mockResolvedValue({
+    userId: uid,
+    keyContext: {
+      keyId: 'key_esc',
+      environment: 'live',
+      isLegacy: false,
+      scopes: [{ resource: 'site', id: '*', permissions: perms }],
+      expiresAt: null,
+    },
+  });
+}
+
+const params = (extra: Record<string, string> = {}) => ({
+  params: Promise.resolve({ siteId: SITE, ...extra }),
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  docs.clear();
+  versions.clear();
+
+  docs.set(`sites/${SITE}`, { owner: OWNER, name: 'Alpha' });
+  // The owner is a self-serve owner: GLOBAL role `member`, which is the shape
+  // bootstrapUser creates and the reason the ownership short-circuit exists.
+  seedUser(OWNER, { role: 'member', sites: [SITE] });
+  seedMemberRow(OWNER, 'owner');
+  // A genuine site admin: global role admin, assigned to the site, NOT the owner.
+  seedUser(ADMIN, { role: 'admin', sites: [SITE] });
+  seedMemberRow(ADMIN, 'admin');
+  seedUser(OUTSIDER, { role: 'member', sites: [] });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('1. a site admin cannot promote THEMSELVES to owner', () => {
+  it('refuses PATCH role=owner', async () => {
+    authAs(ADMIN);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'owner' },
+      }),
+      params({ uid: ADMIN }),
+    );
+
+    expect(res.status).toBe(400);
+    // Still an admin, and the site's owner is unchanged.
+    expect((docs.get(`sites/${SITE}/members/${ADMIN}`) as { role: string }).role).toBe('admin');
+    expect((docs.get(`sites/${SITE}`) as { owner: string }).owner).toBe(OWNER);
+  });
+
+  it('POSITIVE CONTROL: the same admin CAN set a legal role', async () => {
+    authAs(ADMIN);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('2. a site admin cannot demote the owner', () => {
+  it('refuses with 409 cannot_change_owner_role', async () => {
+    authAs(ADMIN);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${OWNER}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: OWNER }),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('cannot_change_owner_role');
+    expect((docs.get(`sites/${SITE}/members/${OWNER}`) as { role: string }).role).toBe('owner');
+  });
+
+  it('POSITIVE CONTROL: the same admin CAN change a non-owner', async () => {
+    seedUser('uid_other', { role: 'member', sites: [SITE] });
+    seedMemberRow('uid_other', 'member');
+    authAs(ADMIN);
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/uid_other`, {
+        method: 'PATCH',
+        body: { role: 'admin' },
+      }),
+      params({ uid: 'uid_other' }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('3. POST /members cannot be used as an upsert on the owner row', () => {
+  it('refuses re-adding the owner at a lesser role', async () => {
+    authAs(ADMIN);
+    const res = await membersPOST(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'esc-owner-upsert' },
+        body: { uid: OWNER, role: 'member' },
+      }),
+      params(),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('target_is_owner');
+    // The owner row is intact — not rewritten to `member`.
+    expect((docs.get(`sites/${SITE}/members/${OWNER}`) as { role: string }).role).toBe('owner');
+  });
+
+  it('POSITIVE CONTROL: adding a NON-owner still succeeds', async () => {
+    authAs(ADMIN);
+    const res = await membersPOST(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'esc-add-ok' },
+        body: { uid: OUTSIDER, role: 'member' },
+      }),
+      params(),
+    );
+
+    expect(res.status).toBe(200);
+    expect((docs.get(`sites/${SITE}/members/${OUTSIDER}`) as { role: string }).role).toBe('member');
+  });
+});
+
+describe('4. two concurrent ownership transfers leave exactly one owner', () => {
+  it('serialises, and the loser is REFUSED rather than silently applied', async () => {
+    seedUser('uid_succ_a', { role: 'admin', sites: [] });
+    seedUser('uid_succ_b', { role: 'admin', sites: [] });
+    authAs(OWNER);
+
+    const fire = (successorUid: string, key: string) =>
+      transferPOST(
+        createMockRequest(`http://localhost/api/sites/${SITE}/transfer-ownership`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': key },
+          body: { successorUid },
+        }),
+        params(),
+      );
+
+    const [a, b] = await Promise.all([
+      fire('uid_succ_a', 'esc-t-a'),
+      fire('uid_succ_b', 'esc-t-b'),
+    ]);
+
+    const finalOwner = (docs.get(`sites/${SITE}`) as { owner: string }).owner;
+    expect(['uid_succ_a', 'uid_succ_b']).toContain(finalOwner);
+
+    // EXACTLY one owner row across every candidate.
+    const owners = [OWNER, 'uid_succ_a', 'uid_succ_b'].filter(
+      (u) => (docs.get(`sites/${SITE}/members/${u}`) as { role?: string } | undefined)?.role === 'owner',
+    );
+    expect(owners).toEqual([finalOwner]);
+
+    // One 200, one refusal — the loser re-read the owner inside its retry and
+    // found the actor was no longer the owner.
+    const statuses = [a.status, b.status].sort();
+    expect(statuses[0]).toBe(200);
+    expect(statuses[1]).toBeGreaterThanOrEqual(400);
+  });
+});
+
+describe('5. the site owner cannot be removed', () => {
+  it('refuses DELETE on the owner with 409 cannot_remove_owner', async () => {
+    authAs(ADMIN);
+    const res = await memberDELETE(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${OWNER}`, {
+        method: 'DELETE',
+      }),
+      params({ uid: OWNER }),
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('cannot_remove_owner');
+    // Membership intact in BOTH shapes.
+    expect((docs.get(`users/${OWNER}`) as { sites: string[] }).sites).toContain(SITE);
+    expect(docs.has(`sites/${SITE}/members/${OWNER}`)).toBe(true);
+  });
+
+  it('POSITIVE CONTROL: a non-owner member IS removable', async () => {
+    authAs(ADMIN);
+    seedUser('uid_plain', { role: 'member', sites: [SITE] });
+    seedMemberRow('uid_plain', 'member');
+
+    const res = await memberDELETE(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/uid_plain`, {
+        method: 'DELETE',
+      }),
+      params({ uid: 'uid_plain' }),
+    );
+
+    expect(res.status).toBe(200);
+    expect((docs.get('users/uid_plain') as { sites: string[] }).sites).not.toContain(SITE);
+  });
+});
+
+describe('6. an api-key caller cannot reach a role change without site admin scope', () => {
+  it('refuses a site=*:write key on PATCH', async () => {
+    // The membership endpoints demand `site=<id>:admin`. A `write` key is the
+    // interesting case: it is enough for most mutations on the site, and would
+    // be a natural thing to hand a CI job.
+    authAsKey(ADMIN, ['write']);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+
+    expect(res.status).toBe(403);
+    expect((docs.get(`sites/${SITE}/members/${ADMIN}`) as { role: string }).role).toBe('admin');
+  });
+
+  it('refuses a read-only key', async () => {
+    authAsKey(ADMIN, ['read']);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses an ADMIN-only key too — the outer gate wants write', async () => {
+    // Not a mistake in the test: the route is double-gated, and the OUTER gate
+    // (authorizedSiteHandler's default api-key scope) asks for `write` while the
+    // inner one asks for `admin`. An admin-only key satisfies the inner gate and
+    // is turned away by the outer. That is today's contract, pinned here so
+    // Wave 1 task 1.4 changes it deliberately rather than by accident.
+    authAsKey(ADMIN, ['admin']);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('POSITIVE CONTROL: a key holding BOTH write and admin succeeds', async () => {
+    // Proves the refusals above are about the SCOPE TIER and not a blanket
+    // denial of api-key callers.
+    authAsKey(ADMIN, ['write', 'admin']);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('7. an outsider cannot reach the membership surface at all', () => {
+  it('collapses to 404 rather than confirming the site exists', async () => {
+    authAs(OUTSIDER);
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      params({ uid: ADMIN }),
+    );
+
+    expect(res.status).toBe(404);
+    expect((docs.get(`sites/${SITE}/members/${ADMIN}`) as { role: string }).role).toBe('admin');
+  });
+});
