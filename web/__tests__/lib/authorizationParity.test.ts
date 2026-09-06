@@ -51,10 +51,17 @@ function snapshot(id: string, data: Record<string, unknown> | null) {
 
 function resolveDoc(path: string) {
   reads.push(path);
-  const [collection, id] = path.split('/');
+  const segments = path.split('/').filter(Boolean);
+  // TOP-LEVEL DOCUMENTS ONLY — exactly two segments. Destructuring the first
+  // two segments of ANY path would make `sites/{id}/members/{uid}` resolve to
+  // the SITE document, so a Wave 4 membership-subcollection read would silently
+  // answer with unrelated data and this matrix would pass while testing nothing.
+  // Anything deeper is reported as non-existent, which fails loudly instead.
+  if (segments.length !== 2) return snapshot(segments[segments.length - 1] ?? 'unknown', null);
+  const [collection, id] = segments;
   if (collection === 'users') return snapshot(id, store.users.get(id) ?? null);
   if (collection === 'sites') return snapshot(id, store.sites.get(id) ?? null);
-  return snapshot(id ?? 'unknown', null);
+  return snapshot(id, null);
 }
 
 function buildDoc(path: string): Record<string, unknown> {
