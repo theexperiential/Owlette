@@ -1,8 +1,10 @@
 /**
  * DELETE /api/sites/{siteId}/members/{uid}
  *
- * Removes siteId from `users/{uid}.sites[]` via `arrayRemove`. Refuses the site
- * owner — ownership transfer is user-DELETE with `?successorUid=<uid>`.
+ * Removes the member, through the single writer in `lib/membership.server.ts`,
+ * which dual-writes the member document and the legacy `users/{uid}.sites[]`
+ * entry in one transaction. Refuses the site owner — transfer ownership with
+ * POST /api/sites/{siteId}/transfer-ownership first.
  *
  * Authored talons survive the removal (they are site-owned), but a talon with a
  * hoot output re-resolves its AUTHOR's site access every run, so it starts
@@ -16,7 +18,6 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { FieldValue } from 'firebase-admin/firestore';
 import {
   problem,
   problemFromError,
@@ -41,6 +42,7 @@ import {
   readAndParseJsonBody,
   requireSiteAuthAndScope,
 } from '../../../../_shared';
+import { changeRole, removeMember } from '@/lib/membership.server';
 
 // The talon store pulls in `node:crypto` for webhook secret minting.
 export const runtime = 'nodejs';
@@ -108,7 +110,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
             title: 'cannot remove site owner',
             status: 409,
             detail:
-              'the site owner cannot be removed via this endpoint; transfer ownership first via DELETE /api/users/{uid}?successorUid=<uid>',
+              'the site owner cannot be removed via this endpoint; transfer ownership first via POST /api/sites/{siteId}/transfer-ownership',
             instance: `/api/sites/${siteId}/members/${uid}`,
             code: 'cannot_remove_owner',
           });
@@ -160,10 +162,32 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
           reassignedTalonIds = result.reassignedTalonIds;
         }
 
+        // Wave 2 task 2.3: the membership write goes through the single writer,
+        // which dual-writes the member document and the legacy `sites[]` entry in
+        // one transaction and re-checks ownership INSIDE it. The early 409 above
+        // still stands and still earns its place — it refuses an owner before any
+        // talon work happens — but it is evaluated against a snapshot taken
+        // before `reassignTalons`, so an ownership transfer landing in that window
+        // slips past it. This is the guard that cannot be raced.
         if (wasMember) {
-          await db.collection('users').doc(uid).update({
-            sites: FieldValue.arrayRemove(siteId),
-          });
+          const removal = await removeMember({ siteId, uid });
+          if (!removal.ok) {
+            if (removal.failure.kind === 'is_owner') {
+              // Reached only by losing the race described above.
+              return problem({
+                type: ProblemType.Conflict,
+                title: 'cannot remove site owner',
+                status: 409,
+                detail:
+                  'the site owner cannot be removed via this endpoint; transfer ownership first via POST /api/sites/{siteId}/transfer-ownership',
+                instance: `/api/sites/${siteId}/members/${uid}`,
+                code: 'cannot_remove_owner',
+              });
+            }
+            if (removal.failure.kind === 'site_not_found') {
+              return problemNotFound(`site ${siteId} not found`);
+            }
+          }
         }
 
         emitMutation({
@@ -202,5 +226,106 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
       return talonStoreProblem(err, request.nextUrl.pathname);
     }
     return problemFromError(err, 'sites/[siteId]/members/[uid]:DELETE');
+  }
+});
+
+/**
+ * PATCH /api/sites/{siteId}/members/{uid}
+ *
+ * Changes a member's per-site role. New in Wave 2 task 2.3 — before this there
+ * was no way to change a per-site role at all, because there was no per-site role
+ * to change: it was derived from the global role at read time, so "make this
+ * person a site admin here" meant promoting them globally on every site they
+ * belong to. That is the leak per-site roles exist to close.
+ *
+ * `'owner'` is not assignable. Ownership moves only through
+ * POST /api/sites/{siteId}/transfer-ownership, which is transactional and
+ * re-reads the owner row; `changeRole` refuses an owner as a source as well, so
+ * an admin can neither promote themselves into ownership nor demote the owner
+ * out of it. Both halves are enforced inside the transaction that writes.
+ *
+ * Auth: `requireSiteAuthAndScope(req, siteId, 'admin')`, capability
+ * SITE_MEMBER_MANAGE — the same gate the sibling DELETE takes.
+ */
+export const PATCH = authorizedSiteHandler<RouteParams>({
+  capability: 'SITE_MEMBER_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'user',
+  targetIdParam: 'uid',
+})(async (request: NextRequest, ctx: SiteHandlerContext, routeContext) => {
+  try {
+    const { siteId, uid } = await routeContext.params;
+    if (!UID_REGEX.test(uid)) {
+      return problemValidation('uid must be 1-128 chars', {
+        'path.uid': ['letters, digits, underscore, hyphen only'],
+      });
+    }
+
+    const parsed = await readAndParseJsonBody(request);
+    if (!parsed.ok) return parsed.response;
+
+    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
+    if (!auth.ok) return auth.response;
+
+    const role = (parsed.body as { role?: unknown } | null)?.role;
+    if (role !== 'admin' && role !== 'member') {
+      return problemValidation('role is required and must be admin or member', {
+        'body.role': ['must be one of: admin, member'],
+      });
+    }
+
+    return await withIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+      async () => {
+        const result = await changeRole({ siteId, uid, role });
+
+        if (!result.ok) {
+          if (result.failure.kind === 'is_owner') {
+            return problem({
+              type: ProblemType.Conflict,
+              title: 'cannot change the site owner\'s role',
+              status: 409,
+              detail:
+                'the owner\'s role is set by ownership; transfer ownership via POST /api/sites/{siteId}/transfer-ownership instead',
+              instance: `/api/sites/${siteId}/members/${uid}`,
+              code: 'cannot_change_owner_role',
+            });
+          }
+          if (result.failure.kind === 'not_member') {
+            // Distinguished from "no such user" on purpose: the caller is told
+            // the membership is missing, not that the account does not exist.
+            return problemNotFound(`user ${uid} is not a member of site ${siteId}`);
+          }
+          return problemValidation('role is required and must be admin or member', {
+            'body.role': ['must be one of: admin, member'],
+          });
+        }
+
+        emitMutation({
+          kind: 'site_member_mutated',
+          siteId,
+          actor: auditActorIdentifier(auth.auth),
+          targetId: uid,
+          attributes: {
+            endpoint: `/api/sites/${siteId}/members/${uid}`,
+            method: 'PATCH',
+            verb: 'member_role_changed',
+            role,
+          },
+        });
+
+        return applyAuthDeprecations(
+          NextResponse.json({ siteId, uid, role }),
+          auth.scopeCheck,
+        );
+      },
+    );
+  } catch (err) {
+    return problemFromError(err, 'sites/[siteId]/members/[uid]:PATCH');
   }
 });

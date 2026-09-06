@@ -223,6 +223,8 @@ const mockRunTransaction = jest.fn(
         ref: { update: (patch: Record<string, unknown>) => Promise<void> },
         patch: Record<string, unknown>,
       ) => ref.update(patch),
+      // removeMember deletes the member row inside its transaction.
+      delete: (ref: { delete: () => Promise<void> }) => ref.delete(),
     };
     return cb(tx);
   },
@@ -234,6 +236,23 @@ function makeBatch() {
   return {
     set: (ref: { set: (d: Record<string, unknown>) => Promise<void> }, data: Record<string, unknown>) =>
       ops.push(() => ref.set(data)),
+    // create() is what makes addMember refuse to overwrite an existing row, so
+    // the fake must model how it DIFFERS from set(): it fails when the document
+    // already exists, with the ALREADY_EXISTS code the helper matches on. A
+    // create() that behaved like set() would let the site-takeover guard pass
+    // its tests while being absent in effect.
+    create: (
+      ref: { set: (d: Record<string, unknown>) => Promise<void>; path: string },
+      data: Record<string, unknown>,
+    ) =>
+      ops.push(async () => {
+        if (docStore[ref.path] !== undefined) {
+          const err = new Error('Document already exists') as Error & { code: number };
+          err.code = 6;
+          throw err;
+        }
+        await ref.set(data);
+      }),
     update: (
       ref: { update: (p: Record<string, unknown>) => Promise<void> },
       patch: Record<string, unknown>,
@@ -286,7 +305,10 @@ import {
   GET as membersGET,
   POST as membersPOST,
 } from '@/app/api/sites/[siteId]/members/route';
-import { DELETE as memberDELETE } from '@/app/api/sites/[siteId]/members/[uid]/route';
+import {
+  DELETE as memberDELETE,
+  PATCH as memberPATCH,
+} from '@/app/api/sites/[siteId]/members/[uid]/route';
 
 const SITE = 'site-alpha';
 
@@ -925,5 +947,121 @@ describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
       expect(res.status).toBe(400);
       expect(docStore['users/alice']?.data?.sites).toEqual([SITE]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 2 task 2.3 — the membership endpoints now go through the single writer
+// in lib/membership.server.ts, and PATCH exists for the first time.
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/sites/{siteId}/members/{uid} — per-site role change', () => {
+  it('promotes a member to site admin WITHOUT touching their global role', async () => {
+    // The whole point of per-site roles: before this endpoint existed, making
+    // someone an admin "here" meant promoting them globally, on every site they
+    // belong to. That is the leak this closes.
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('alice', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/alice`] = {
+      data: { uid: 'alice', role: 'member', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/alice`, {
+        method: 'PATCH',
+        body: { role: 'admin' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore[`sites/${SITE}/members/alice`]?.data?.role).toBe('admin');
+    // Global role untouched.
+    expect(docStore['users/alice']?.data?.role).toBe('member');
+  });
+
+  it('refuses to change the OWNER\'s role (409 cannot_change_owner_role)', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'owner-uid' });
+    seedUser('owner-uid', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/owner-uid`] = {
+      data: { uid: 'owner-uid', role: 'owner', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/owner-uid`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'owner-uid' }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('cannot_change_owner_role');
+    // Unchanged — the demote-the-owner path writes nothing.
+    expect(docStore[`sites/${SITE}/members/owner-uid`]?.data?.role).toBe('owner');
+  });
+
+  it('cannot assign owner — an admin may not promote anyone into ownership', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('alice', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/alice`] = {
+      data: { uid: 'alice', role: 'member', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/alice`, {
+        method: 'PATCH',
+        body: { role: 'owner' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(400);
+    expect(docStore[`sites/${SITE}/members/alice`]?.data?.role).toBe('member');
+  });
+
+  it('404s for a uid with no membership on this site', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('stranger', { role: 'member', sites: [] });
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/stranger`, {
+        method: 'PATCH',
+        body: { role: 'admin' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'stranger' }) },
+    );
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/sites/{siteId}/members — owner guard', () => {
+  it('refuses to re-add the site OWNER as a lesser member', async () => {
+    // create() alone does not protect a site that predates the members
+    // subcollection: its owner has no row to collide with until the Wave 3
+    // backfill, so without this explicit check the owner would be handed a
+    // `member` row and silently demoted in the new shape.
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'owner-uid' });
+    seedUser('owner-uid', { role: 'member', sites: [SITE] });
+
+    const res = await membersPOST(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-owner-readd' },
+        body: { uid: 'owner-uid', role: 'member' },
+      }),
+      { params: Promise.resolve({ siteId: SITE }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('target_is_owner');
+    // No member row was written for the owner at a lesser role.
+    expect(docStore[`sites/${SITE}/members/owner-uid`]).toBeUndefined();
   });
 });

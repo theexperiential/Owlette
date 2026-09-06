@@ -7156,6 +7156,45 @@ paths:
         in: header
         required: false
         schema: { type: string }
+    patch:
+      tags: [Site Members]
+      summary: change a member's per-site role
+      description: |
+        Sets the member's role on THIS site only, leaving their global role
+        untouched. Before this endpoint existed there was no per-site role to
+        change — it was derived from the global role at read time, so making
+        someone an admin on one site meant promoting them globally, on every
+        site they belong to. That is the leak per-site roles close.
+
+        `owner` is not assignable here. Ownership moves only through
+        `POST /api/sites/{siteId}/transfer-ownership`, and the owner is refused
+        as a target as well, so an admin can neither promote themselves into
+        ownership (`400`) nor demote the owner out of it
+        (`409 cannot_change_owner_role`). Both are enforced inside the
+        transaction that performs the write.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an admin
+        of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, member] }
+      responses:
+        '200': { description: Role changed }
+        '400': { description: Validation failure (including role=owner) }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: User is not a member of this site }
+        '409': { description: Target is the site owner }
     delete:
       tags: [Site Members]
       summary: remove a member from a site
