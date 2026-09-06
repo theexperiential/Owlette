@@ -7,7 +7,11 @@ import platform
 import socket
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+# `timezone.utc`, not `datetime.UTC`: the latter is 3.11+, but pyproject
+# declares `requires-python = ">=3.10"`. On 3.10 the UTC import raised at
+# module load, so `import roost` failed outright for anyone on the oldest
+# version the package claims to support.
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -635,7 +639,7 @@ def _summarise(files: Sequence[ChunkedFileEntry]) -> dict[str, int]:
 
 
 def _build_version_body(files: Sequence[ChunkedFileEntry]) -> dict[str, Any]:
-    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     sorted_files = sorted(files, key=lambda f: f.path)
     return {
         "schemaVersion": 2,
