@@ -7086,6 +7086,62 @@ paths:
         '403': { description: Forbidden (not site admin) }
         '404': { description: User or site not found }
 
+  /api/sites/{siteId}/transfer-ownership:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Site Members]
+      summary: transfer site ownership to another user
+      description: |
+        Moves ownership of a site to `successorUid` in a single Firestore
+        transaction, writing the new `sites/{siteId}/members/{uid}` role and the
+        legacy `sites/{siteId}.owner` field together.
+
+        **Only the current owner or a superadmin may transfer.** A site admin is
+        admitted by the route's capability gate and then refused by the
+        transaction with `403 not_owner`: administering a site and owning it are
+        different things, the same line `SITE_DELETE` draws. The ownership check
+        is made from the site document read INSIDE the transaction, so a transfer
+        racing another transfer is serialised rather than interleaved — the
+        loser re-reads, finds the owner changed, and is refused.
+
+        The successor need not already be a member; they are made one by the same
+        transaction. The outgoing owner is demoted to `admin` and KEEPS their
+        membership — handing a site over is not eviction. Transferring to the
+        current owner is `409 successor_already_owner` rather than a silent no-op.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from the site's
+        owner (or a superadmin).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [successorUid]
+              properties:
+                successorUid:
+                  type: string
+                  description: uid receiving ownership
+      responses:
+        '200': { description: Ownership transferred }
+        '400': { description: Validation failure, or successor is soft-deleted }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (caller is not the owner or a superadmin) }
+        '404': { description: Site or successor not found }
+        '409': { description: Successor already owns the site, or the site records no owner }
+
   /api/sites/{siteId}/members/{uid}:
     parameters:
       - name: siteId

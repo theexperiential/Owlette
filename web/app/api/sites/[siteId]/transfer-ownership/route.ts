@@ -1,0 +1,159 @@
+/**
+ * POST /api/sites/{siteId}/transfer-ownership
+ *
+ * Moves ownership of a site to another user, atomically.
+ *
+ * Until now ownership moved in exactly one place — as a side effect of
+ * `DELETE /api/users/{uid}?successorUid=<uid>` — which meant handing a site to a
+ * colleague required deleting an account. That path also validated the successor
+ * outside any transaction and rewrote each owned site with a separate un-batched
+ * update inside a `try/catch` that warned and continued. This route is the
+ * deliberate, first-class operation, and it is one transaction.
+ *
+ * Authorization is TWO-LAYERED and the inner layer is the real one. The wrapper
+ * admits owner / site-admin / superadmin (SITE_MEMBER_MANAGE, plus the site-owner
+ * short-circuit), and then `transferSiteOwnership` re-decides from the site
+ * document read INSIDE its transaction: the actor must BE the current owner or a
+ * superadmin. A site admin is admitted by the wrapper and refused by the core.
+ * That is intentional — the wrapper's pre-handler read happened before the
+ * transaction opened, so trusting it is the stale-snapshot bug one layer up.
+ *
+ * Auth: `requireSiteAuthAndScope(req, siteId, 'admin')` for the api-key scope,
+ * `SITE_MEMBER_MANAGE` for the capability, owner-or-superadmin for the decision.
+ */
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import {
+  problem,
+  problemFromError,
+  problemNotFound,
+  problemValidation,
+  ProblemType,
+} from '@/lib/apiErrors';
+import { withIdempotency } from '@/lib/idempotency';
+import { emitMutation } from '@/lib/auditLogClient';
+import { authorizedSiteHandler, type SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { transferSiteOwnership } from '@/lib/actions/transferSiteOwnership.server';
+import {
+  applyAuthDeprecations,
+  auditActorIdentifier,
+  readAndParseJsonBody,
+  requireSiteAuthAndScope,
+} from '../../../_shared';
+
+const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
+
+type RouteParams = { siteId: string };
+
+export const POST = authorizedSiteHandler<RouteParams>({
+  capability: 'SITE_MEMBER_MANAGE',
+  siteIdParam: 'path',
+  targetKind: 'site',
+})(async (request: NextRequest, ctx: SiteHandlerContext, routeContext) => {
+  try {
+    const { siteId } = await routeContext.params;
+
+    const parsed = await readAndParseJsonBody(request);
+    if (!parsed.ok) return parsed.response;
+
+    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
+    if (!auth.ok) return auth.response;
+
+    const body = (parsed.body ?? {}) as { successorUid?: unknown };
+    const successorUid = body.successorUid;
+    if (typeof successorUid !== 'string' || !UID_REGEX.test(successorUid)) {
+      return problemValidation('successorUid is required and must be valid', {
+        'body.successorUid': ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+      });
+    }
+
+    return await withIdempotency(
+      request,
+      {
+        userId: auth.userId,
+        environment: auth.auth.keyContext?.environment ?? 'unknown',
+      },
+      parsed.raw,
+      async () => {
+        const result = await transferSiteOwnership({
+          siteId,
+          successorUid,
+          actorUid: ctx.actor.userId,
+          actorIsSuperadmin: ctx.actor.role === 'superadmin',
+        });
+
+        if (!result.ok) {
+          switch (result.failure.kind) {
+            case 'site_not_found':
+              return problemNotFound(`site ${siteId} not found`);
+            case 'successor_not_found':
+              return problemNotFound(`user ${successorUid} not found`);
+            case 'not_owner':
+              // Not 404: the caller demonstrably reaches this site (the wrapper
+              // admitted them), so hiding the site would be noise, not privacy.
+              return problem({
+                type: ProblemType.Forbidden,
+                title: 'only the owner may transfer ownership',
+                status: 403,
+                detail:
+                  'transferring a site is the owner\'s decision; administering it is not enough',
+                instance: `/api/sites/${siteId}/transfer-ownership`,
+                code: 'not_owner',
+              });
+            case 'successor_inactive':
+              return problemValidation('successor is deleted or inactive', {
+                'body.successorUid': ['user is soft-deleted'],
+              });
+            case 'successor_already_owner':
+              // Refused rather than reported as a no-op success: the user-delete
+              // cascade's equivalent hole answers 200 while stranding a site on a
+              // soft-deleted owner, and silence here would be the same lie.
+              return problem({
+                type: ProblemType.Conflict,
+                title: 'successor already owns this site',
+                status: 409,
+                detail: 'successorUid is already the owner of this site',
+                instance: `/api/sites/${siteId}/transfer-ownership`,
+                code: 'successor_already_owner',
+              });
+            case 'site_has_no_owner':
+              return problem({
+                type: ProblemType.Conflict,
+                title: 'site has no owner to transfer',
+                status: 409,
+                detail:
+                  'this site records no owner; it needs repair rather than a transfer',
+                instance: `/api/sites/${siteId}/transfer-ownership`,
+                code: 'site_has_no_owner',
+              });
+          }
+        }
+
+        emitMutation({
+          kind: 'site_member_mutated',
+          siteId,
+          actor: auditActorIdentifier(auth.auth),
+          targetId: result.newOwnerUid,
+          attributes: {
+            endpoint: `/api/sites/${siteId}/transfer-ownership`,
+            method: 'POST',
+            verb: 'ownership_transferred',
+            previousOwnerUid: result.previousOwnerUid,
+            newOwnerUid: result.newOwnerUid,
+          },
+        });
+
+        return applyAuthDeprecations(
+          NextResponse.json({
+            siteId,
+            previousOwnerUid: result.previousOwnerUid,
+            newOwnerUid: result.newOwnerUid,
+          }),
+          auth.scopeCheck,
+        );
+      },
+    );
+  } catch (err) {
+    return problemFromError(err, 'sites/[siteId]/transfer-ownership:POST');
+  }
+});
