@@ -27,6 +27,7 @@ import {
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
 import { deleteUser } from '@/lib/actions/deleteUser.server';
+import { MIN_SUPERADMINS } from '@/lib/actions/setUserRole.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -165,6 +166,25 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
 
         if (result.kind === 'not_found') {
           return problemNotFound(`user ${uid} not found`);
+        }
+
+        // Mirrors the demote route's refusal verbatim, code included, so a client
+        // handles one `last_superadmin` conflict shape rather than two. The floor
+        // is a hard invariant — an Owlette deployment must always keep at least
+        // MIN_SUPERADMINS active superadmins — and deleting the last one is
+        // unrecoverable: USER_ROLE_MANAGE lives only in SUPERADMIN_CAPABILITIES,
+        // so nobody would be left able to appoint a replacement.
+        if (result.kind === 'last_superadmin') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'cannot delete last superadmin',
+            status: 409,
+            detail: `cannot delete: only ${result.activeSuperadmins} active superadmin(s) remain; floor is ${MIN_SUPERADMINS}. Promote a replacement first.`,
+            instance: `/api/users/${uid}`,
+            code: 'last_superadmin',
+            minSuperadmins: MIN_SUPERADMINS,
+            currentActiveCount: result.activeSuperadmins,
+          });
         }
 
         if (result.kind === 'orphan_sites') {

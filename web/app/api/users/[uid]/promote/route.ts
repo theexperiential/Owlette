@@ -39,7 +39,16 @@ function auditActor(ctx: PlatformHandlerContext): string {
 export const POST = authorizedPlatformHandler<RouteParams>({
   capability: Capability.USER_ROLE_MANAGE,
   targetKind: 'user',
-  apiKeyScope: { resource: 'user', permission: 'write' },
+  // `admin`, not `write`. PROMOTE_ROLES includes 'superadmin', so this route can
+  // MINT A SUPERADMIN — an account that then holds every capability on every
+  // site, including USER_ROLE_MANAGE itself. The ACTOR was already superadmin-
+  // gated by the capability (USER_ROLE_MANAGE lives only in
+  // SUPERADMIN_CAPABILITIES), so this was never a path for a lesser role. The
+  // SCOPE tier was the gap: a key deliberately narrowed to `user=*:write` could
+  // mint superadmins while being unable to delete a user or reset an MFA factor,
+  // both of which demand `user=*:admin`. A delegated key must not exceed the
+  // blast radius of the stricter operations it is denied.
+  apiKeyScope: { resource: 'user', permission: 'admin' },
 })(async (request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
   try {
     const { uid } = await routeContext!.params;

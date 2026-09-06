@@ -15,6 +15,27 @@
 
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
+import { MIN_SUPERADMINS } from '@/lib/actions/setUserRole.server';
+
+function asRole(raw: unknown): string | null {
+  return typeof raw === 'string' ? raw : null;
+}
+
+/**
+ * Active superadmins, counted the same way `setUserRole` counts them: role is
+ * exactly 'superadmin' and `deletedAt` is absent. Kept as a plain scan rather
+ * than a query so it matches that implementation exactly — the two must never
+ * disagree about who holds the floor.
+ */
+async function countActiveSuperadmins(db: FirebaseFirestore.Firestore): Promise<number> {
+  const all = await db.collection('users').get();
+  return all.docs.reduce((n, doc) => {
+    const d = doc.data() ?? {};
+    if (d.role !== 'superadmin') return n;
+    if (typeof d.deletedAt === 'number') return n;
+    return n + 1;
+  }, 0);
+}
 
 export type UserDeleteOutcome =
   | { kind: 'already_deleted'; deletedAt: number }
@@ -26,6 +47,18 @@ export type UserDeleteOutcome =
   | {
       kind: 'successor_invalid';
       reason: 'not_found' | 'not_admin' | 'soft_deleted';
+    }
+  | {
+      /**
+       * Deleting this user would leave fewer than MIN_SUPERADMINS active
+       * superadmins. `setUserRole` has always refused the equivalent DEMOTE;
+       * delete did not, so the floor was reachable around it — and unlike a
+       * demote the result is unrecoverable, because USER_ROLE_MANAGE exists
+       * only in SUPERADMIN_CAPABILITIES, so nobody is left who can appoint a
+       * replacement.
+       */
+      kind: 'last_superadmin';
+      activeSuperadmins: number;
     }
   | {
       kind: 'deleted';
@@ -70,6 +103,20 @@ export async function performUserDeleteCascade(
   // True-idempotent: a re-issued DELETE on an already-deleted user is a no-op.
   if (typeof userData.deletedAt === 'number') {
     return { kind: 'already_deleted', deletedAt: userData.deletedAt };
+  }
+
+  // Superadmin floor. Enforced BEFORE any other refusal so the most consequential
+  // answer wins, and before every mutation so a refusal costs nothing.
+  //
+  // `setUserRole` counts the same population inside its transaction to refuse the
+  // last DEMOTE; deleting the account achieved the same end state and was not
+  // counted at all. Soft-deleted users are excluded from the count exactly as
+  // there — a deleted superadmin cannot authenticate, so it cannot hold the floor.
+  if (asRole(userData.role) === 'superadmin') {
+    const activeSuperadmins = await countActiveSuperadmins(db);
+    if (activeSuperadmins <= MIN_SUPERADMINS) {
+      return { kind: 'last_superadmin', activeSuperadmins };
+    }
   }
 
   // Owned-site check: refuse without a successor.

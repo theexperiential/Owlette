@@ -6839,8 +6839,13 @@ paths:
       tags: [Users]
       summary: promote a user to admin or superadmin
       description: |
-        Atomic role update via Firestore transaction. Requires `user=*:write`
+        Atomic role update via Firestore transaction. Requires `user=*:admin`
         scope or session/id-token from a superadmin user.
+
+        `user=*:admin`, not the `user=*:write` its demote sibling takes: this
+        route can grant `superadmin`, which confers every capability on every
+        site. A key narrowed to `write` must not be able to mint a principal
+        stronger than itself.
       security:
         - apiKey: []
         - bearerApiKey: []

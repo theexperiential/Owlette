@@ -573,7 +573,7 @@ describe('GET /api/users/{uid}', () => {
 
 describe('POST /api/users/{uid}/promote', () => {
   it('promotes a member to admin atomically + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -604,7 +604,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('rejects invalid role with 400', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -619,7 +619,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('returns 404 for unknown uid', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
 
     const req = createMockRequest(
       'http://localhost/api/users/ghost/promote',
@@ -633,7 +633,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('noop when user is already at requested role', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'admin' });
 
     const req = createMockRequest(
@@ -648,6 +648,39 @@ describe('POST /api/users/{uid}/promote', () => {
     expect(res.status).toBe(200);
     expect(body.changed).toBe(false);
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  // THE GUARD. /promote can grant `superadmin`, which confers every capability on
+  // every site — so it demands `user=*:admin`, the same bar as user-delete and
+  // mfa-reset. A `write` key formerly reached it, so a deliberately narrowed
+  // delegation could mint a principal stronger than the key itself while being
+  // unable to delete a user. The ACTOR was always superadmin-gated by the
+  // capability; the SCOPE tier was the hole.
+  it('refuses a user=*:write key — minting a superadmin needs admin scope', async () => {
+    authedAsSuperadminWithKey('write');
+    seedUser('alice', { role: 'member' });
+
+    const res = await promotePOST(
+      createMockRequest('http://localhost/api/users/alice/promote', {
+        method: 'POST',
+        body: { role: 'superadmin' },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(res.status).toBe(403);
+
+    // NEGATIVE CONTROL: the identical call on an `admin` key succeeds, so the
+    // refusal above is about the scope tier and not a blanket denial.
+    authedAsSuperadminWithKey('admin');
+    seedUser('alice', { role: 'member' });
+    const ok = await promotePOST(
+      createMockRequest('http://localhost/api/users/alice/promote', {
+        method: 'POST',
+        body: { role: 'superadmin' },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(ok.status).toBe(200);
   });
 
   it('rejects api key without write scope (403 scope_insufficient)', async () => {
@@ -931,6 +964,57 @@ describe('DELETE /api/users/{uid}', () => {
         attributes: expect.objectContaining({ verb: 'soft_deleted' }),
       }),
     );
+  });
+
+  // A deployment must always keep at least MIN_SUPERADMINS active superadmins.
+  // setUserRole has always refused the last DEMOTE; delete reached the same end
+  // state uncounted, and unlike a demote it is unrecoverable — USER_ROLE_MANAGE
+  // exists only in SUPERADMIN_CAPABILITIES, so no one would be left to appoint a
+  // replacement.
+  it('refuses to delete the LAST active superadmin (409 last_superadmin)', async () => {
+    authedAsSuperadminWithKey('admin', 'user-superadmin');
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/user-superadmin', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'user-superadmin' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('last_superadmin');
+    expect(body.minSuperadmins).toBe(1);
+    // Refused BEFORE any mutation — no soft-delete stamp landed.
+    expect(docStore['users/user-superadmin']?.data?.deletedAt).toBeUndefined();
+  });
+
+  it('allows deleting a superadmin while another active one remains', async () => {
+    // NEGATIVE CONTROL for the floor: same operation, one more superadmin.
+    // Without this, a guard that refused every superadmin delete would pass.
+    authedAsSuperadminWithKey('admin');
+    seedUser('second-sa', { role: 'superadmin', email: 'sa2@example.com' });
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/second-sa', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'second-sa' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore['users/second-sa']?.data?.deletedAt).toBeDefined();
+  });
+
+  it('does not count SOFT-DELETED superadmins toward the floor', async () => {
+    authedAsSuperadminWithKey('admin', 'user-superadmin');
+    // A deleted superadmin cannot authenticate, so it must not hold the floor
+    // open — the same exclusion setUserRole makes.
+    seedUser('ghost-sa', { role: 'superadmin', deletedAt: 1700000000000 });
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/user-superadmin', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'user-superadmin' }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('last_superadmin');
   });
 
   it('refuses delete when user owns sites and successorUid is missing (409 orphan_sites)', async () => {
