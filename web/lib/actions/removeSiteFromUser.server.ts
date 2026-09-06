@@ -7,9 +7,9 @@
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
-import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
+import { removeMember } from '@/lib/membership.server';
 import { cancelUserCommandsOnSites } from '@/lib/userDeleteCascade.server';
 import logger from '@/lib/logger';
 
@@ -35,6 +35,8 @@ export type RemoveSiteFromUserResult =
   | { kind: 'invalid_format'; malformed: string[] }
   | { kind: 'too_many'; count: number; max: number }
   | { kind: 'owns_sites'; ownedSiteIds: string[] }
+  /** A membership write was refused. Sites before this one were removed. */
+  | { kind: 'remove_failed'; siteId: string; reason: string }
   | {
       kind: 'updated';
       removedSiteIds: string[];
@@ -86,9 +88,20 @@ export async function removeSiteFromUser(
     return { kind: 'owns_sites', ownedSiteIds };
   }
 
-  await userRef.update({
-    sites: FieldValue.arrayRemove(...validatedSiteIds),
-  });
+  // Through the single membership writer (Wave 2 task 2.4), one site at a time.
+  //
+  // This was a single `arrayRemove` over every site. That is cheaper, and it is
+  // given up for the same reason as the assign path: it touched ONLY the legacy
+  // field, so the member document was left behind and the two shapes diverged.
+  // removeMember also re-checks ownership INSIDE its transaction, which the
+  // owner guard above cannot do — that guard reads its snapshot before this
+  // loop, so a transfer landing in between would slip past it.
+  for (const siteId of validatedSiteIds) {
+    const result = await removeMember({ siteId, uid: input.uid, db: input.db });
+    if (!result.ok && result.failure.kind !== 'site_not_found') {
+      return { kind: 'remove_failed', siteId, reason: result.failure.kind };
+    }
+  }
 
   // Best-effort; errors don't block the response.
   let cancelledCommandCount = 0;

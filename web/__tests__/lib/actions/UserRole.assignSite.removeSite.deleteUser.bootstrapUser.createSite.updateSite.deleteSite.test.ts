@@ -83,23 +83,38 @@ class FakeDb {
     const ops: Array<{
       ref: FakeDoc;
       patch: Record<string, unknown>;
-      mode: 'set' | 'update';
+      mode: 'set' | 'update' | 'create' | 'delete';
     }> = [];
     return {
       set: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'set' }),
       update: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'update' }),
+      // create() differs from set(): it FAILS on an existing document. Modelling
+      // that is what lets addMember's owner-overwrite refusal be tested at all.
+      create: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'create' }),
+      delete: (ref: FakeDoc) => ops.push({ ref, patch: {}, mode: 'delete' }),
       commit: async () => {
         for (const op of ops) {
-          if (op.mode !== 'update') continue;
-          const snap = await op.ref.get();
-          if (!snap.exists) {
-            throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+          if (op.mode === 'update') {
+            const snap = await op.ref.get();
+            if (!snap.exists) {
+              throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+            }
+          }
+          if (op.mode === 'create') {
+            const snap = await op.ref.get();
+            if (snap.exists) {
+              const err = new Error('Document already exists') as Error & { code: number };
+              err.code = 6;
+              throw err;
+            }
           }
         }
         for (const op of ops) {
-          if (op.mode === 'set') await op.ref.set(op.patch);
+          if (op.mode === 'set' || op.mode === 'create') await op.ref.set(op.patch);
+          else if (op.mode === 'delete') await op.ref.delete();
           else await op.ref.update(op.patch);
         }
       },
@@ -115,7 +130,9 @@ class FakeDb {
     return callback({
       get: (ref) => ref.get(),
       update: (ref, patch) => ref.update(patch),
-    });
+      set: (ref: FakeDoc, patch: Record<string, unknown>) => ref.set(patch),
+      delete: (ref: FakeDoc) => ref.delete(),
+    } as never);
   }
 
   seed(path: string, data: Record<string, unknown>): void {

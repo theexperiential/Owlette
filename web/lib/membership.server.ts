@@ -190,7 +190,20 @@ export async function removeMember(input: {
   return db.runTransaction(async (tx) => {
     const [memberSnap, siteSnap] = await Promise.all([tx.get(ref), tx.get(siteRef)]);
 
-    if (!siteSnap.exists) return { ok: false, failure: { kind: 'site_not_found' } };
+    // A MISSING SITE IS NOT A REFUSAL. The guard below exists to protect the
+    // OWNER; a site that no longer exists has no owner to protect, and the
+    // membership left pointing at it is precisely the dangling entry that makes
+    // a re-registered slug inherit the previous tenant's members. Refusing here
+    // would break the orphan-cleanup path in ManageUserSitesDialog, which
+    // depends on being able to strip membership for sites that are gone.
+    //
+    // The members DELETE endpoint still 404s on a missing site — it checks that
+    // itself, before calling this — so nothing is weakened by allowing it here.
+    if (!siteSnap.exists) {
+      if (memberSnap.exists) tx.delete(ref);
+      tx.update(userRef, { sites: FieldValue.arrayRemove(input.siteId) });
+      return { ok: true };
+    }
 
     // BOTH shapes are consulted while the legacy field is still authoritative:
     // the member row may not exist yet for a site whose owner predates this

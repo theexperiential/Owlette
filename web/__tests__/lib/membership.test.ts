@@ -260,11 +260,19 @@ describe('removeMember', () => {
     ]);
   });
 
-  it('refuses when the site does not exist', async () => {
+  it('STILL removes when the site is gone — the orphan-cleanup path', async () => {
+    // A missing site has no owner to protect, and the membership left pointing
+    // at it is the dangling entry that lets a re-registered slug inherit the
+    // previous tenant's members. ManageUserSitesDialog's cleanup path depends on
+    // this working. (The members DELETE endpoint still 404s on a missing site —
+    // it checks that itself, before calling here.)
     docs.delete(`sites/${SITE}`);
     const res = await removeMember({ siteId: SITE, uid: ALICE });
-    expect(res).toEqual({ ok: false, failure: { kind: 'site_not_found' } });
-    expect(txOps).toHaveLength(0);
+    expect(res.ok).toBe(true);
+    expect(txOps).toEqual([
+      { op: 'delete', path: memberPath(ALICE) },
+      { op: 'update', path: `users/${ALICE}`, data: { sites: FieldValue.arrayRemove(SITE) } },
+    ]);
   });
 });
 

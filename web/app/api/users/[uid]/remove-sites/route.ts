@@ -112,6 +112,22 @@ export const POST = authorizedPlatformHandler<RouteParams>({
           });
         }
 
+        // A membership write was refused mid-batch. Reported rather than
+        // swallowed: sites BEFORE this one were written, so a caller that
+        // saw a bare 500 would not know how far the batch got.
+        if (result.kind === 'remove_failed') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'could not remove site membership',
+            status: 409,
+            detail: `membership write refused for site ${result.siteId} (${result.reason}); sites processed before it were applied`,
+            instance: `/api/users/${uid}/remove-sites`,
+            code: 'remove_failed',
+            siteId: result.siteId,
+            reason: result.reason,
+          });
+        }
+
         return applyAuthDeprecations(
           NextResponse.json({
             uid,

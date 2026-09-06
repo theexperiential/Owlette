@@ -300,6 +300,20 @@ function makeBatch() {
       patch: Record<string, unknown>,
     ) => ops.push(() => ref.update(patch)),
     delete: (ref: { delete: () => Promise<void> }) => ops.push(() => ref.delete()),
+    // create() must FAIL on an existing document, not behave like set() — that
+    // difference is the whole reason addMember cannot overwrite an owner row.
+    create: (
+      ref: { set: (d: Record<string, unknown>) => Promise<void>; get: () => Promise<{ exists: boolean }> },
+      data: Record<string, unknown>,
+    ) =>
+      ops.push(async () => {
+        if ((await ref.get()).exists) {
+          const err = new Error('Document already exists') as Error & { code: number };
+          err.code = 6;
+          throw err;
+        }
+        await ref.set(data);
+      }),
     commit: async () => {
       for (const op of ops) await op();
     },
