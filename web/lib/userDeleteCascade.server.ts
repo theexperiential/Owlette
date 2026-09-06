@@ -16,6 +16,7 @@
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { MIN_SUPERADMINS } from '@/lib/actions/setUserRole.server';
+import { transferSiteOwnership } from '@/lib/actions/transferSiteOwnership.server';
 
 function asRole(raw: unknown): string | null {
   return typeof raw === 'string' ? raw : null;
@@ -59,6 +60,25 @@ export type UserDeleteOutcome =
        */
       kind: 'last_superadmin';
       activeSuperadmins: number;
+    }
+  | {
+      /**
+       * An ownership transfer did not land, so the delete was ABORTED before
+       * anything destructive ran — no key revoked, no `deletedAt` stamped.
+       *
+       * `transferredSites` lists the sites that DID move before the failure.
+       * They are not rolled back and do not need to be: each moved atomically,
+       * and a re-issued delete re-runs `findOwnedSites`, which queries
+       * `sites where owner == uid` — so the sites already handed over simply do
+       * not appear the second time. The retry attempts only what is left.
+       *
+       * A retry does need a NEW Idempotency-Key: reusing the failed request's
+       * key replays this refusal rather than re-running the work.
+       */
+      kind: 'transfer_failed';
+      siteId: string;
+      reason: string;
+      transferredSites: string[];
     }
   | {
       kind: 'deleted';
@@ -148,28 +168,49 @@ export async function performUserDeleteCascade(
     }
   }
 
-  // Transfer owned sites: reset `owner` and arrayUnion the site into the successor's `sites[]`,
-  // the canonical membership model. The departing user's `sites[]` is cleared in the final update.
+  // Transfer owned sites through the one transactional transfer (Wave 2 task
+  // 2.2), and FAIL CLOSED if any of them does not land.
+  //
+  // This loop used to be two un-batched `update` calls per site inside a
+  // `try/catch` that logged a warning and carried on. Three things went wrong
+  // with that, and all three end the same way — a site owned by an account that
+  // is about to be soft-deleted, therefore reachable by nobody, since both
+  // `resolveSiteAccess` and `firestore.rules` reject a deleted principal:
+  //
+  //   - a failure between the two updates left `sites/{id}.owner` and the
+  //     successor's `sites[]` disagreeing;
+  //   - the warning was the only trace, and the soft-delete below ran anyway;
+  //   - `transferredSites` under-reported, so the audit row said a transfer had
+  //     not happened when half of it had.
+  //
+  // Retrying was not possible either: the idempotency short-circuit at the top
+  // of this function replays the recorded response, so a partial failure was
+  // permanent. Aborting before any destructive step is the only safe answer —
+  // the caller can then fix the successor and re-issue the delete.
   const transferredSites: string[] = [];
   if (successorUid && ownedSites.length > 0) {
     for (const siteId of ownedSites) {
-      try {
-        await db.collection('sites').doc(siteId).update({
-          owner: successorUid,
-          ownerTransferredAt: Date.now(),
-          ownerTransferredFrom: uid,
-        });
-        await db.collection('users').doc(successorUid).update({
-          sites: FieldValue.arrayUnion(siteId),
-        });
-        transferredSites.push(siteId);
-      } catch (err) {
-        console.warn(
-          `[userDeleteCascade] failed to transfer site ${siteId}: ${
-            (err as Error).message
-          }`,
-        );
+      const outcome = await transferSiteOwnership({
+        siteId,
+        successorUid,
+        actorUid: uid,
+        // The cascade acts with platform authority: it has already established
+        // the caller holds USER_DELETE, and the departing user is by definition
+        // the current owner of every site in `ownedSites`.
+        actorIsSuperadmin: true,
+      });
+
+      if (!outcome.ok) {
+        // Nothing destructive has run yet — no key revoked, no `deletedAt`
+        // stamped — so returning here leaves the account exactly as it was.
+        return {
+          kind: 'transfer_failed',
+          siteId,
+          reason: outcome.failure.kind,
+          transferredSites,
+        };
       }
+      transferredSites.push(siteId);
     }
   }
 

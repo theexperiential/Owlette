@@ -187,6 +187,28 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
           });
         }
 
+        // The delete ABORTED before anything destructive ran, because an
+        // ownership transfer did not land. Previously this case warned to the
+        // console and carried on, soft-deleting the account and leaving the site
+        // owned by it — reachable by nobody, since a deleted principal is
+        // rejected by both resolveSiteAccess and firestore.rules.
+        if (result.kind === 'transfer_failed') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'ownership transfer failed; user not deleted',
+            status: 409,
+            detail: `could not transfer site ${result.siteId} to the successor (${result.reason}); the account was left untouched. Fix the successor and retry with a new Idempotency-Key.`,
+            instance: `/api/users/${uid}`,
+            code: 'transfer_failed',
+            siteId: result.siteId,
+            reason: result.reason,
+            // Sites that DID move before the failure. Not rolled back and not
+            // in need of it — each moved atomically, and a retry re-queries
+            // owned sites, so these simply will not appear again.
+            transferredSites: result.transferredSites,
+          });
+        }
+
         if (result.kind === 'orphan_sites') {
           return problem({
             type: ProblemType.Conflict,

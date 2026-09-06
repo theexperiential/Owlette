@@ -6696,6 +6696,17 @@ paths:
         owned sites to the supplied `successorUid`. Refuses if the user
         owns sites and `successorUid` is not provided (409 `orphan_sites`).
 
+        Each transfer runs as one transaction and the delete FAILS CLOSED: if any
+        site cannot be handed over, the request answers 409 `transfer_failed` and
+        the account is left completely untouched — no key revoked, no soft-delete
+        stamped. Sites that moved before the failure are reported in
+        `transferredSites`; they are not rolled back and do not need to be, since
+        a re-issued delete re-queries owned sites and skips them. A retry needs a
+        NEW `Idempotency-Key`.
+
+        Refuses with 409 `last_superadmin` if this would leave the deployment
+        below its floor of one active superadmin.
+
         Talons the user authored are reported as `authoredTalonCount` on every
         successful delete — an unattended talon run resolves its AUTHOR's site
         access, so deleting the author stops it. They are only moved when
@@ -6769,7 +6780,7 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
-        '409': { description: Orphan sites (provide successorUid) }
+        '409': { description: Orphan sites (provide successorUid), transfer_failed, or last_superadmin }
 
   /api/users/{uid}/talons:
     parameters:

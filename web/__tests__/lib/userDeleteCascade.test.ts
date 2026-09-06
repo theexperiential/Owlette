@@ -24,6 +24,8 @@ interface DocSeed {
 let docs: Map<string, DocSeed>;
 let updateCalls: Array<{ path: string; payload: Record<string, unknown> }>;
 let deletePaths: string[];
+/** Site ids that `sites.where('owner','==',uid)` reports for the departing user. */
+let ownedSiteIds: string[];
 
 function makeDocRef(path: string): Record<string, unknown> {
   return {
@@ -78,9 +80,9 @@ function makeCollectionRef(path: string): Record<string, unknown> {
     doc: (id: string) => makeDocRef(`${path}/${id}`),
     where: () => ({
       get: async () => {
-        // The cascade's only `where` is sites.where('owner','==',uid); always
-        // empty here — orphan sites are deleteOwnAccount.test.ts's business.
-        return { docs: [] };
+        // The cascade's only `where` is sites.where('owner','==',uid). Default
+        // empty; the transfer tests below set `ownedSiteIds` to drive it.
+        return { docs: ownedSiteIds.map((id) => ({ id })) };
       },
     }),
     get: async () => ({ docs: collectionDocs(path) }),
@@ -101,6 +103,11 @@ jest.mock('firebase-admin/firestore', () => ({
   },
 }));
 
+const mockTransfer = jest.fn();
+jest.mock('@/lib/actions/transferSiteOwnership.server', () => ({
+  transferSiteOwnership: (...args: unknown[]) => mockTransfer(...args),
+}));
+
 import { performUserDeleteCascade } from '@/lib/userDeleteCascade.server';
 
 beforeEach(() => {
@@ -108,6 +115,8 @@ beforeEach(() => {
   docs = new Map();
   updateCalls = [];
   deletePaths = [];
+  ownedSiteIds = [];
+  mockTransfer.mockResolvedValue({ ok: true, previousOwnerUid: 'alice', newOwnerUid: 'bob' });
   mockRevokeRefreshTokens.mockResolvedValue(undefined);
   mockUpdateUser.mockResolvedValue(undefined);
   adminAuthFactory.mockReturnValue({
@@ -256,5 +265,102 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     expect(deletePaths).toContain('users/uid-td/trustedDevices/hash-2');
     expect(docs.get('users/uid-td/trustedDevices/hash-1')?.exists).toBe(false);
     expect(docs.get('users/uid-td/trustedDevices/hash-2')?.exists).toBe(false);
+  });
+});
+
+/**
+ * Wave 2 task 2.4 — succession is transactional and FAILS CLOSED.
+ *
+ * The old loop performed two un-batched updates per site inside a try/catch that
+ * warned and continued, then soft-deleted the account regardless. Every failure
+ * mode ended the same way: a site owned by a soft-deleted account, reachable by
+ * nobody, because both `resolveSiteAccess` and `firestore.rules` reject a deleted
+ * principal. Retrying could not fix it either — the idempotency short-circuit
+ * replays the recorded response, so a partial failure was permanent.
+ */
+describe('performUserDeleteCascade — transfer failure aborts the delete', () => {
+  function seedOwnerAndSuccessor() {
+    docs.set('users/alice', {
+      exists: true,
+      data: { uid: 'alice', role: 'admin', sites: ['site-a'] },
+    });
+    docs.set('users/bob', {
+      exists: true,
+      data: { uid: 'bob', role: 'admin', sites: [] },
+    });
+    ownedSiteIds = ['site-a'];
+  }
+
+  it('leaves NO partial state when a transfer fails', async () => {
+    seedOwnerAndSuccessor();
+    mockTransfer.mockResolvedValue({
+      ok: false,
+      failure: { kind: 'successor_inactive' },
+    });
+
+    const outcome = await performUserDeleteCascade('alice', { successorUid: 'bob' });
+
+    expect(outcome.kind).toBe('transfer_failed');
+    if (outcome.kind !== 'transfer_failed') throw new Error('expected transfer_failed');
+    expect(outcome.siteId).toBe('site-a');
+    expect(outcome.reason).toBe('successor_inactive');
+
+    // NOTHING destructive ran. These four assertions are the actual acceptance
+    // criterion: the account must be exactly as it was.
+    expect(mockRevokeRefreshTokens).not.toHaveBeenCalled();
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(updateCalls.some((c) => 'deletedAt' in c.payload)).toBe(false);
+    expect(updateCalls.some((c) => c.path === 'users/alice')).toBe(false);
+  });
+
+  it('completes the delete when the transfer succeeds', async () => {
+    // NEGATIVE CONTROL. Without it, a cascade that aborted unconditionally would
+    // pass the test above just as well.
+    seedOwnerAndSuccessor();
+    mockTransfer.mockResolvedValue({
+      ok: true,
+      previousOwnerUid: 'alice',
+      newOwnerUid: 'bob',
+    });
+
+    const outcome = await performUserDeleteCascade('alice', { successorUid: 'bob' });
+
+    expect(outcome.kind).toBe('deleted');
+    if (outcome.kind !== 'deleted') throw new Error('expected deleted');
+    expect(outcome.transferredSites).toEqual(['site-a']);
+    expect(mockUpdateUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the sites that DID move before the failure', async () => {
+    docs.set('users/alice', {
+      exists: true,
+      data: { uid: 'alice', role: 'admin', sites: ['site-a', 'site-b'] },
+    });
+    docs.set('users/bob', { exists: true, data: { uid: 'bob', role: 'admin', sites: [] } });
+    ownedSiteIds = ['site-a', 'site-b'];
+
+    mockTransfer
+      .mockResolvedValueOnce({ ok: true, previousOwnerUid: 'alice', newOwnerUid: 'bob' })
+      .mockResolvedValueOnce({ ok: false, failure: { kind: 'site_not_found' } });
+
+    const outcome = await performUserDeleteCascade('alice', { successorUid: 'bob' });
+
+    expect(outcome.kind).toBe('transfer_failed');
+    if (outcome.kind !== 'transfer_failed') throw new Error('expected transfer_failed');
+    // site-a moved and is NOT rolled back — it moved atomically, and a re-issued
+    // delete re-queries owned sites, so it simply will not appear again.
+    expect(outcome.transferredSites).toEqual(['site-a']);
+    expect(outcome.siteId).toBe('site-b');
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  it('routes every transfer through the ONE transactional transfer', async () => {
+    seedOwnerAndSuccessor();
+    await performUserDeleteCascade('alice', { successorUid: 'bob' });
+
+    expect(mockTransfer).toHaveBeenCalledTimes(1);
+    expect(mockTransfer).toHaveBeenCalledWith(
+      expect.objectContaining({ siteId: 'site-a', successorUid: 'bob' }),
+    );
   });
 });
