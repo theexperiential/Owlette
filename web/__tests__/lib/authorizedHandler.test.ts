@@ -30,6 +30,11 @@ let customerDoc: { exists: boolean; data: () => unknown } = {
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
+    // Batched read used by lib/sitePolicy.server.ts. Real getAll preserves
+    // argument order and yields a non-existent snapshot for a missing doc,
+    // so delegating to each ref's own get() matches its observable shape.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
     collection: (top: string) => buildCollection(top),
   }),
 }));
@@ -376,8 +381,15 @@ describe('authorizedSiteHandler — kill switches', () => {
 });
 
 describe('authorizedSiteHandler — denials', () => {
+  // Since Wave 1 Task 1.2 the wrapper resolves access through
+  // lib/sitePolicy.server.ts, so these drive the underlying user/site documents
+  // instead of stubbing assertUserHasSiteAccess. That is the honest seam: the
+  // old stub returned `siteData: {}`, which silently disabled the site-owner
+  // short-circuit tested below, letting these cases assert denials that
+  // production would NOT produce for a caller who owns the site.
   it('returns 404 when site access fails (collapsed from 403/404)', async () => {
-    assertUserHasSiteAccessMock.mockRejectedValue(new ApiAuthError(403, 'no access'));
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: [] }) };
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -385,16 +397,31 @@ describe('authorizedSiteHandler — denials', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when site access fails because the user is inactive', async () => {
-    assertUserHasSiteAccessMock.mockRejectedValue(
-      new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
-        code: 'user_inactive',
-      }),
-    );
+  it('returns 404, not 403, when the SITE itself is missing (no existence leak)', async () => {
+    siteDoc = { exists: false, data: () => undefined };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(404);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 with code user_inactive when the caller is soft-deleted', async () => {
+    userDoc = {
+      exists: true,
+      data: () => ({ role: 'admin', sites: ['site-a'], deletedAt: 1700000000000 }),
+    };
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    // 403 rather than the collapsed 404 is THIS wrapper's distinguishing
+    // behaviour; `_shared` answers 404 for the same state. Pinned as
+    // DIVERGENCE 1 in __tests__/lib/authorizationParity.test.ts.
     expect(res.status).toBe(403);
+    // The STATUS carries the distinction, not the body: authErrorToResponse
+    // maps this through problemForbidden(), so the internal `user_inactive`
+    // code is deliberately not disclosed to the caller.
+    expect((await res.json()).code).toBe('forbidden');
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -416,6 +443,11 @@ describe('authorizedSiteHandler — denials', () => {
 
   it('returns 403 + deny audit when the capability is missing', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+    // Owned by someone else, or the owner short-circuit would grant the
+    // capability and this would assert nothing. (The default fixture owner is
+    // the caller, which is exactly how this test used to pass for the wrong
+    // reason once siteData stopped being stubbed empty.)
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -477,10 +509,7 @@ describe('authorizedSiteHandler — site owner short-circuit', () => {
   // this surfaced ("capability not granted" on delete site, Davor, 2026-09-04).
   it('grants a site-scoped capability to a member who owns the site', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
-    assertUserHasSiteAccessMock.mockResolvedValue({
-      siteId: 'site-a',
-      siteData: { owner: 'uid_alice' },
-    });
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -492,10 +521,7 @@ describe('authorizedSiteHandler — site owner short-circuit', () => {
   // blanket member-allow would pass the test above just as well.
   it('still denies the same member on a site they do not own', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
-    assertUserHasSiteAccessMock.mockResolvedValue({
-      siteId: 'site-a',
-      siteData: { owner: 'uid_bob' },
-    });
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -507,10 +533,7 @@ describe('authorizedSiteHandler — site owner short-circuit', () => {
   // capability must stay unreachable, or owning a site would confer global admin.
   it('does not let ownership grant a capability that is not site-scoped', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
-    assertUserHasSiteAccessMock.mockResolvedValue({
-      siteId: 'site-a',
-      siteData: { owner: 'uid_alice' },
-    });
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'GLOBAL_SETTINGS_WRITE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));

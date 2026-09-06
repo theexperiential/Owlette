@@ -356,6 +356,23 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
   return permission !== 'read';
 }
 
+/**
+ * Site access for the `_shared` family.
+ *
+ * Goes through `assertUserHasSiteAccess`, which since Wave 1 Task 1.2 is a thin
+ * adapter over the single decision core in `lib/sitePolicy.server.ts`. Calling
+ * the adapter rather than the core directly is deliberate: this family needs
+ * only pass/fail — it builds no actor, so it has no use for the role and
+ * membership facts the core returns — and the adapter already serves five
+ * production routes that call it on their own. One decision implementation,
+ * without a second call shape to keep in step.
+ *
+ * NOTE the response mapping: every denial collapses to the SAME 404 —
+ * including an inactive user, where `authorizedSiteHandler` answers 403
+ * `user_inactive`. That divergence is real, is pinned by
+ * `__tests__/lib/authorizationParity.test.ts`, and is what Task 1.3 unifies.
+ * It is preserved verbatim here so the extraction itself changes no behaviour.
+ */
 async function assertSiteAccessOrProblem(
   userId: string,
   siteId: string,

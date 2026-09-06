@@ -3,7 +3,8 @@
  * authorization pipeline every api route runs before its handler:
  *
  *   1. resolveAuth → UserActor (api-key or session/id-token)
- *   2. site access (site wrapper only) — assertUserHasSiteAccess
+ *   2. site access + actor (site wrapper only) — resolveSiteAccess, the shared
+ *      decision core in lib/sitePolicy.server.ts, in one batched read
  *   3. securityConfig.read() for kill-switch state
  *   4. api-key scope — ALWAYS runs, never bypassed: it is the resilient line
  *      against a downgraded key gaining rights while capability enforcement
@@ -27,10 +28,13 @@ import {
   ApiAuthError,
   resolveAuth,
   requireScope,
-  assertUserHasSiteAccess,
   type ResolvedAuth,
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
+import {
+  resolveSiteAccess,
+  type SiteAccessOutcome,
+} from '@/lib/sitePolicy.server';
 import {
   problem,
   problemForbidden,
@@ -437,36 +441,42 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         });
       }
 
-      // 3. Site access check. Keep the site document it already read — step 7
-      // needs the `owner` field and re-reading it would double the cost.
+      // 3+4. Site access AND the actor's role/sites, from ONE round trip
+      // (lib/sitePolicy.server.ts). These were two steps and three document
+      // reads: assertUserHasSiteAccess read sites/{id} + users/{uid}, then
+      // loadUserActor read users/{uid} AGAIN. The decision core reads both
+      // once via getAll and hands back everything both steps needed.
+      //
+      // The response mapping below is deliberately still this wrapper's own —
+      // it answers 403 for an inactive user where _shared collapses to 404.
+      // Wave 1 Task 1.3 unifies the two mappings; keeping them separate here
+      // is what lets the parity matrix stay green across this extraction.
       let siteData: Record<string, unknown> | null = null;
+      let outcome: SiteAccessOutcome;
       try {
-        ({ siteData } = await assertUserHasSiteAccess(auth.userId, siteId));
+        outcome = await resolveSiteAccess(auth.userId, siteId);
       } catch (err) {
-        if (err instanceof ApiAuthError) {
-          if (err.code === 'user_inactive') {
-            return authErrorToResponse(err);
-          }
-          // Don't leak existence: 403/404 both collapse to "not found or no access".
-          if (err.status === 404 || err.status === 403) {
-            return problemNotFound('site not found or no access');
-          }
-          return authErrorToResponse(err);
-        }
-        throw err;
-      }
-
-      // 4. Build user actor (role + sites).
-      try {
-        actor = await loadUserActor(auth);
-      } catch (err) {
-        if (err instanceof ApiAuthError) return authErrorToResponse(err);
-        logger.error('[authorizedSiteHandler] failed to load user actor', {
+        logger.error('[authorizedSiteHandler] failed to resolve site access', {
           context: 'authorizedHandler',
           data: { err: err instanceof Error ? err.message : String(err) },
         });
         return serviceUnavailable('could not load user record');
       }
+
+      if (!outcome.ok) {
+        if (outcome.reason === 'user_inactive') {
+          return authErrorToResponse(
+            new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+              code: 'user_inactive',
+            }),
+          );
+        }
+        // Don't leak existence: missing site and no access answer identically.
+        return problemNotFound('site not found or no access');
+      }
+
+      siteData = outcome.facts.siteData;
+      actor = authToActor(auth, outcome.facts.globalRole, outcome.facts.sites);
 
       // 5. Read kill-switch config.
       const config = await securityConfig.read();

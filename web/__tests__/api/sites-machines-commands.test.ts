@@ -787,6 +787,13 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 
   it('403 — member may NOT reboot_machine (MACHINE_EXEC_COMMAND still required)', async () => {
+    // The site must be owned by SOMEONE ELSE for this to test what it claims.
+    // authorizedSiteHandler grants any site-scoped capability to the site's
+    // owner (the self-serve-owner short-circuit), and this suite's beforeEach
+    // seeds `owner: 'user-1'` — the caller itself. Until Wave 1 Task 1.2 the
+    // wrapper took siteData from a stub returning `{}`, so the short-circuit was
+    // invisible here and this asserted a denial production would not produce.
+    mocks.siteDocs.set(SITE, { owner: 'someone-else' });
     // Capability denial happens in the wrapper, so only the actor-load read is consumed.
     mocks.get.mockReset();
     mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));

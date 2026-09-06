@@ -264,6 +264,11 @@ const mockGetUserByEmail = jest.fn(async (email: string) => {
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
+    // Batched read used by lib/sitePolicy.server.ts. Real getAll preserves
+    // argument order and yields a non-existent snapshot for a missing doc,
+    // so delegating to each ref's own get() matches its observable shape.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
     collection: (name: string) => makeCollectionRef([name]),
     runTransaction: mockRunTransaction,
     batch: makeBatch,
