@@ -1,42 +1,25 @@
 /**
  * `membership.server.ts` — THE single writer for site membership.
  *
- * Wave 2 of `dev/active/per-site-roles`. Membership is currently implied by two
- * legacy fields — `sites/{siteId}.owner` and `users/{uid}.sites[]` — written from
- * eleven different places, each with its own guards, ordering and atomicity. This
- * module is the one place allowed to change membership from here on; the other
- * writers move onto it wave by wave until only migrations and test seeds remain.
+ * Wave 2 of `dev/active/per-site-roles`. Membership is implied today by two legacy
+ * fields — `sites/{siteId}.owner` and `users/{uid}.sites[]` — written from eleven
+ * places; this module is the only writer allowed from here on.
  *
- * DUAL-WRITE. Every mutation writes BOTH the new `sites/{siteId}/members/{uid}`
- * document and the legacy pair, in ONE batch or transaction. The new document is
- * authoritative from Wave 5; until then it is a shadow, and any write that lands
- * in one shape but not the other is the exact divergence this wave exists to end.
- * `createSite` already proves the pattern works (it dual-writes owner + sites[] in
- * a single batch, which is why that particular divergence has never been seen).
+ * DUAL-WRITE. Every mutation writes BOTH `sites/{siteId}/members/{uid}` and the
+ * legacy pair in ONE batch or transaction — a write landing in one shape but not the
+ * other is the divergence this wave exists to end. The new document is a shadow until
+ * Wave 5, when it becomes authoritative.
  *
- * THREE INVARIANTS, each of which was a live escalation path before this module:
+ * Three invariants, each a live escalation path before this module (details at each
+ * function): `addMember` uses `create()`, never `set()`, so a site admin cannot
+ * overwrite the OWNER's row and take the site; `changeRole` cannot reach `'owner'` —
+ * ownership moves only through the transactional `transferOwnership` (task 2.2);
+ * `removeMember` refuses the owner.
  *
- *   1. `addMember` uses `create()`, NEVER `set()`. `POST /members` today is an
- *      unconditioned `arrayUnion` with no owner check at all, so once a member
- *      document exists a plain `set()` would let any site admin overwrite the
- *      OWNER's row and take the site. `create()` fails closed on an existing
- *      document instead.
- *   2. `changeRole` accepts only 'admin' | 'member'. `'owner'` is unreachable
- *      through it at the type level — ownership moves only through
- *      `transferOwnership` (task 2.2), which is transactional and re-reads the
- *      owner row. Without this an admin promotes themselves to owner.
- *   3. `removeMember` refuses the owner. The existing route guard reads a stale
- *      snapshot taken before talon reassignment, so a removal racing a transfer
- *      can strip the sites[] entry of the user who just became owner. Here the
- *      owner check happens inside the transaction that performs the write.
- *
- * SUPERADMINS ARE DELIBERATELY NOT MEMBERS. A superadmin reaches every site by
- * global role (`resolveSiteAccess` short-circuits before the membership term), and
- * writing them member rows would make the roster lie in the other direction — a
- * superadmin who is later demoted would keep a membership nobody granted. The
- * roster's existing blind spot (a superadmin appears in no member list) is real,
- * but it is a reporting problem for the members endpoint to solve, not a reason
- * to manufacture membership records here.
+ * SUPERADMINS ARE DELIBERATELY NOT MEMBERS. They reach every site by global role
+ * (`resolveSiteAccess` short-circuits before the membership term); writing member rows
+ * would leave a demoted superadmin holding a membership nobody granted. The cost is
+ * that a superadmin appears in no member list — the members endpoint's problem.
  */
 
 import { FieldValue } from 'firebase-admin/firestore';
@@ -55,8 +38,7 @@ export interface MemberDoc {
    *  `collectionGroup('members').where('uid','==',me)` — the Wave 4 read path. */
   uid: string;
   role: MemberRole;
-  /** Present from day one so invitations can be added later with no migration.
-   *  v1 only ever writes 'active'. */
+  /** Present from day one so invitations can be added later with no migration. */
   status: 'active';
   addedAt: Date;
   addedBy: string;
@@ -81,15 +63,8 @@ function memberRef(db: FirebaseFirestore.Firestore, siteId: string, uid: string)
 }
 
 /**
- * Add a member to a site.
- *
- * `create()` on the member document is the concurrency control: two racing adds
- * mean exactly one succeeds and the other fails with ALREADY_EXISTS, and an add
- * aimed at an existing owner row cannot overwrite it. The legacy `arrayUnion` is
- * idempotent and rides the same batch.
- *
- * The caller is responsible for authorization and for having resolved `uid` from
- * an email; this module trusts the uid and re-checks only the invariants above.
+ * Add a member to a site. Authorization and email→uid resolution are the CALLER's
+ * job; this module trusts the uid and re-checks only the invariants above.
  */
 export async function addMember(input: {
   siteId: string;
@@ -131,10 +106,8 @@ export async function addMember(input: {
 /**
  * Change a member's per-site role.
  *
- * Transactional because two guards depend on state read in the same breath as the
- * write: the target must already be a member, and the target must NOT be the
- * owner. `AssignableRole` makes `'owner'` untypeable as a destination, and the
- * owner check makes it unreachable as a source — together they close the
+ * `AssignableRole` makes `'owner'` untypeable as a destination and the owner check
+ * below makes it unreachable as a source — together they close the
  * admin-promotes-self-to-owner path.
  */
 export async function changeRole(input: {
@@ -166,16 +139,14 @@ export async function changeRole(input: {
 /**
  * Remove a member from a site.
  *
- * Refuses the owner — a site must never be left ownerless, and ownership is moved
- * by transfer, not by removal. The owner check runs inside the transaction that
- * performs the write, which is the fix for the stale-snapshot race in the existing
- * DELETE route: there the guard is evaluated against a snapshot taken before talon
- * reassignment, so a concurrent ownership transfer can slip in between and the
- * removal strips the new owner's `sites[]` entry.
+ * Refuses the owner — a site must never be left ownerless. The check runs inside the
+ * transaction that performs the write: the existing DELETE route evaluates its guard
+ * against a snapshot taken before talon reassignment, so a concurrent ownership
+ * transfer slips in and the removal strips the NEW owner's `sites[]` entry.
  *
- * Talon reassignment stays the CALLER's business and must still happen before this
- * runs — the route's ordering contract (a refused successor leaves membership
- * intact) is pinned by tests and is not this module's to change.
+ * Talon reassignment stays the CALLER's business and must still happen first — the
+ * route's ordering contract (a refused successor leaves membership intact) is pinned
+ * by tests.
  */
 export async function removeMember(input: {
   siteId: string;
@@ -190,15 +161,11 @@ export async function removeMember(input: {
   return db.runTransaction(async (tx) => {
     const [memberSnap, siteSnap] = await Promise.all([tx.get(ref), tx.get(siteRef)]);
 
-    // A MISSING SITE IS NOT A REFUSAL. The guard below exists to protect the
-    // OWNER; a site that no longer exists has no owner to protect, and the
-    // membership left pointing at it is precisely the dangling entry that makes
-    // a re-registered slug inherit the previous tenant's members. Refusing here
-    // would break the orphan-cleanup path in ManageUserSitesDialog, which
-    // depends on being able to strip membership for sites that are gone.
-    //
-    // The members DELETE endpoint still 404s on a missing site — it checks that
-    // itself, before calling this — so nothing is weakened by allowing it here.
+    // A MISSING SITE IS NOT A REFUSAL: the guard below protects the OWNER, and a
+    // deleted site has none. The membership left behind is the dangling entry that
+    // makes a re-registered slug inherit the previous tenant's members, and stripping
+    // it is what ManageUserSitesDialog's orphan cleanup depends on. The DELETE route
+    // 404s on a missing site itself, before calling this.
     if (!siteSnap.exists) {
       if (memberSnap.exists) tx.delete(ref);
       tx.update(userRef, { sites: FieldValue.arrayRemove(input.siteId) });
@@ -215,9 +182,8 @@ export async function removeMember(input: {
       return { ok: false, failure: { kind: 'is_owner' } };
     }
 
-    // Absent member row is NOT an error while the subcollection is still a
-    // shadow: membership predating this module lives only in `sites[]`, and
-    // refusing here would make the endpoint unusable for every existing member.
+    // Absent member row is NOT an error while the subcollection is a shadow —
+    // refusing would make the endpoint unusable for every pre-existing member.
     if (memberSnap.exists) tx.delete(ref);
     tx.update(userRef, { sites: FieldValue.arrayRemove(input.siteId) });
     return { ok: true };
@@ -225,12 +191,9 @@ export async function removeMember(input: {
 }
 
 /**
- * Write the owner's member row for a site being created.
- *
- * Split out so `createSite` can add it to the batch it ALREADY commits, keeping
- * site document, owner field and member row in one atomic write. Takes the batch
- * rather than committing, because a second commit would reintroduce exactly the
- * partial-write window this module exists to close.
+ * Write the owner's member row into a batch `createSite` ALREADY commits — site
+ * document, owner field and member row land in one atomic write. It takes the batch
+ * rather than committing because a second commit reopens the partial-write window.
  */
 export function addOwnerToBatch(
   batch: FirebaseFirestore.WriteBatch,

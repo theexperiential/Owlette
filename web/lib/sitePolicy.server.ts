@@ -1,45 +1,31 @@
 /**
  * `sitePolicy.server.ts` — the single site-authorization decision core.
  *
- * Owlette gated site-scoped routes through two independently written paths
- * (`authorizedSiteHandler` and `_shared`'s `require*AuthAndScope` family) plus
- * two more partial derivations (`hoot-utils`' `verifyUserSiteAccess`, and
- * `assertUserHasSiteAccess` itself). They agreed on the happy path and drifted
- * everywhere else. This module owns the DECISION; callers own the RESPONSE.
+ * Four paths used to gate site-scoped routes (`authorizedSiteHandler`,
+ * `_shared`'s `require*AuthAndScope`, `hoot-utils`' `verifyUserSiteAccess`,
+ * `assertUserHasSiteAccess`); they agreed on the happy path and drifted
+ * everywhere else. This module owns the DECISION; callers own the RESPONSE —
+ * it never builds a NextResponse, picks a status code, or decides whether a
+ * capability is required.
  *
- * That split is deliberate and load-bearing. This file answers "what is true
- * about this principal and this site" and nothing else — it never builds a
- * NextResponse, never picks a status code, and never decides whether a
- * capability is required. Wave 1 Task 1.2 moves both wrappers onto it while
- * PRESERVING their divergent response mappings; Task 1.3 then unifies those
- * mappings in one place. Keeping the two steps separate is what lets the
- * characterization matrix in `__tests__/lib/authorizationParity.test.ts` stay
- * green across the extraction and go red, deliberately, at the unification.
- *
- * Read cost: one `getAll([sites/{siteId}, users/{uid}])` round trip. The path
- * it replaces read the site once and `users/{uid}` TWICE — once in
- * `assertUserHasSiteAccess` and again in `loadUserActor`.
- *
- * MEMBERSHIP SEAM: `deriveMembership()` below is the one place that knows
- * membership is stored as `sites/{siteId}.owner` + `users/{uid}.sites[]`.
- * Wave 4 swaps it for `sites/{siteId}/members/{uid}`. Nothing else in the
- * codebase should read those two fields to make an access decision.
+ * The wrappers keep their divergent response mappings until Task 1.3 unifies
+ * them; that staging is what lets the characterization matrix in
+ * `__tests__/lib/authorizationParity.test.ts` stay green across the extraction
+ * and go red, deliberately, at the unification.
  */
 
 import type { NextRequest } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import type { Role } from '@/lib/capabilities';
 
-/** Per-site standing, derived today, stored from Wave 4 on. */
 export type MembershipRole = 'owner' | 'member' | null;
 
 /** Why a principal was refused. Callers map these to status codes. */
 export type SiteAccessDenial = 'site_not_found' | 'user_inactive' | 'no_access';
 
 /**
- * Everything both wrappers need, from one round trip. `siteData` is returned
- * so callers that need the site document (the SITE_DELETE ownership
- * short-circuit reads `owner`) do not read it a second time.
+ * `siteData` is returned so callers that need the site document (the
+ * SITE_DELETE ownership short-circuit reads `owner`) skip a second read.
  */
 export interface SiteAccessFacts {
   siteId: string;
@@ -77,10 +63,11 @@ function toStringArray(raw: unknown): string[] {
 }
 
 /**
- * THE MEMBERSHIP SEAM. Today per-site standing is implied by two legacy
- * fields; from Wave 4 it is a document. Superadmin is deliberately NOT folded
- * in here — it is a global override resolved by the caller, not a per-site
- * role, and conflating them is what made global `admin` leak across sites.
+ * THE MEMBERSHIP SEAM — the only place that reads `sites/{siteId}.owner` and
+ * `users/{uid}.sites[]` for an access decision; Wave 4 swaps both for
+ * `sites/{siteId}/members/{uid}`. Superadmin is deliberately NOT folded in: it
+ * is a global override resolved by the caller, not a per-site role, and
+ * conflating them is what made global `admin` leak across sites.
  */
 function deriveMembership(
   userId: string,
@@ -96,24 +83,15 @@ function deriveMembership(
 /**
  * Resolve a user principal against a site in ONE batched read.
  *
- * Decision order is load-bearing and matches the behaviour pinned by the
- * parity matrix: a missing SITE outranks an inactive user, which outranks the
- * access check. Reordering these changes observable status codes.
- *
- * Superadmin short-circuits the membership check — it does not consult
- * `membershipRole` at all — so that when Wave 4 moves membership into a
- * subcollection, a superadmin request costs no extra read.
+ * Decision order is load-bearing and pinned by the parity matrix: a missing
+ * SITE outranks an inactive user, which outranks the access check. Reordering
+ * changes observable status codes. Superadmin returns before the membership
+ * check so Wave 4's subcollection read stays off the superadmin path.
  */
 export async function resolveSiteAccess(
   userId: string,
   siteId: string,
-  /**
-   * Firestore handle. Defaults to `getAdminDb()`; callers that already hold one
-   * pass it so they neither reopen it nor lose the ability to inject a fake.
-   * `hoot-utils`' `verifyUserSiteAccess` takes a `db` in its public signature
-   * and its tests inject one, so this parameter is what lets that function be
-   * re-implemented over this core without changing its contract.
-   */
+  /** Injectable so `hoot-utils`' `verifyUserSiteAccess` keeps its `db` contract (its tests pass a fake). */
   db: FirebaseFirestore.Firestore = getAdminDb(),
 ): Promise<SiteAccessOutcome> {
   const [siteDoc, userDoc] = await db.getAll(
@@ -157,9 +135,8 @@ export async function resolveSiteAccess(
  * token's `site_id` / `machine_id` claims ARE the authorization: an agent may
  * only ever act on the machine it was issued for.
  *
- * Returns `null` when the request is not an agent ID token, so callers fall
- * through to normal user resolution. API keys (`owk_` prefix) are excluded up
- * front — they are user credentials and must take the user path.
+ * API keys (`owk_` prefix) are excluded up front — they are user credentials
+ * and must take the user path.
  */
 export async function resolveAgentPrincipal(
   req: NextRequest,

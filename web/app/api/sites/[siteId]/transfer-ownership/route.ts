@@ -3,23 +3,16 @@
  *
  * Moves ownership of a site to another user, atomically.
  *
- * Until now ownership moved in exactly one place — as a side effect of
- * `DELETE /api/users/{uid}?successorUid=<uid>` — which meant handing a site to a
- * colleague required deleting an account. That path also validated the successor
- * outside any transaction and rewrote each owned site with a separate un-batched
- * update inside a `try/catch` that warned and continued. This route is the
- * deliberate, first-class operation, and it is one transaction.
+ * Replaces the only prior path — the `DELETE /api/users/{uid}?successorUid=<uid>`
+ * cascade, whose non-transactional failure modes are catalogued in
+ * `transferSiteOwnership.server.ts`. This route is one transaction.
  *
- * Authorization is TWO-LAYERED and the inner layer is the real one. The wrapper
+ * Authorization is two-layered and the inner layer is the real one. The wrapper
  * admits owner / site-admin / superadmin (SITE_MEMBER_MANAGE, plus the site-owner
- * short-circuit), and then `transferSiteOwnership` re-decides from the site
- * document read INSIDE its transaction: the actor must BE the current owner or a
- * superadmin. A site admin is admitted by the wrapper and refused by the core.
- * That is intentional — the wrapper's pre-handler read happened before the
- * transaction opened, so trusting it is the stale-snapshot bug one layer up.
- *
- * Auth: `requireSiteAuthAndScope(req, siteId, 'admin')` for the api-key scope,
- * `SITE_MEMBER_MANAGE` for the capability, owner-or-superadmin for the decision.
+ * short-circuit) from a read taken before the transaction opened;
+ * `transferSiteOwnership` then re-decides from the site document read INSIDE its
+ * transaction — the actor must BE the owner or a superadmin. A site admin passing
+ * the wrapper and being refused by the core is deliberate, not redundancy.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -105,9 +98,8 @@ export const POST = authorizedSiteHandler<RouteParams>({
                 'body.successorUid': ['user is soft-deleted'],
               });
             case 'successor_already_owner':
-              // Refused rather than reported as a no-op success: the user-delete
-              // cascade's equivalent hole answers 200 while stranding a site on a
-              // soft-deleted owner, and silence here would be the same lie.
+              // 409 rather than a no-op 200: the user-delete cascade's equivalent
+              // hole reports success while stranding the site on a deleted owner.
               return problem({
                 type: ProblemType.Conflict,
                 title: 'successor already owns this site',

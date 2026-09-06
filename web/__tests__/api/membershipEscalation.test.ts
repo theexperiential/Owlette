@@ -8,34 +8,16 @@
  * the same call under legitimate conditions — because a guard that refuses
  * everything passes an it-refuses test exactly as well as a correct one.
  *
- * The Firestore double models the ONE property these guards actually depend on:
- * a transaction aborts when a document it READ was written by another
- * transaction that committed first. Without that, the concurrent-transfer test
- * proves nothing at all — two racing transfers over a fake that never conflicts
- * will always both "succeed".
+ * The Firestore double models the ONE property these guards depend on: a
+ * transaction aborts when a document it READ was written by another that
+ * committed first. Without it, two racing transfers would both "succeed".
  *
- * Paths covered:
- *   1. site admin promotes THEMSELVES to owner        (PATCH role=owner)
- *   2. site admin demotes the owner                    (PATCH on the owner)
- *   3. POST /members used as an upsert on the owner row
- *   4. two concurrent ownership transfers
- *   5. removal of the site owner                       (DELETE the owner)
- *   6. an api-key caller reaching a role change without site admin scope
- *
- * NEGATIVE CONTROLS RUN 2026-09-06, and they found something worth recording.
- * Four of the six guards redden their own test when removed. TWO do not, and it
- * is not because the tests are weak — those two paths are guarded TWICE, and
- * either layer alone is sufficient:
- *
- *   role=owner       route-level role validation  +  changeRole's ASSIGNABLE_ROLES
- *   remove-owner     the route's early 409        +  removeMember's owner vetoes
- *
- * Measured all three ways: removing only the inner guard leaves the suite green
- * (the outer refuses), removing only the outer leaves it green (the inner
- * refuses), and removing BOTH turns exactly that test red. So the pairs are real
- * defence in depth rather than one live guard and one decorative one, and these
- * tests are not vacuous. If you delete one layer, this suite will NOT tell you —
- * by design, because the request is still correctly refused.
+ * NEGATIVE CONTROLS RUN 2026-09-06: four of the six guards redden their own test
+ * when removed. The other two paths are guarded twice and either layer alone
+ * suffices — role=owner (route role validation + changeRole's ASSIGNABLE_ROLES)
+ * and remove-owner (the route's early 409 + removeMember's owner vetoes).
+ * Removing both reddens that test; removing either alone does not. So deleting
+ * one layer will NOT redden this suite — the request is still correctly refused.
  */
 
 import { createMockRequest } from './helpers/utils';
@@ -279,8 +261,6 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminStorage: () => ({ bucket: () => ({}) }),
 }));
 
-// --- routes under test ------------------------------------------------------
-
 import { POST as membersPOST } from '@/app/api/sites/[siteId]/members/route';
 import {
   DELETE as memberDELETE,
@@ -306,17 +286,7 @@ function authAs(uid: string): void {
   mockResolveAuth.mockResolvedValue({ userId: uid, keyContext: null });
 }
 
-/**
- * api-key auth carrying exactly `perms` on every site.
- *
- * Takes a LIST because the membership endpoints are DOUBLE-GATED and the two
- * gates want different permissions: `authorizedSiteHandler` defaults its
- * api-key scope to `site=<id>:write`, and the handler's first act is
- * `requireSiteAuthAndScope(..., 'admin')`. A key therefore needs BOTH, which is
- * not obvious from either call site. Wave 1 task 1.4 collapses these to the
- * inner permission; when it lands, the `write`-only refusal below stays and the
- * both-permissions control can drop to `['admin']`.
- */
+/** api-key auth carrying exactly `perms` on every site. */
 function authAsKey(uid: string, perms: Array<'read' | 'write' | 'admin'>): void {
   mockResolveAuth.mockResolvedValue({
     userId: uid,
@@ -344,13 +314,10 @@ beforeEach(() => {
   // bootstrapUser creates and the reason the ownership short-circuit exists.
   seedUser(OWNER, { role: 'member', sites: [SITE] });
   seedMemberRow(OWNER, 'owner');
-  // A genuine site admin: global role admin, assigned to the site, NOT the owner.
   seedUser(ADMIN, { role: 'admin', sites: [SITE] });
   seedMemberRow(ADMIN, 'admin');
   seedUser(OUTSIDER, { role: 'member', sites: [] });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('1. a site admin cannot promote THEMSELVES to owner', () => {
   it('refuses PATCH role=owner', async () => {
@@ -364,7 +331,6 @@ describe('1. a site admin cannot promote THEMSELVES to owner', () => {
     );
 
     expect(res.status).toBe(400);
-    // Still an admin, and the site's owner is unchanged.
     expect((docs.get(`sites/${SITE}/members/${ADMIN}`) as { role: string }).role).toBe('admin');
     expect((docs.get(`sites/${SITE}`) as { owner: string }).owner).toBe(OWNER);
   });
@@ -428,7 +394,6 @@ describe('3. POST /members cannot be used as an upsert on the owner row', () => 
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe('target_is_owner');
-    // The owner row is intact — not rewritten to `member`.
     expect((docs.get(`sites/${SITE}/members/${OWNER}`) as { role: string }).role).toBe('owner');
   });
 
@@ -472,13 +437,11 @@ describe('4. two concurrent ownership transfers leave exactly one owner', () => 
     const finalOwner = (docs.get(`sites/${SITE}`) as { owner: string }).owner;
     expect(['uid_succ_a', 'uid_succ_b']).toContain(finalOwner);
 
-    // EXACTLY one owner row across every candidate.
     const owners = [OWNER, 'uid_succ_a', 'uid_succ_b'].filter(
       (u) => (docs.get(`sites/${SITE}/members/${u}`) as { role?: string } | undefined)?.role === 'owner',
     );
     expect(owners).toEqual([finalOwner]);
-
-    // One 200, one refusal — the loser re-read the owner inside its retry and
+    // The loser re-read the owner inside its retry: the actor no longer owned the site.
     // found the actor was no longer the owner.
     const statuses = [a.status, b.status].sort();
     expect(statuses[0]).toBe(200);
@@ -498,7 +461,6 @@ describe('5. the site owner cannot be removed', () => {
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe('cannot_remove_owner');
-    // Membership intact in BOTH shapes.
     expect((docs.get(`users/${OWNER}`) as { sites: string[] }).sites).toContain(SITE);
     expect(docs.has(`sites/${SITE}/members/${OWNER}`)).toBe(true);
   });
@@ -522,9 +484,8 @@ describe('5. the site owner cannot be removed', () => {
 
 describe('6. an api-key caller cannot reach a role change without site admin scope', () => {
   it('refuses a site=*:write key on PATCH', async () => {
-    // The membership endpoints demand `site=<id>:admin`. A `write` key is the
-    // interesting case: it is enough for most mutations on the site, and would
-    // be a natural thing to hand a CI job.
+    // A `write` key is the interesting case: enough for most mutations on the
+    // site, and a natural thing to hand a CI job.
     authAsKey(ADMIN, ['write']);
     const res = await memberPATCH(
       createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
@@ -551,11 +512,10 @@ describe('6. an api-key caller cannot reach a role change without site admin sco
   });
 
   it('refuses an ADMIN-only key too — the outer gate wants write', async () => {
-    // Not a mistake in the test: the route is double-gated, and the OUTER gate
-    // (authorizedSiteHandler's default api-key scope) asks for `write` while the
-    // inner one asks for `admin`. An admin-only key satisfies the inner gate and
-    // is turned away by the outer. That is today's contract, pinned here so
-    // Wave 1 task 1.4 changes it deliberately rather than by accident.
+    // Not a mistake: the route is double-gated. The OUTER gate
+    // (authorizedSiteHandler's default api-key scope) wants `write` and the inner
+    // one wants `admin`, so an admin-only key clears the inner and is refused by
+    // the outer. Wave 1 task 1.4 collapses these — change this test deliberately.
     authAsKey(ADMIN, ['admin']);
     const res = await memberPATCH(
       createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
@@ -568,8 +528,7 @@ describe('6. an api-key caller cannot reach a role change without site admin sco
   });
 
   it('POSITIVE CONTROL: a key holding BOTH write and admin succeeds', async () => {
-    // Proves the refusals above are about the SCOPE TIER and not a blanket
-    // denial of api-key callers.
+    // Proves the refusals above are about the scope TIER, not a blanket api-key denial.
     authAsKey(ADMIN, ['write', 'admin']);
     const res = await memberPATCH(
       createMockRequest(`http://localhost/api/sites/${SITE}/members/${ADMIN}`, {
