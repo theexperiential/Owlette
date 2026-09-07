@@ -23,13 +23,22 @@ jest.mock('@/lib/toast', () => ({
   toast: { success: jest.fn(), error: (...args: unknown[]) => toastError(...args), info: jest.fn() },
 }));
 
-let auth: { user: { uid: string } | null; loading: boolean; role: UserRole | null };
+let auth: {
+  user: { uid: string } | null;
+  loading: boolean;
+  role: UserRole | null;
+  /** Administers at least one site. Defaults from the role for the cases that
+   *  predate wave 5.1; set it explicitly to separate the two. */
+  administersAnySite?: boolean;
+};
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     user: auth.user,
     loading: auth.loading,
     role: auth.role,
     isSuperadmin: auth.role === 'superadmin',
+    administersAnySite:
+      auth.administersAnySite ?? (auth.role === 'admin' || auth.role === 'superadmin'),
     userSites: [],
   }),
 }));
@@ -74,6 +83,28 @@ describe('RequireAdminAccess', () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it('bounces a GLOBAL admin who administers no site', async () => {
+    // Wave 5.1: the global role grants nothing on a site. Such a user used to
+    // reach every site-scoped admin page, see an empty site list on each, and
+    // have every write refused server-side.
+    setAuth('admin', { administersAnySite: false });
+    renderGuard('admin');
+
+    expect(screen.queryByText('admin panel')).not.toBeInTheDocument();
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/dashboard'));
+    expect(toastError).toHaveBeenCalled();
+  });
+
+  it('admits a plain member who administers a site', () => {
+    // The other half: a self-serve owner carries global role `member`, and the
+    // membership is what qualifies them.
+    setAuth('member', { administersAnySite: true });
+    renderGuard('admin');
+
+    expect(screen.getByText('admin panel')).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('bounces an admin away from a superadmin-level route', async () => {
     setAuth('admin');
     renderGuard('superadmin');
@@ -110,8 +141,8 @@ describe('RequireAdminAccess', () => {
 });
 
 describe('visibleNavItems', () => {
-  it('gives an admin exactly the site-scoped destinations, members first', () => {
-    expect(visibleNavItems('admin').map((item) => item.name)).toEqual([
+  it('gives a site administrator exactly the site-scoped destinations, members first', () => {
+    expect(visibleNavItems('member', true).map((item) => item.name)).toEqual([
       'members',
       'agent tokens',
       'schedules',
@@ -120,8 +151,8 @@ describe('visibleNavItems', () => {
     ]);
   });
 
-  it('gives a superadmin every destination', () => {
-    expect(visibleNavItems('superadmin').map((item) => item.name)).toEqual([
+  it('gives a superadmin every destination, with no membership', () => {
+    expect(visibleNavItems('superadmin', false).map((item) => item.name)).toEqual([
       'installers',
       'template library',
       'members',
@@ -134,9 +165,15 @@ describe('visibleNavItems', () => {
     ]);
   });
 
-  it('gives a member and a role-less user nothing', () => {
-    expect(visibleNavItems('member')).toEqual([]);
-    expect(visibleNavItems(null)).toEqual([]);
+  it('gives a GLOBAL admin who administers no site nothing', () => {
+    // The migration's point: the global role no longer predicts whether these
+    // destinations will work, so it no longer opens them.
+    expect(visibleNavItems('admin', false)).toEqual([]);
+  });
+
+  it('gives a plain member and a role-less user nothing', () => {
+    expect(visibleNavItems('member', false)).toEqual([]);
+    expect(visibleNavItems(null, false)).toEqual([]);
   });
 });
 

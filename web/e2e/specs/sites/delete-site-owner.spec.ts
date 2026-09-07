@@ -3,17 +3,21 @@
  *
  * Every signup is born `role: 'member'` (`lib/actions/bootstrapUser.server.ts`) and
  * `POST /api/sites` has no capability gate, so the person who creates a site is a
- * member who owns it. `member` holds no site-scoped capability, so authorization
- * has to come from ownership — `authorizedSiteHandler` grants it by short-circuiting
- * on `sites/{id}.owner`, mirroring `app/api/_shared.ts:requireSiteCapability`.
+ * member who owns it. The global role holds no site-scoped capability, so
+ * authorization has to come from ownership.
  *
- * Without that short-circuit this deletes nothing and the UI toasts "capability not
- * granted" (reported on production by Davor, 2026-09-04). `delete-site.spec.ts` could
- * never catch it: it runs `roleState('superadmin')`, and superadmin returns true from
- * `hasCapability` before the site is ever considered.
+ * Since wave 5.1 that is a plain matrix lookup: SITE_DELETE sits on the `owner`
+ * row of `SiteRoleCapabilityMatrix` and nowhere else, resolved from
+ * `sites/{siteId}/members/{uid}`. It used to be an ownership SHORT-CIRCUIT that
+ * read `sites/{id}.owner` and bypassed the matrix; without it, deletion failed
+ * with "capability not granted" (reported on production by Davor, 2026-09-04).
+ * `delete-site.spec.ts` could never catch that: it runs `roleState('superadmin')`,
+ * and superadmin returns true from `hasCapability` before the site is considered.
  *
- * The second test is the negative control. Ownership must be what grants this, not
- * membership — a member assigned to a site they do not own still gets 403.
+ * The second test is the negative control, and wave 6.4 changed what it asserts.
+ * The delete control is now gated on the same predicate the server uses, so a
+ * member of a site they do not own is never OFFERED the action — previously it
+ * rendered for everyone and answered with a refusal toast.
  */
 
 import { test, expect } from '@playwright/test';
@@ -85,10 +89,25 @@ test('a member can delete a site they own', async ({ page }) => {
   expect(snap.exists).toBe(false);
 });
 
-test('a member cannot delete a site they are only assigned to', async ({ page }) => {
-  await confirmDeleteOf(page, ASSIGNED_SITE_NAME);
+test('a member is offered neither delete nor edit on a site they only belong to', async ({ page }) => {
+  const manageDialog = await openManageSitesDialog(page);
 
-  await expect(page.getByText(/capability not granted/i)).toBeVisible();
+  // Owned: both controls, because owner sits above admin in the matrix.
+  await expect(
+    manageDialog.getByRole('button', { name: `delete ${OWNED_SITE_NAME}` })
+  ).toBeVisible();
+  await expect(
+    manageDialog.getByRole('button', { name: `edit ${OWNED_SITE_NAME}` })
+  ).toBeVisible();
+
+  // Merely a member: neither. Delete is owner-only (SITE_DELETE) and rename is
+  // site-admin (SITE_MEMBER_MANAGE); both would be refused server-side.
+  await expect(
+    manageDialog.getByRole('button', { name: `delete ${ASSIGNED_SITE_NAME}` })
+  ).toHaveCount(0);
+  await expect(
+    manageDialog.getByRole('button', { name: `edit ${ASSIGNED_SITE_NAME}` })
+  ).toHaveCount(0);
 
   const snap = await getAdminDb().collection('sites').doc('site-A').get();
   expect(snap.exists).toBe(true);

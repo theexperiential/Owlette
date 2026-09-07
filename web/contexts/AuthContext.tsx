@@ -232,6 +232,51 @@ export function computeIsSiteAdmin(
   return siteRole === 'owner' || siteRole === 'admin';
 }
 
+/**
+ * Owner of `siteId`? The only capability owners hold that admins do not is
+ * SITE_DELETE, so this exists to gate that one control on the same standing the
+ * server checks.
+ *
+ * Reads the role map, never `sites/{siteId}.owner` — the legacy field is
+ * stripped in wave 6.1 and a control gated on it would silently stop rendering.
+ *
+ * Exported so it's testable without AuthProvider.
+ */
+export function computeIsSiteOwner(
+  role: UserRole | null,
+  roleMap: Map<string, SiteRole>,
+  siteId: string
+): boolean {
+  if (role === 'superadmin') return true;
+  if (role === null) return false;
+  return roleMap.get(siteId) === 'owner';
+}
+
+/**
+ * Does this user administer ANY site? The entry predicate for the admin panel's
+ * site-scoped half (members, tokens, schedules, alerts, webhooks).
+ *
+ * It replaces `role === 'admin'`, which since wave 5.1 grants nothing: a global
+ * admin with no membership could still open those pages, see an empty site list
+ * on every one, and have each write refused. The panel now admits exactly the
+ * users the server will actually let act.
+ *
+ * Superadmins pass without a membership, as everywhere else.
+ *
+ * Exported so it's testable without AuthProvider.
+ */
+export function computeAdministersAnySite(
+  role: UserRole | null,
+  roleMap: Map<string, SiteRole>
+): boolean {
+  if (role === 'superadmin') return true;
+  if (role === null) return false;
+  for (const siteRole of roleMap.values()) {
+    if (siteRole === 'owner' || siteRole === 'admin') return true;
+  }
+  return false;
+}
+
 export interface UserPreferences {
   temperatureUnit: 'C' | 'F'; // Default: 'C'
   timezone: string; // IANA timezone (e.g. 'America/New_York'). Default: browser-detected. Used as the display reference frame when timeDisplayMode === 'user'.
@@ -283,6 +328,10 @@ interface AuthContextType {
   isSuperadmin: boolean;
   /** Admin or superadmin of `siteId`. Gates site-level elevated ops (delete machines, stored layouts, site webhooks/settings). */
   isSiteAdmin: (siteId: string) => boolean;
+  /** Administers at least one site — the admin panel's site-scoped entry gate. */
+  administersAnySite: boolean;
+  /** Owner of this site. Gates SITE_DELETE, the one owner-only capability. */
+  isSiteOwner: (siteId: string) => boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
   lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
@@ -311,6 +360,8 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   isSuperadmin: false,
   isSiteAdmin: () => false,
+  administersAnySite: false,
+  isSiteOwner: () => false,
   userSites: [],
   lastSiteId: null,
   lastMachineIds: {},
@@ -1119,6 +1170,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (siteId: string) => computeIsSiteAdmin(role, roleMap, siteId),
     [role, roleMap]
   );
+  const administersAnySite = useMemo(
+    () => computeAdministersAnySite(role, roleMap),
+    [role, roleMap]
+  );
+  const isSiteOwner = useCallback(
+    (siteId: string) => computeIsSiteOwner(role, roleMap, siteId),
+    [role, roleMap]
+  );
 
   const value = useMemo(() => ({
     user,
@@ -1126,6 +1185,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role,
     isSuperadmin,
     isSiteAdmin,
+    administersAnySite,
+    isSiteOwner,
     userSites,
     lastSiteId,
     lastMachineIds,
@@ -1144,7 +1205,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, mfaFactors, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, administersAnySite, isSiteOwner, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, mfaFactors, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -6,11 +6,18 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/lib/toast';
 
 /**
- * Gate for the admin panel: `minRole` is the lowest global role that may see the
- * wrapped subtree ('admin' also admits superadmins). Anyone below it is bounced
- * to /dashboard with an error toast.
+ * Gate for the admin panel. `minRole` names the tier that may see the wrapped
+ * subtree; anyone below it is bounced to /dashboard with an error toast.
  *
- * Role-only by design — which *sites* an admin may act on is scoped per page by
+ * `'superadmin'` is the platform tier (installers, presets, users, email).
+ * `'admin'` is the SITE-SCOPED half (members, tokens, schedules, alerts,
+ * webhooks), and since wave 5.1 the global role no longer expresses it — a
+ * global `admin` with no membership grants nothing. The gate is now
+ * "administers at least one site", which is what those pages actually require:
+ * previously such a user reached them, saw an empty site list on every one, and
+ * had every write refused server-side.
+ *
+ * Still coarse by design — WHICH sites they may act on is scoped per page by
  * `useSites`, and again server-side on every write.
  */
 export default function RequireAdminAccess({
@@ -20,10 +27,10 @@ export default function RequireAdminAccess({
   minRole: 'admin' | 'superadmin';
   children: React.ReactNode;
 }) {
-  const { user, loading, role, isSuperadmin } = useAuth();
+  const { user, loading, isSuperadmin, administersAnySite } = useAuth();
   const router = useRouter();
 
-  const allowed = minRole === 'admin' ? role === 'admin' || role === 'superadmin' : isSuperadmin;
+  const allowed = minRole === 'admin' ? administersAnySite : isSuperadmin;
 
   useEffect(() => {
     if (loading) return;

@@ -15,6 +15,8 @@
 import {
   computeIsSuperadmin,
   computeIsSiteAdmin,
+  computeAdministersAnySite,
+  computeIsSiteOwner,
   shouldListenerBootstrap,
 } from '@/contexts/AuthContext';
 import type { SiteRole } from '@/hooks/useFirestore';
@@ -115,6 +117,68 @@ describe('computeIsSiteAdmin', () => {
     it('is true with no memberships at all', () => {
       expect(computeIsSiteAdmin('superadmin', NO_SITES, SITE_OUT)).toBe(true);
     });
+  });
+});
+
+describe('computeAdministersAnySite', () => {
+  const roles = (entries: Record<string, SiteRole>) =>
+    new Map<string, SiteRole>(Object.entries(entries));
+
+  it('is true for an owner of any site', () => {
+    expect(computeAdministersAnySite('member', roles({ 'site-a': 'owner' }))).toBe(true);
+  });
+
+  it('is true for an admin of any site', () => {
+    expect(computeAdministersAnySite('member', roles({ 'site-a': 'admin' }))).toBe(true);
+  });
+
+  it('is false for someone who is only ever a member', () => {
+    expect(
+      computeAdministersAnySite('member', roles({ 'site-a': 'member', 'site-b': 'member' }))
+    ).toBe(false);
+  });
+
+  it('is true for a superadmin holding no memberships', () => {
+    expect(computeAdministersAnySite('superadmin', roles({}))).toBe(true);
+  });
+
+  it('is FALSE for a global admin holding no memberships', () => {
+    // Before wave 5.1 this user reached every site-scoped admin page, saw an
+    // empty list on each, and had every write refused server-side.
+    expect(computeAdministersAnySite('admin', roles({}))).toBe(false);
+  });
+
+  it('is false while the session is unresolved', () => {
+    expect(computeAdministersAnySite(null, roles({ 'site-a': 'owner' }))).toBe(false);
+  });
+});
+
+describe('computeIsSiteOwner', () => {
+  const roles = (entries: Record<string, SiteRole>) =>
+    new Map<string, SiteRole>(Object.entries(entries));
+
+  it('is true only for the owner row', () => {
+    expect(computeIsSiteOwner('member', roles({ 'site-a': 'owner' }), 'site-a')).toBe(true);
+  });
+
+  it('is FALSE for a site admin — SITE_DELETE is the one thing they lack', () => {
+    expect(computeIsSiteOwner('member', roles({ 'site-a': 'admin' }), 'site-a')).toBe(false);
+  });
+
+  it('is false for a plain member', () => {
+    expect(computeIsSiteOwner('member', roles({ 'site-a': 'member' }), 'site-a')).toBe(false);
+  });
+
+  it('does not leak ownership across sites', () => {
+    expect(computeIsSiteOwner('member', roles({ 'site-a': 'owner' }), 'site-b')).toBe(false);
+  });
+
+  it('is true for a superadmin holding no membership', () => {
+    expect(computeIsSiteOwner('superadmin', roles({}), 'site-a')).toBe(true);
+  });
+
+  it('is false while the session is unresolved', () => {
+    expect(computeIsSiteOwner(null, roles({ 'site-a': 'owner' }), 'site-a')).toBe(false);
   });
 });
 
