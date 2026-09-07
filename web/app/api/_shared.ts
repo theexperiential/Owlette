@@ -130,6 +130,42 @@ export async function requireSiteScope(
   }
 }
 
+/**
+ * Every site named in a bulk membership request must be one the caller's api key
+ * is scoped for — the same `site=<id>:write` + `:admin` the equivalent
+ * `/api/sites/{siteId}/members` call demands.
+ *
+ * Without this, `user=*:write` reached membership on every site in the
+ * deployment while naming none of them, so a key confined to one site could not
+ * touch /members elsewhere but could do the same job through here.
+ *
+ * Session and id-token callers are unaffected: `requireScope` returns early when
+ * there is no key context, and they are already superadmin-only because
+ * `authorizedPlatformHandler` capability-checks SITE_MEMBER_MANAGE with no
+ * siteId, which only superadmin satisfies.
+ */
+export function requireSiteScopesForBulkMembership(
+  auth: ResolvedAuth,
+  siteIds: string[],
+): NextResponse | null {
+  for (const siteId of siteIds) {
+    for (const permission of ['write', 'admin'] as const) {
+      try {
+        requireScope(auth, 'site', siteId, permission);
+      } catch (err) {
+        if (err instanceof ApiAuthError) {
+          return problemScopeInsufficient(
+            `api key is not scoped for site ${siteId}`,
+            { resource: 'site', id: siteId, permission },
+          );
+        }
+        throw err;
+      }
+    }
+  }
+  return null;
+}
+
 export function validateResourceId(id: string, fieldName: string): NextResponse | null {
   if (!RESOURCE_ID_RE.test(id)) {
     return problemValidation(

@@ -352,6 +352,12 @@ import { GET as userTalonsGET } from '@/app/api/users/[uid]/talons/route';
 function authedAsSuperadminWithKey(
   perm: 'read' | 'write' | 'admin',
   userId = 'user-superadmin',
+  /**
+   * Sites the key is scoped for. The bulk membership routes now require
+   * `site=<id>:write` + `:admin` for every site they touch — a `user=*` scope
+   * names no site, and used to reach membership on all of them.
+   */
+  siteScopes: string[] = [],
 ): void {
   mockResolveAuth.mockResolvedValue({
     userId,
@@ -359,7 +365,14 @@ function authedAsSuperadminWithKey(
       keyId: 'key_test',
       environment: 'live',
       isLegacy: false,
-      scopes: [{ resource: 'user', id: '*', permissions: [perm] }],
+      scopes: [
+        { resource: 'user', id: '*', permissions: [perm] },
+        ...siteScopes.map((id) => ({
+          resource: 'site',
+          id,
+          permissions: ['write', 'admin'],
+        })),
+      ],
       expiresAt: null,
     },
   });
@@ -814,7 +827,7 @@ describe('POST /api/users/{uid}/demote', () => {
 
 describe('POST /api/users/{uid}/assign-sites', () => {
   it('adds siteIds via arrayUnion + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'member', sites: [] });
     seedSite('site-a');
     seedSite('site-b');
@@ -839,8 +852,51 @@ describe('POST /api/users/{uid}/assign-sites', () => {
     );
   });
 
+  // THE CONFINEMENT. These bulk routes are gated on `user=*:write`, which names
+  // no site. Before this check, a key confined to one site could not touch
+  // /members elsewhere but could add or remove anyone on EVERY site through
+  // here, which defeats the point of `site=X:...`.
+  it('refuses a site the api key is NOT scoped for', async () => {
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a']);
+    seedUser('alice', { role: 'member', sites: [] });
+    seedSite('site-a');
+    seedSite('site-b');
+
+    const res = await assignSitesPOST(
+      createMockRequest('http://localhost/api/users/alice/assign-sites', {
+        method: 'POST',
+        body: { siteIds: ['site-a', 'site-b'] },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('scope_insufficient');
+    // Refused before ANY write — not a partial application.
+    expect(docStore['users/alice']?.data?.sites).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the same call succeeds once both sites are scoped', async () => {
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b']);
+    seedUser('alice', { role: 'member', sites: [] });
+    seedSite('site-a');
+    seedSite('site-b');
+
+    const res = await assignSitesPOST(
+      createMockRequest('http://localhost/api/users/alice/assign-sites', {
+        method: 'POST',
+        body: { siteIds: ['site-a', 'site-b'] },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(res.status).toBe(200);
+  });
+
   it('rejects when any siteId is unknown (400 unknown_site, no partial mutation)', async () => {
-    authedAsSuperadminWithKey('write');
+    // Wildcard site scope, so the SCOPE check passes and the unknown-site check
+    // is what answers. Scope is deliberately evaluated first: a caller should
+    // not learn whether a site exists on a site they are not scoped for.
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['*']);
     seedUser('alice', { role: 'member', sites: [] });
     seedSite('site-a');
     // site-zzz intentionally unseeded
@@ -861,7 +917,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
   });
 
   it('rejects empty array with 400', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -876,7 +932,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
   });
 
   it('returns 404 for unknown user', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedSite('site-a');
 
     const req = createMockRequest(
@@ -895,7 +951,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
 
 describe('POST /api/users/{uid}/remove-sites', () => {
   it('removes siteIds via arrayRemove + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', {
       role: 'admin',
       sites: ['site-a', 'site-b', 'site-c'],
@@ -922,7 +978,7 @@ describe('POST /api/users/{uid}/remove-sites', () => {
   });
 
   it('rejects empty siteIds array', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'admin', sites: ['site-a'] });
 
     const req = createMockRequest(

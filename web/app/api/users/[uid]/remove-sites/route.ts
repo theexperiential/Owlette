@@ -18,7 +18,11 @@ import {
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
-import { applyAuthDeprecations, readAndParseJsonBody } from '../../../_shared';
+import {
+  applyAuthDeprecations,
+  readAndParseJsonBody,
+  requireSiteScopesForBulkMembership,
+} from '../../../_shared';
 import { MAX_SITES_PER_REQUEST, removeSiteFromUser } from '@/lib/actions/removeSiteFromUser.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
@@ -67,6 +71,12 @@ export const POST = authorizedPlatformHandler<RouteParams>({
             { 'body.siteIds': ['must be a non-empty array of site ids'] },
           );
         }
+
+        const scopeError = requireSiteScopesForBulkMembership(
+          ctx.auth,
+          siteIds as string[],
+        );
+        if (scopeError) return scopeError;
 
         const result = await removeSiteFromUser(
           {
