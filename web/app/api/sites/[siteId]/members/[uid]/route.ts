@@ -40,7 +40,6 @@ import { talonStoreProblem } from '../../talons/route';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../_shared';
 import { changeRole, removeMember } from '@/lib/membership.server';
 
@@ -54,6 +53,10 @@ type RouteParams = { siteId: string; uid: string };
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // Opted in because these routes already enforced it through the inner
+  // _shared gate; without this, removing that gate would silently drop the
+  // 400 on an unsupported Roost-Version.
+  roostVersioned: true,
   // write AND admin: the inner gate asked for admin while the wrapper defaulted
   // to write, and permissions are not hierarchical, so both were required. The
   // inner gate is gone; the requirement it carried is stated here.
@@ -79,14 +82,12 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -155,7 +156,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
             {
               siteId,
               actor: ctx.actor,
-              auditActor: auditActorIdentifier(auth.auth),
+              auditActor: auditActorIdentifier(ctx.auth),
               via: 'ui',
               endpoint: request.nextUrl.pathname,
               method: 'DELETE',
@@ -197,9 +198,9 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'site_member_mutated',
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
+          actor: ctx.auth.keyContext
+            ? `apiKey:${ctx.auth.keyContext.keyId}`
+            : `user:${ctx.actor.userId}`,
           targetId: uid,
           attributes: {
             endpoint: `/api/sites/${siteId}/members/${uid}`,
@@ -220,7 +221,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
             talonCount,
             reassignedTalonIds,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );
@@ -272,8 +273,6 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     const role = (parsed.body as { role?: unknown } | null)?.role;
     if (role !== 'admin' && role !== 'member') {
@@ -285,8 +284,8 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -317,7 +316,7 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'site_member_mutated',
           siteId,
-          actor: auditActorIdentifier(auth.auth),
+          actor: auditActorIdentifier(ctx.auth),
           targetId: uid,
           attributes: {
             endpoint: `/api/sites/${siteId}/members/${uid}`,
@@ -329,7 +328,7 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
 
         return applyAuthDeprecations(
           NextResponse.json({ siteId, uid, role }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );

@@ -51,6 +51,11 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
           },
           siteId: params.siteId,
           correlationId: 'corr-test',
+          // The wrapper has always supplied these; the routes only started
+          // reading them from ctx once task 1.4 removed the inner gate that
+          // used to hand them over separately.
+          auth: { userId: 'user-1', keyContext: null },
+          scopeCheck: { isLegacy: false },
         },
         routeContext,
       );
@@ -1121,22 +1126,10 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     expect(body.code).toBe('idempotency_key_required');
   });
 
-  it('403 scope_insufficient when key has site:write but not admin', async () => {
-    // Uninstall is privileged: requires `admin`, not just `write`.
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['write'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
-    );
-    const res = await uninstallPOST(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 
   it('200 — scope-pass with site=<id>:admin', async () => {
     mockResolveAuth.mockResolvedValue(

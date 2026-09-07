@@ -14,7 +14,6 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -26,6 +25,10 @@ type RouteParams = { siteId: string; deploymentId: string };
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in because these routes already enforced it through the inner
+  // _shared gate; without this, removing that gate would silently drop the
+  // 400 on an unsupported Roost-Version.
+  roostVersioned: true,
   // write AND admin: the inner gate asked for admin while the wrapper defaulted
   // to write, and permissions are not hierarchical, so both were required. The
   // inner gate is gone; the requirement it carried is stated here.
@@ -39,14 +42,12 @@ export const POST = authorizedSiteHandler<RouteParams>({
     if (!parsed.ok) return parsed.response;
 
     // Privileged: `admin`, not the `write` that create/retry/cancel take.
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -134,9 +135,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'deployment_mutated',
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
+          actor: ctx.auth.keyContext
+            ? `apiKey:${ctx.auth.keyContext.keyId}`
+            : `user:${ctx.actor.userId}`,
           targetId: deploymentId,
           attributes: {
             endpoint: `/api/sites/${siteId}/deployments/${deploymentId}/uninstall`,
@@ -156,7 +157,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             queued: targets.length,
             machine_ids: targets.map((t) => t.machineId),
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
       { requireKey: true },

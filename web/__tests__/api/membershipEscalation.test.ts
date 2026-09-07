@@ -267,6 +267,7 @@ import {
   PATCH as memberPATCH,
 } from '@/app/api/sites/[siteId]/members/[uid]/route';
 import { POST as transferPOST } from '@/app/api/sites/[siteId]/transfer-ownership/route';
+import { POST as uninstallPOST } from '@/app/api/sites/[siteId]/deployments/[deploymentId]/uninstall/route';
 
 const SITE = 'site-alpha';
 const OWNER = 'uid_owner';
@@ -587,5 +588,55 @@ describe('8. the scope conjunction survives the gate collapse (task 1.4)', () =>
       params(),
     );
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * Moved here from __tests__/api/sites-deployments.test.ts and
+ * __tests__/api/sites-members.test.ts by task 1.4.
+ *
+ * Those suites MOCK authorizedSiteHandler. While authorization lived partly in
+ * the handler body (the inner _shared gate), a mocked wrapper still left the
+ * scope check running, so they could assert it. Collapsing the gates moved
+ * authorization entirely into the wrapper, which those mocks replace — so the
+ * assertions silently became vacuous there and had to move somewhere the real
+ * wrapper runs. This suite is that place.
+ */
+describe('9. privileged-scope contracts, with the REAL wrapper', () => {
+  it('uninstall refuses a key holding write but not admin', async () => {
+    authAsKey(ADMIN, ['write']);
+    const res = await uninstallPOST(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/deployments/dep-1/uninstall`,
+        { method: 'POST', body: {} },
+      ),
+      { params: Promise.resolve({ siteId: SITE, deploymentId: 'dep-1' }) },
+    );
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('scope_insufficient');
+  });
+
+  it('uninstall refuses a key holding admin but not write', async () => {
+    // The other half of the conjunction, which the old mocked test could not see.
+    authAsKey(ADMIN, ['admin']);
+    const res = await uninstallPOST(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/deployments/dep-1/uninstall`,
+        { method: 'POST', body: {} },
+      ),
+      { params: Promise.resolve({ siteId: SITE, deploymentId: 'dep-1' }) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /members refuses a session caller who is not a site admin', async () => {
+    // Was "rejects non-admin caller with 404" in the mocked suite. The 404 is
+    // deliberate masking — a non-member must not learn the site exists.
+    authAs(OUTSIDER);
+    const res = await membersGET(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, { method: 'GET' }),
+      params(),
+    );
+    expect(res.status).toBe(404);
   });
 });

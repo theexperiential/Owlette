@@ -26,11 +26,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   ApiAuthError,
+  auditApiKeyUse,
   resolveAuth,
   requireScope,
   type ResolvedAuth,
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
+import { checkRoostVersion } from '@/lib/versionHeader';
 import {
   resolveSiteAccess,
   type SiteAccessOutcome,
@@ -121,6 +123,22 @@ export interface SiteHandlerOptions {
     /** A list means ALL are required — see `apiKeyPermission`. */
     permission?: ApiKeyPermission | ApiKeyPermission[];
   };
+  /**
+   * OPT IN to the roost version contract: reject an unsupported `Roost-Version`
+   * with 400, and flag a missing one so the route can advise.
+   *
+   * Opt-in rather than automatic, because `checkRoostVersion` REJECTS. It
+   * currently reaches 43 route files via the `_shared` gates; making it
+   * universal would extend a 400 to presets, talons, agent-tokens, api-keys and
+   * the platform surface, none of which has ever parsed the header. Routes set
+   * this only when they already had the behaviour — which means the 13 formerly
+   * double-gated routes, as their inner gate is removed.
+   *
+   * The check runs FIRST, ahead of auth, to preserve `_shared`'s ordering: a
+   * request with an unsupported version gets 400 there today even when
+   * unauthenticated, and moving it after auth would turn those into 401.
+   */
+  roostVersioned?: boolean;
 }
 
 export interface PlatformHandlerOptions {
@@ -402,6 +420,17 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       const targetKind: AuditTargetKind = options.targetKind ?? 'site';
       const routeParamsPromise = (routeContext?.params ?? Promise.resolve({} as TParams)) as Promise<Record<string, string | undefined>>;
 
+      // 0. Roost version, for routes that opt in. Deliberately ahead of auth:
+      // the `_shared` gates check it before resolving auth, so an unsupported
+      // version answers 400 even unauthenticated. Running it later would turn
+      // those into 401 and change a shipped contract.
+      let missingVersion = false;
+      if (options.roostVersioned) {
+        const versionCheck = checkRoostVersion(request);
+        if (!versionCheck.ok) return versionCheck.response;
+        missingVersion = versionCheck.missing === true;
+      }
+
       // 1. Resolve auth.
       let auth: ResolvedAuth;
       try {
@@ -518,6 +547,13 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
             permission,
           );
         }
+        // Only ever true for a route that opted in, so routes without the roost
+        // version contract cannot start emitting X-Roost-Version-Missing.
+        if (missingVersion) scopeCheck = { ...scopeCheck, missingVersion: true };
+        // The api-key audit event. `_shared` emits this on every gate; the
+        // wrapper never did, so api-key use went unaudited on every
+        // wrapper-only route. No-ops for session/id-token callers.
+        auditApiKeyUse(auth, siteId, request);
       } catch (err) {
         if (err instanceof ApiAuthError) {
           denyAudit(siteId, {

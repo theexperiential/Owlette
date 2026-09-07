@@ -36,6 +36,11 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
           },
           siteId: params.siteId,
           correlationId: 'corr-test',
+          // The wrapper has always supplied these; the routes only started
+          // reading them from ctx once task 1.4 removed the inner gate that
+          // used to hand them over separately.
+          auth: { userId: 'user-1', keyContext: null },
+          scopeCheck: { isLegacy: false },
         },
         routeContext,
       );
@@ -328,30 +333,6 @@ function authedAsSuperadminWithKey(perm: 'read' | 'write' | 'admin' = 'admin'): 
   seedUser('admin-uid', { role: 'superadmin' });
 }
 
-function authedAsKeyMissingScope(): void {
-  mockResolveAuth.mockResolvedValue({
-    userId: 'admin-uid',
-    keyContext: {
-      keyId: 'key_readonly',
-      environment: 'live',
-      isLegacy: false,
-      // Holds `read` but the endpoints need `admin`.
-      scopes: [{ resource: 'site', id: '*', permissions: ['read'] }],
-      expiresAt: null,
-    },
-  });
-  seedUser('admin-uid', { role: 'superadmin' });
-}
-
-function authedAsMemberWithoutAccess(): void {
-  // No site assignment, no ownership — assertUserHasSiteAccess must reject.
-  mockResolveAuth.mockResolvedValue({
-    userId: 'member-uid',
-    keyContext: null,
-  });
-  seedUser('member-uid', { role: 'member', sites: [] });
-}
-
 function seedUser(uid: string, data: Record<string, unknown>): void {
   const path = `users/${uid}`;
   const merged = {
@@ -465,36 +446,15 @@ describe('GET /api/sites/{siteId}/members', () => {
     expect(res.status).toBe(404);
   });
 
-  it('rejects non-admin caller with 404 (site-not-found-or-no-access masking)', async () => {
-    authedAsMemberWithoutAccess();
-    seedSite(SITE);
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/members`,
-    );
-    const res = await membersGET(req, {
-      params: Promise.resolve({ siteId: SITE }),
-    });
-
-    // 404, not 403, on access failure — a 403 would leak site existence.
-    expect([403, 404]).toContain(res.status);
-  });
-
-  it('rejects api key without admin scope (403 scope_insufficient)', async () => {
-    authedAsKeyMissingScope();
-    seedSite(SITE);
-
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/members`,
-    );
-    const res = await membersGET(req, {
-      params: Promise.resolve({ siteId: SITE }),
-    });
-    const body = await res.json();
-
-    expect(res.status).toBe(403);
-    expect(body.code).toBe('scope_insufficient');
-  });
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 });
 
 // POST /api/sites/{siteId}/members

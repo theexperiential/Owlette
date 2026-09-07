@@ -34,7 +34,6 @@ import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../_shared';
 import { addMember, type AssignableRole } from '@/lib/membership.server';
 
@@ -81,14 +80,16 @@ function derivePerSiteRole(
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // Opted in because these routes already enforced it through the inner
+  // _shared gate; without this, removing that gate would silently drop the
+  // 400 on an unsupported Roost-Version.
+  roostVersioned: true,
   // read AND admin: the inner gate asked for admin, the outer for read, and
   // permissions are not hierarchical, so both were genuinely required.
   apiKeyPermission: ['read', 'admin'],
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     const db = getAdminDb();
 
@@ -157,7 +158,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
 
     return applyAuthDeprecations(
       NextResponse.json({ members }),
-      auth.scopeCheck,
+      ctx.scopeCheck,
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/members:GET');
@@ -172,20 +173,18 @@ export const POST = authorizedSiteHandler<RouteParams>({
   // inner gate is gone; the requirement it carried is stated here.
   apiKeyPermission: ['write', 'admin'],
   targetKind: 'user',
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -310,7 +309,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
           siteId,
           uid: targetUid,
           role: assignableRole,
-          addedBy: auth.userId,
+          addedBy: ctx.actor.userId,
         });
         if (!added.ok && added.failure.kind !== 'already_member') {
           return problemValidation('could not add member', {
@@ -332,9 +331,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'site_member_mutated',
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
+          actor: ctx.auth.keyContext
+            ? `apiKey:${ctx.auth.keyContext.keyId}`
+            : `user:${ctx.actor.userId}`,
           targetId: targetUid,
           attributes: {
             endpoint: `/api/sites/${siteId}/members`,
@@ -354,7 +353,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             roleHonored,
             globalRole: targetGlobalRole,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );

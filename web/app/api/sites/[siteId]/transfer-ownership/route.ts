@@ -31,7 +31,6 @@ import {
   applyAuthDeprecations,
   auditActorIdentifier,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../_shared';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
@@ -41,6 +40,10 @@ type RouteParams = { siteId: string };
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // Opted in because these routes already enforced it through the inner
+  // _shared gate; without this, removing that gate would silently drop the
+  // 400 on an unsupported Roost-Version.
+  roostVersioned: true,
   // write AND admin: the inner gate asked for admin while the wrapper defaulted
   // to write, and permissions are not hierarchical, so both were required. The
   // inner gate is gone; the requirement it carried is stated here.
@@ -53,8 +56,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     const body = (parsed.body ?? {}) as { successorUid?: unknown };
     const successorUid = body.successorUid;
@@ -67,8 +68,8 @@ export const POST = authorizedSiteHandler<RouteParams>({
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -128,7 +129,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'site_member_mutated',
           siteId,
-          actor: auditActorIdentifier(auth.auth),
+          actor: auditActorIdentifier(ctx.auth),
           targetId: result.newOwnerUid,
           attributes: {
             endpoint: `/api/sites/${siteId}/transfer-ownership`,
@@ -145,7 +146,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             previousOwnerUid: result.previousOwnerUid,
             newOwnerUid: result.newOwnerUid,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );

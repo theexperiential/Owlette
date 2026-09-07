@@ -156,6 +156,9 @@ jest.mock('@/lib/apiAuth.server', () => {
       return resolveAuthResult;
     }),
     requireScope: jest.fn(),
+    // The wrapper emits the api-key audit event since task 1.6; a no-op here
+    // because this suite asserts authorization, not audit fan-out.
+    auditApiKeyUse: jest.fn(),
     assertUserHasSiteAccess: jest.fn(async () => ({ siteId: 'site-a', siteData: {} })),
   };
 });
