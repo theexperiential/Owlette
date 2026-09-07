@@ -22,7 +22,6 @@ import { installerChecksumErrorToResponse } from '@/lib/installerChecksumRespons
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../_shared';
 import {
   computeInstallerChecksum,
@@ -39,14 +38,15 @@ export const maxDuration = 300;
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx) => {
   try {
-    const { siteId } = await routeContext.params;
-
-    const auth = await requireSiteAuthAndScope(request, siteId, 'write');
-    if (!auth.ok) return auth.response;
-
+    // No siteId needed here any more: it existed only to feed the inner gate,
+    // and the wrapper resolves it (ctx.siteId) before this handler runs.
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as { installer_url?: unknown };
@@ -55,7 +55,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
       const result = await computeInstallerChecksum(body.installer_url, {
         signal: request.signal,
       });
-      return applyAuthDeprecations(NextResponse.json(result), auth.scopeCheck);
+      return applyAuthDeprecations(NextResponse.json(result), ctx.scopeCheck);
     } catch (err) {
       if (err instanceof InstallerChecksumError) {
         return installerChecksumErrorToResponse(err);
