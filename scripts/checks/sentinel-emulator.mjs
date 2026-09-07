@@ -27,16 +27,22 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
   process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 }
 
-const admin = require('firebase-admin');
+// Modular entry points, not the `firebase-admin` root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so `admin.credential.cert` and `admin.firestore()` are
+// both undefined. Ported 2026-09-07 — the firebase-admin 14 sweep in a454e4cd
+// touched only web/ and functions/, leaving every script here broken.
+const { initializeApp } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 
 const PROJECT_ID = 'demo-playwright-e2e';
 
-admin.initializeApp({
+const app = initializeApp({
   projectId: PROJECT_ID,
   // No credential.cert — emulator mode needs none.
 });
 
-const db = admin.firestore();
+const db = getFirestore(app);
 
 async function main() {
   const sentinelId = `sentinel-${Date.now()}`;
@@ -67,7 +73,7 @@ async function main() {
 
   // Confirm the demo project was targeted: a prod id here means
   // FIREBASE_PROJECT_ID is shadowing `demo-playwright-e2e`.
-  const resolvedProjectId = admin.app().options.projectId;
+  const resolvedProjectId = app.options.projectId;
   if (resolvedProjectId !== PROJECT_ID) {
     console.error(`❌ Admin SDK is targeting project "${resolvedProjectId}", expected "${PROJECT_ID}".`);
     console.error('   The projectId arg to initializeApp is being overridden by an env var.');

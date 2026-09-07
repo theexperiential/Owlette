@@ -156,6 +156,9 @@ if __name__ == '__main__':
             # roost periodic scrub state, read by the main-loop scrub hook
             self._roost_scrub_check_counter = 0
             self._roost_scrub_thread = None
+            # Mirrors the service attr; the IPC pump dispatcher reads it on
+            # the first tick, so debug mode AttributeErrors without it.
+            self._cortex_ipc_thread = None
 
             # handle_firebase_command checks has_handler() before falling through
             from command_router import CommandRouter

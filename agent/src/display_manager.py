@@ -1712,7 +1712,23 @@ def _enumerate_with_timeout(timeout: float = _CCD_ENUMERATE_TIMEOUT) -> list:
     """
     if _is_session_0() and timeout < _ENUM_HELPER_TIMEOUT + 0.5:
         timeout = _ENUM_HELPER_TIMEOUT + 0.5
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # Manual lifecycle, not `with`: the default shutdown(wait=True) on block exit
+    # blocks for the worker's FULL duration, defeating the very timeout this
+    # watchdog exists to enforce. Same fix, same reason, as
+    # _disk_usage_with_timeout in hardware_profile.py and
+    # _wmi_logical_disk_with_timeout in shared_utils.py.
+    #
+    # This matters more here than at those two sites: this is the only watchdog
+    # on the HEARTBEAT path. firebase_client._upload_metrics ->
+    # _ensure_display_profile -> build_display_profile reaches it with no outer
+    # pool, so a wedged console session stalled the heartbeat thread and the
+    # machine read offline in the dashboard.
+    #
+    # Abandoning the worker is safe: its only external write is its own
+    # uuid-named IPC file, removed by that helper's own finally, and the spawned
+    # helper process is still killed by the TerminateProcess in the spawn path.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(_enumerate_monitors)
         try:
             return future.result(timeout=timeout)
@@ -1726,6 +1742,8 @@ def _enumerate_with_timeout(timeout: float = _CCD_ENUMERATE_TIMEOUT) -> list:
             raise DisplayEnumerationError(
                 f'CCD enumeration failed: {e}'
             ) from e
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # Public API

@@ -52,7 +52,15 @@ const ROOT = join(__dirname, '..');
 // firebase-admin lives in web/node_modules; resolved from there so this needs
 // no root-level install.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the firebase-admin root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so the credential and storage accessors on it are both
+// undefined and this script threw the moment it authenticated. It is the only
+// documented remedy for a Cortex CLI fetch failure that is silent per machine
+// (docs/runbooks/manual-infrastructure.md), so it being broken was doubly costly.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getStorage } = require('firebase-admin/storage');
 
 const STORAGE_PREFIX = 'cortex-cli';
 const CLI_OBJECT_NAME = 'claude.exe';
@@ -305,8 +313,8 @@ async function main() {
     }
   }
 
-  admin.initializeApp({
-    credential: admin.credential.cert({
+  const app = initializeApp({
+    credential: cert({
       projectId,
       clientEmail,
       privateKey: privateKeyRaw.replace(/\\n/g, '\n'),
@@ -314,7 +322,7 @@ async function main() {
     storageBucket: bucketName,
   });
 
-  const bucket = admin.storage().bucket();
+  const bucket = getStorage(app).bucket();
   const file = bucket.file(storagePath);
 
   // step 1: does the object already match? (idempotent re-runs)
@@ -367,7 +375,7 @@ async function main() {
     uploadedAt: Date.now(),
     uploadedBy: 'scripts/upload-cortex-cli.mjs',
   };
-  await admin.firestore().collection('installer_metadata').doc(METADATA_DOC).set(payload);
+  await getFirestore(app).collection('installer_metadata').doc(METADATA_DOC).set(payload);
 
   console.log(`\nwrote installer_metadata/${METADATA_DOC}`);
   console.log(

@@ -1,0 +1,47 @@
+name: firebase-admin namespace guard
+
+# scripts/ and e2e-machine/ are in NO other workflow's path filters, which is
+# exactly how the firebase-admin 14 upgrade (a454e4cd) left 10 files here broken
+# for two weeks: it swept web/ and functions/ and nothing checked the rest.
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'e2e-machine/**'
+      - '.github/workflows/admin-sdk-guard.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'scripts/**'
+      - 'e2e-machine/**'
+      - '.github/workflows/admin-sdk-guard.yml'
+
+concurrency:
+  group: admin-sdk-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: no firebase-admin root namespace
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '22'
+
+      # Self-test first, same as the no-token-logs scanner: a checker that
+      # cannot fail is worth nothing, and this one asserts both directions —
+      # root imports caught, subpath imports and prose left alone.
+      - name: self-test the scanner
+        run: node scripts/check-firebase-admin-namespace.mjs --test
+
+      - name: scan scripts/ and e2e-machine/
+        run: node scripts/check-firebase-admin-namespace.mjs

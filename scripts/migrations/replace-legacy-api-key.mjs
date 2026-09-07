@@ -20,7 +20,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
 
 const require = createRequire(join(ROOT, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the firebase-admin root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so the credential and firestore accessors on it are both
+// undefined. Ported 2026-09-07 — the v14 sweep in a454e4cd touched only web/ and
+// functions/, so every script here threw on startup while a checked-in runbook
+// (docs/runbooks/upgrade-2.12.0.md) still told operators to run them.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 const args = process.argv.slice(2);
 
@@ -110,8 +117,8 @@ async function main() {
   console.log(`\n${apply ? '[APPLY]' : '[DRY RUN]'} Replace legacy API key — env=${env}, project=${projectId}`);
   console.log(`Scopes for new key: ${scopes.join(', ')}\n`);
 
-  admin.initializeApp({ credential: admin.credential.cert({ projectId, clientEmail, privateKey }) });
-  const db = admin.firestore();
+  const app = initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  const db = getFirestore(app);
 
   const oldHash = sha256(oldKey);
   const oldLookupRef = db.collection('api_keys').doc(oldHash);
@@ -177,7 +184,7 @@ async function main() {
       throw new Error('Generated keyId/hash collision — extremely unlikely; just re-run.');
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     tx.set(newSubRef, {
       keyId: newKeyId,

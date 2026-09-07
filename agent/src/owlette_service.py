@@ -814,6 +814,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # scrub single-flight.
         self._roost_scrub_check_counter = 0
         self._roost_scrub_thread = None
+        # Same single-flight shape as _roost_scrub_thread: the Cortex IPC pump
+        # runs off-loop because one capture_screenshot takes ~55s.
+        self._cortex_ipc_thread = None
         self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
@@ -2120,7 +2123,41 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self.cortex_pid = None
 
     def _process_cortex_ipc_commands(self):
-        """Process IPC command files from Cortex (Tier 2 tools).
+        """Hand any pending Cortex IPC commands to the drain worker.
+
+        Runs on the 5s tick, so it must execute nothing itself. A single
+        capture_screenshot costs ~55s end to end (user-session poll plus the
+        upload POST), and running that inline stalled process monitoring,
+        heartbeats and every other loop duty for the whole window — the
+        blocking-the-main-loop landmine, in the one place that most reliably
+        hits it.
+
+        Single-flight, mirroring _roost_scrub_thread: one worker at a time
+        preserves the serial execution order Cortex expects, since it issues one
+        tool call and blocks on its result.
+        """
+        if self._cortex_ipc_thread is not None and self._cortex_ipc_thread.is_alive():
+            return
+
+        cmd_dir = shared_utils.CORTEX_IPC_CMD_DIR
+        if not os.path.isdir(cmd_dir):
+            return
+        try:
+            # `.json` only — the writer stages `{cmd_id}.json.tmp` first, and
+            # picking that up would read a half-written command.
+            if not any(f.endswith('.json') for f in os.listdir(cmd_dir)):
+                return
+        except OSError:
+            return
+
+        t = threading.Thread(
+            target=self._drain_cortex_ipc_commands, daemon=True, name='cortex-ipc'
+        )
+        t.start()
+        self._cortex_ipc_thread = t
+
+    def _drain_cortex_ipc_commands(self):
+        """Execute pending Cortex IPC commands. Runs on a worker, never the loop.
 
         Scans ipc/cortex_commands/ for JSON files, executes the tool,
         writes result to ipc/cortex_results/.
@@ -5339,16 +5376,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if shared_utils.read_config(['displays', 'enabled']) is False:
                 return
 
+            # Manual lifecycle, not `with`: shutdown(wait=True) on block exit held
+            # the 5s MAIN LOOP for the worker's full duration, so the advertised
+            # 5s bound was never actually enforced. Blocking this loop is a named
+            # landmine — it stalls every monitor on the machine. The `return`s in
+            # the handlers below still run the finally; that is the point.
+            pool = ThreadPoolExecutor(max_workers=1)
             try:
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(display_manager.build_display_profile)
-                    profile = future.result(timeout=5)
+                future = pool.submit(display_manager.build_display_profile)
+                profile = future.result(timeout=5)
             except FuturesTimeoutError:
                 logging.warning("Display topology enumeration timed out after 5s")
                 return
             except Exception as e:
                 logging.warning(f"Display topology enumeration failed: {e}")
                 return
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
 
             if not isinstance(profile, dict):
                 logging.debug("Display topology returned non-dict payload, skipping")

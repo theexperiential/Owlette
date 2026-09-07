@@ -25,7 +25,11 @@ import path from 'node:path';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const require = createRequire(path.join(REPO, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the firebase-admin root namespace — see
+// e2e-machine/lib/admin.mjs for the full reason. Ported 2026-09-07.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 
 // ---- hard safety pins ----------------------------------------------------
 const EXPECTED_PROJECT = 'owlette-dev-3838a';
@@ -65,9 +69,9 @@ if (!apiKey) {
   process.exit(2);
 }
 
-admin.initializeApp({ credential: admin.credential.cert(sa), projectId: EXPECTED_PROJECT });
-const db = admin.firestore();
-const auth = admin.auth();
+const app = initializeApp({ credential: cert(sa), projectId: EXPECTED_PROJECT });
+const db = getFirestore(app);
+const auth = getAuth(app);
 
 // ---- e2e identities (obvious, easy to sweep) -----------------------------
 const SITE_ID = 'e2e-wave0-site';

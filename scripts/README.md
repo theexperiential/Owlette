@@ -34,6 +34,7 @@ pipeline lives in `vm/`.
 | `checks/smoke-r2-roundtrip.mjs` | R2 chunk-pipeline round-trip against a deployed env (used in deploy runbooks). |
 | `checks/security-boundary-probe.mjs` | 60s synthetic privileged-read probe against dev (`docs/runbooks/security-boundary-monitoring.md`). |
 | `checks/sentinel-emulator.mjs` | Prove Admin SDK writes hit the emulator, not prod. |
+| `check-firebase-admin-namespace.mjs` | Fail on the `firebase-admin` root namespace under `scripts/` and `e2e-machine/` (removed in v14). CI: `.github/workflows/admin-sdk-guard.yml`. Self-tests with `--test`. |
 
 ## migrations/ — one-shot, already executed
 

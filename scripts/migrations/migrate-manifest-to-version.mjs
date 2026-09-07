@@ -173,14 +173,30 @@ function resolveCredentials(project) {
 }
 
 // Firestore init
-let admin;
+//
+// The require stays DEFERRED into initFirestore on purpose: --help and arg
+// parsing must work without web/node_modules present. So the modular bindings
+// are declared at module scope and assigned here, rather than imported at the
+// top like the sibling migrations.
+//
+// Modular entry points, not the firebase-admin root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so the credential and firestore accessors on it are
+// undefined and this threw on startup. Ported 2026-09-07.
+let initializeApp;
+let cert;
+let applicationDefault;
+let getFirestore;
+let FieldValue;
 let db;
 
 function initFirestore(creds) {
-  admin = require('firebase-admin');
+  ({ initializeApp, cert, applicationDefault } = require('firebase-admin/app'));
+  ({ getFirestore, FieldValue } = require('firebase-admin/firestore'));
+  let app;
   if (creds.mode === 'explicit') {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+    app = initializeApp({
+      credential: cert({
         projectId: creds.projectId,
         clientEmail: creds.clientEmail,
         privateKey: creds.privateKey,
@@ -188,9 +204,9 @@ function initFirestore(creds) {
     });
   } else {
     // applicationDefault reads GOOGLE_APPLICATION_CREDENTIALS.
-    admin.initializeApp({ credential: admin.credential.applicationDefault() });
+    app = initializeApp({ credential: applicationDefault() });
   }
-  db = admin.firestore();
+  db = getFirestore(app);
 }
 
 // Helpers
@@ -364,12 +380,11 @@ async function migrateRoost(plan, { dryRun }, logEntries) {
 
   // Only clear fields that exist — avoids dirty writes on an already-migrated
   // roost that only needs a name backfill.
-  const admin_ = admin;
   if (roostData.currentManifestId !== undefined) {
-    roostUpdate.currentManifestId = admin_.firestore.FieldValue.delete();
+    roostUpdate.currentManifestId = FieldValue.delete();
   }
   if (roostData.previousManifestId !== undefined) {
-    roostUpdate.previousManifestId = admin_.firestore.FieldValue.delete();
+    roostUpdate.previousManifestId = FieldValue.delete();
   }
 
   if (needsNameBackfill) {
@@ -427,7 +442,6 @@ async function rollbackRoost(entry, { dryRun }) {
       `(${writtenVersionIds.length} version${writtenVersionIds.length === 1 ? '' : 's'})`,
   );
 
-  const admin_ = admin;
 
   if (writtenVersionIds.length > 0) {
     const copyBulk = dryRun ? null : db.bulkWriter();
@@ -458,10 +472,10 @@ async function rollbackRoost(entry, { dryRun }) {
   if (before.previousManifestId !== null && before.previousManifestId !== undefined) {
     roostUpdate.previousManifestId = before.previousManifestId;
   }
-  roostUpdate.currentVersionId = admin_.firestore.FieldValue.delete();
-  roostUpdate.previousVersionId = admin_.firestore.FieldValue.delete();
+  roostUpdate.currentVersionId = FieldValue.delete();
+  roostUpdate.previousVersionId = FieldValue.delete();
   if (before.versionCounter === null || before.versionCounter === undefined) {
-    roostUpdate.versionCounter = admin_.firestore.FieldValue.delete();
+    roostUpdate.versionCounter = FieldValue.delete();
   } else {
     roostUpdate.versionCounter = before.versionCounter;
   }

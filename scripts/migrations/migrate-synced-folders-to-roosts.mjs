@@ -29,7 +29,14 @@ const ROOT = join(__dirname, '..', '..');
 
 // firebase-admin lives in web/node_modules; the repo root has no package.json.
 const require = createRequire(join(ROOT, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the firebase-admin root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so the credential and firestore accessors on it are both
+// undefined. Ported 2026-09-07 — the v14 sweep in a454e4cd touched only web/ and
+// functions/, so every script here threw on startup while a checked-in runbook
+// (docs/runbooks/upgrade-2.12.0.md) still told operators to run them.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 
 // CLI parsing
 
@@ -100,10 +107,10 @@ if (!projectId || !clientEmail || !rawPrivateKey) {
 
 const privateKey = rawPrivateKey.replace(/\\n/g, '\n');
 
-admin.initializeApp({
-  credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+const app = initializeApp({
+  credential: cert({ projectId, clientEmail, privateKey }),
 });
-const db = admin.firestore();
+const db = getFirestore(app);
 
 // Core migration
 
