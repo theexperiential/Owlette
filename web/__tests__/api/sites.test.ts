@@ -199,6 +199,15 @@ jest.mock('@/lib/firebase-admin', () => ({
     // Batched read used by lib/sitePolicy.server.ts. Real getAll preserves
     // argument order and yields a non-existent snapshot for a missing doc,
     // so delegating to each ref's own get() matches its observable shape.
+    /** Recursive delete — `deleteSite` cascades the site document AND every
+     *  subcollection under it, so a fake that dropped only the named key would
+     *  let the cascade pass here while leaking member rows in production. */
+    recursiveDelete: async (ref: { path?: string }) => {
+      const path = ref.path ?? '';
+      for (const key of Object.keys(docStore)) {
+        if (key === path || key.startsWith(`${path}/`)) docStore[key] = { data: null };
+      }
+    },
     getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
       Promise.all(refs.map((r) => r.get())),
     collection: (name: string) => makeCollectionRef([name]),
