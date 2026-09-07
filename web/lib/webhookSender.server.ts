@@ -237,13 +237,34 @@ export async function fireWebhooks(
 ): Promise<number> {
   const db = getAdminDb();
 
+  // Liveness is filtered in memory, not by an equality on `enabled`.
+  //
+  // Firestore equality filters require the field to EXIST, and the creator
+  // (app/api/webhooks/route.ts) writes `paused: false, deletedAt: null` and no
+  // `enabled` at all — so `.where('enabled','==',true)` matched nothing rather
+  // than erroring, and every subscription created since that change delivered
+  // silently nothing while the dashboard showed it active with zero failures.
+  // The inverse also held: a legacy document still carrying `enabled: true` kept
+  // firing after being paused or soft-deleted, because neither field was read.
+  //
+  // This is the same predicate roostWebhooks.server.ts:75 and
+  // WebhookSettingsDialog already use; only this sender was left behind. A site
+  // has a handful of webhooks, so filtering after the array-contains costs
+  // nothing.
   const snapshot = await db
     .collection(`sites/${siteId}/webhooks`)
-    .where('enabled', '==', true)
     .where('events', 'array-contains', eventType)
     .get();
 
-  if (snapshot.empty) return 0;
+  const liveDocs = snapshot.docs.filter((doc) => {
+    const d = doc.data();
+    if (d.deletedAt) return false;
+    if (d.paused === true) return false;
+    if (d.enabled === false) return false;
+    return true;
+  });
+
+  if (liveDocs.length === 0) return 0;
 
   const payload: WebhookPayload = {
     event: eventType,
@@ -259,7 +280,7 @@ export async function fireWebhooks(
   // legacy in-document `secret` / `signingSecret` remain the fallback for
   // subscriptions that predate the migration.
   const secretSnaps = await db.getAll(
-    ...snapshot.docs.map((doc) =>
+    ...liveDocs.map((doc) =>
       db
         .collection('sites')
         .doc(siteId)
@@ -268,7 +289,7 @@ export async function fireWebhooks(
     ),
   );
   const secretByWebhookId = new Map<string, string>();
-  snapshot.docs.forEach((doc, i) => {
+  liveDocs.forEach((doc, i) => {
     const stored = secretSnaps[i]?.data();
     const resolved =
       (typeof stored?.signingSecret === 'string' && stored.signingSecret) ||
@@ -278,7 +299,7 @@ export async function fireWebhooks(
     if (resolved) secretByWebhookId.set(doc.id, resolved);
   });
 
-  const deliveries = snapshot.docs.map(async (doc) => {
+  const deliveries = liveDocs.map(async (doc) => {
     const webhook = doc.data();
     try {
       const platform = detectPlatform(webhook.url);

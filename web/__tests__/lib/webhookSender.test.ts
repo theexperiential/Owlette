@@ -66,6 +66,49 @@ describe('webhookSender', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
+    // Liveness is decided in memory, because the query cannot decide it: the
+    // creator writes `paused`/`deletedAt` and no `enabled`, and a Firestore
+    // equality filter requires the field to exist. These four pin both shapes.
+    it('delivers to a webhook created since the control-plane change (paused:false, no `enabled`)', async () => {
+      // The regression: every subscription created after that change carried no
+      // `enabled` field, so `.where('enabled','==',true)` matched nothing and the
+      // webhook delivered silently nothing while the dashboard showed it healthy.
+      const doc = makeWebhookDoc({ paused: false, deletedAt: null });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+
+      const result = await fireWebhooks('site1', 'My Site', 'process.crashed', {});
+
+      expect(result).toBe(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not deliver to a PAUSED webhook', async () => {
+      const doc = makeWebhookDoc({ paused: true, deletedAt: null });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+
+      expect(await fireWebhooks('site1', 'My Site', 'process.crashed', {})).toBe(0);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not deliver to a SOFT-DELETED webhook', async () => {
+      const doc = makeWebhookDoc({ paused: false, deletedAt: 1700000000000 });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+
+      expect(await fireWebhooks('site1', 'My Site', 'process.crashed', {})).toBe(0);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('honours the LEGACY `enabled: false` shape too', async () => {
+      // The inverse of the regression: a document predating the change carries
+      // `enabled` and neither `paused` nor `deletedAt`, and must still be obeyed.
+      const doc = makeWebhookDoc({ enabled: false });
+      mockGet.mockResolvedValue({ empty: false, docs: [doc] });
+
+      expect(await fireWebhooks('site1', 'My Site', 'process.crashed', {})).toBe(0);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('delivers payload to matching webhooks and returns success count', async () => {
       const doc = makeWebhookDoc();
       mockGet.mockResolvedValue({ empty: false, docs: [doc] });
