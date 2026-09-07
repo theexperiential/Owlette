@@ -182,14 +182,16 @@ export default function SiteMembersPage() {
 
     setAdding(true);
     try {
-      const result = await addMember({ email, role: addRole });
+      await addMember({ email, role: addRole });
       setAddDialogOpen(false);
       setAddEmail('');
       setAddRole('member');
+      // No roleHonored branch: the requested role is written into the membership
+      // row, so it is always honoured. The old second arm told the operator their
+      // admin grant had been downgraded to member while a real site-admin row was
+      // being written.
       toast.success('member added', {
-        description: result.roleHonored
-          ? `${email} now has ${addRole} access to this site.`
-          : `${email} was added as a member — admin access requires an account-level role upgrade.`,
+        description: `${email} now has ${addRole} access to this site.`,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -298,24 +300,30 @@ export default function SiteMembersPage() {
     setRoleDialogOpen(false);
 
     try {
-      const endpoint =
-        newRole === 'member'
-          ? `/api/users/${encodeURIComponent(uid)}/demote`
-          : `/api/users/${encodeURIComponent(uid)}/promote`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ role: newRole }),
-      });
+      // PATCH the MEMBERSHIP, not the account. This page is site-scoped — it has a
+      // site selector and lists one site's members — and since the per-site-roles
+      // migration a global role grants nothing on a site, so the global
+      // promote/demote endpoints it used to call changed the wrong thing: they
+      // are superadmin-only, and succeeding conferred no site access at all.
+      // `PATCH /api/sites/{siteId}/members/{uid}` is the endpoint that shipped
+      // for this and had no caller.
+      const response = await fetch(
+        `/api/sites/${encodeURIComponent(selectedSiteId)}/members/${encodeURIComponent(uid)}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ role: newRole }),
+        },
+      );
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.detail ?? body.title ?? `role change failed (${response.status})`);
       }
-      // The row's role is derived from the account, which this page reads only
-      // through the members route — refetch or the badge stays stale.
+      // The row's role comes from the membership document, which this page reads
+      // only through the members route — refetch or the badge stays stale.
       await refresh();
       toast.success('role updated', {
-        description: `${label} is now ${newRole === 'admin' ? 'an admin' : 'a member'}.`,
+        description: `${label} is now ${newRole === 'admin' ? 'an admin' : 'a member'} on this site.`,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

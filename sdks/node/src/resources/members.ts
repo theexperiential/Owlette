@@ -57,10 +57,13 @@ export interface AddMemberResult {
   siteId: string;
   requestedRole: AssignableSiteRole;
   /**
-   * False when `role: 'admin'` was requested for someone whose GLOBAL role is
-   * not already admin/superadmin. Membership is still extended; the elevated
-   * role was not honored. Promotion is `/api/users/{uid}/promote`, never a
-   * side-effect of adding someone to a site.
+   * Always `true`. Roles are per-site: the requested role is written into the
+   * membership document, which is what grants, so the request is always honoured.
+   *
+   * @deprecated Retained only so the response shape stays stable. It used to
+   * report whether the target's GLOBAL role would make an `admin` request stick,
+   * back when per-site roles were derived at read time. It reported `false` while
+   * a real site-admin row was written.
    */
   roleHonored: boolean;
   globalRole: string;

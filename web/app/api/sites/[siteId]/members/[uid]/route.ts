@@ -121,13 +121,27 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
           });
         }
 
+        // Membership is the ROW, not `users/{uid}.sites[]`. The legacy array is
+        // not written by every path that grants — `transferSiteOwnership` creates
+        // a member row without touching it — so reading it here reported
+        // `wasMember: false` and toasted "no longer has access" while leaving a
+        // live grant in place. It is still unioned as a fallback until wave 6.1
+        // strips it, so a pre-migration membership is not silently dropped.
         const userData = userSnap.data() ?? {};
         const sites = Array.isArray(userData.sites)
           ? (userData.sites as unknown[]).filter(
               (s): s is string => typeof s === 'string',
             )
           : [];
-        const wasMember = sites.includes(siteId);
+        const memberRowSnap = await db
+          .collection('sites')
+          .doc(siteId)
+          .collection('members')
+          .doc(uid)
+          .get();
+        const hasActiveRow =
+          memberRowSnap.exists && (memberRowSnap.data() ?? {}).status === 'active';
+        const wasMember = hasActiveRow || sites.includes(siteId);
 
         // Read before the write so the reported count is the one that was true
         // when the decision was made.

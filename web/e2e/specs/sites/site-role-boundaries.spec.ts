@@ -25,6 +25,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 import { grantMembership, revokeMembership, TEST_USERS } from '../../helpers/seed';
+import { getAdminDb } from '../../helpers/emulator';
+import { FieldValue } from 'firebase-admin/firestore';
 
 /** Owned by the `owner` fixture in the baseline. */
 const OWNED_SITE_ID = 'site-C';
@@ -56,6 +58,43 @@ test.describe('per-site role — owner', () => {
 
     const dialog = await openManageSitesDialog(page);
     await expect(dialog.getByText(OWNED_SITE_NAME)).toBeVisible();
+  });
+});
+
+test.describe('membership ALONE grants access', () => {
+  test.use(roleState('owner'));
+
+  const OWNER_UID = TEST_USERS.owner.uid;
+
+  // Strip the legacy `users/{uid}.sites[]` entry, leaving ONLY the member row.
+  // Restored afterwards so later specs see the baseline they expect.
+  test.beforeAll(async () => {
+    await getAdminDb()
+      .collection('users')
+      .doc(OWNER_UID)
+      .update({ sites: FieldValue.arrayRemove(OWNED_SITE_ID) });
+  });
+
+  test.afterAll(async () => {
+    await getAdminDb()
+      .collection('users')
+      .doc(OWNER_UID)
+      .update({ sites: FieldValue.arrayUnion(OWNED_SITE_ID) });
+  });
+
+  test('the site is still reachable with no legacy sites[] entry at all', async ({ page }) => {
+    // THE test wave 6.1 needs before it strips that field, and the one thing the
+    // suite could not previously say. Every other fixture writes BOTH the member
+    // row and the legacy array, so the suite is satisfied by the array alone —
+    // it would stay green even if the collectionGroup listener broke outright,
+    // and would only fail in production, after the strip, for every user at once.
+    //
+    // With the array entry gone, the only thing that can put this site on screen
+    // is `useSiteMemberships`' collectionGroup query resolving the member row.
+    const dialog = await openManageSitesDialog(page);
+
+    await expect(dialog.getByText(OWNED_SITE_NAME)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: `delete ${OWNED_SITE_NAME}` })).toBeVisible();
   });
 });
 

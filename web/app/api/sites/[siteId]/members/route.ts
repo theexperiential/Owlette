@@ -62,20 +62,8 @@ interface UserDoc {
   deletedAt?: number;
 }
 
-/**
- * Per-site role: 'owner' when they own the site, else 'superadmin', else 'admin'
- * for a global admin, else 'member'. Owner is orthogonal to the global hierarchy
- * so callers can identify a site's owner without a second read.
- */
-function derivePerSiteRole(
-  user: { uid: string; role: string },
-  siteOwnerUid: string | null,
-): 'owner' | 'superadmin' | 'admin' | 'member' {
-  if (siteOwnerUid && user.uid === siteOwnerUid) return 'owner';
-  if (user.role === 'superadmin') return 'superadmin';
-  if (user.role === 'admin') return 'admin';
-  return 'member';
-}
+/** Per-site standing, read from the row that grants it. */
+type MemberRole = 'owner' | 'admin' | 'member';
 
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
@@ -93,68 +81,57 @@ export const GET = authorizedSiteHandler<RouteParams>({
 
     const db = getAdminDb();
 
-    const [siteSnap, membersSnap] = await Promise.all([
+    // Read the ROWS THAT GRANT, not `users where sites array-contains`. The old
+    // query derived each per-site role from the GLOBAL role, so a member added as
+    // a site admin — which `addMember` genuinely writes — was reported as
+    // `member` forever, and the one surface that could reveal the grant showed
+    // the opposite of the truth.
+    const [siteSnap, memberRowsSnap] = await Promise.all([
       db.collection('sites').doc(siteId).get(),
-      db
-        .collection('users')
-        .where('sites', 'array-contains', siteId)
-        .get(),
+      db.collection('sites').doc(siteId).collection('members').get(),
     ]);
 
     if (!siteSnap.exists) {
       return problemNotFound(`site ${siteId} not found`);
     }
-    const siteData = siteSnap.data() ?? {};
-    const ownerUid =
-      typeof siteData.owner === 'string' ? siteData.owner : null;
 
-    const seen = new Set<string>();
     // No `sites` field: a member's full membership list would hand a site admin
     // the site ids of every other org that member belongs to.
     const members: Array<{
       uid: string;
       email: string | null;
-      role: 'owner' | 'superadmin' | 'admin' | 'member';
+      role: MemberRole;
       globalRole: string;
       displayName: string | null;
     }> = [];
 
-    for (const doc of membersSnap.docs) {
-      const data = doc.data() as UserDoc;
-      if (typeof data.deletedAt === 'number') continue;
-      const globalRole =
-        typeof data.role === 'string' ? data.role : 'member';
+    const activeRows = memberRowsSnap.docs.filter(
+      (doc) => (doc.data() ?? {}).status === 'active',
+    );
+    const userSnaps = activeRows.length
+      ? await db.getAll(...activeRows.map((doc) => db.collection('users').doc(doc.id)))
+      : [];
+
+    activeRows.forEach((row, i) => {
+      const userSnap = userSnaps[i];
+      // A member row can outlive its user (hard-deleted account, or an owner that
+      // was never a real user). Listing it would surface a uid with no account.
+      if (!userSnap?.exists) return;
+      const data = userSnap.data() as UserDoc;
+      if (typeof data.deletedAt === 'number') return;
+      const rowRole = (row.data() ?? {}).role;
       members.push({
-        uid: doc.id,
+        uid: row.id,
         email: typeof data.email === 'string' ? data.email : null,
-        role: derivePerSiteRole({ uid: doc.id, role: globalRole }, ownerUid),
-        globalRole,
+        role:
+          rowRole === 'owner' || rowRole === 'admin' || rowRole === 'member'
+            ? rowRole
+            : 'member',
+        globalRole: typeof data.role === 'string' ? data.role : 'member',
         displayName:
           typeof data.displayName === 'string' ? data.displayName : null,
       });
-      seen.add(doc.id);
-    }
-
-    // Surface the site owner if they aren't already in the membership query
-    // (e.g. a superadmin who owns a site without being explicitly assigned).
-    if (ownerUid && !seen.has(ownerUid)) {
-      const ownerSnap = await db.collection('users').doc(ownerUid).get();
-      if (ownerSnap.exists) {
-        const data = ownerSnap.data() as UserDoc;
-        if (typeof data.deletedAt !== 'number') {
-          const globalRole =
-            typeof data.role === 'string' ? data.role : 'member';
-          members.push({
-            uid: ownerUid,
-            email: typeof data.email === 'string' ? data.email : null,
-            role: 'owner',
-            globalRole,
-            displayName:
-              typeof data.displayName === 'string' ? data.displayName : null,
-          });
-        }
-      }
-    }
+    });
 
     return applyAuthDeprecations(
       NextResponse.json({ members }),
@@ -317,16 +294,19 @@ export const POST = authorizedSiteHandler<RouteParams>({
           });
         }
 
-        // Per-site role is derived from global role at read time, and membership is
-        // the only explicit write, so an `admin` request is honored only when the
-        // target is already admin/superadmin. Promoting member→admin is the explicit
-        // /promote endpoint, never a side-effect of adding someone to a site.
+        // Always true, and kept only so the response shape does not break callers.
+        //
+        // It used to compute whether the GLOBAL role would make the requested
+        // per-site role stick, back when per-site roles were derived at read time.
+        // `addMember` writes the requested role into the member row — the row that
+        // now grants — so the request is always honoured. Reporting `false` while
+        // writing a real site-admin row made the response, the dashboard toast, both
+        // SDKs and the AUDIT ROW state the inverse of what happened.
+        const roleHonored = true;
+        // Still reported so a caller can see the account's platform tier, which is
+        // now unrelated to what they may do on this site.
         const targetGlobalRole =
           typeof userData.role === 'string' ? userData.role : 'member';
-        const roleHonored =
-          requestedRole === 'admin'
-            ? targetGlobalRole === 'admin' || targetGlobalRole === 'superadmin'
-            : true;
 
         emitMutation({
           kind: 'site_member_mutated',

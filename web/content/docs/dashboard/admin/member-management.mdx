@@ -35,7 +35,7 @@ The list is scoped to the selected site by design. It never shows which other si
 | **admin** | Write access: machine commands and configuration, deployments, roosts, talons, webhooks, logs, and membership. |
 | **member** | Read-only: view machines, capture screenshots, open live view. No commands, no configuration edits. |
 
-`admin` is an account-level role. Someone who holds it is an admin on every site they belong to, which is why the member list shows the role but does not change it — see [changing a role](#changing-a-role).
+Roles are **per site**. The same person can own one site, administer a second and be a plain member of a third, and their account-level role grants nothing on any of them. Only a platform superadmin reaches every site.
 
 ---
 
@@ -52,7 +52,7 @@ If no account matches the address, the page says so — ask them to register fir
 
 ### asking for admin
 
-Choosing **admin** records what you asked for, but the role itself is account-level. If the account is not already an admin, they are added to the site as a **member** and keep that access until their account is upgraded; the dialog says so before you submit, and the confirmation toast repeats it. If the account already holds the admin role, they join as an admin on this site immediately.
+Choosing **admin** adds them as an admin of this site immediately. It is a role on this site only — it changes nothing about their account and gives them nothing on any other site.
 
 ---
 
@@ -81,6 +81,11 @@ Reassignment is never automatic. If you leave the picker empty, the removal stil
 
 ## changing a role
 
-Promoting a member to admin, or demoting an admin, changes the account, not just this site: it applies everywhere that account has access, including sites in other organizations. It is therefore not a membership action and is not available here. Email [support@owlette.app](mailto:support@owlette.app) to have an account's role changed.
+Use the role control on the member's row. The change applies to **this site only** — the same person keeps whatever role they hold elsewhere, and their account is untouched.
+
+Two rules the server enforces:
+
+- An **owner** cannot be demoted here. Transfer ownership first; a site is never left without one.
+- Only `admin` and `member` can be assigned. Ownership moves solely through transfer, so it cannot be granted as a side effect of editing a role.
 
 To narrow someone's access instead, remove them from the sites they should not reach.

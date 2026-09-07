@@ -341,6 +341,15 @@ function authedAsSuperadminWithKey(perm: 'read' | 'write' | 'admin' = 'admin'): 
  * that is what it used to confer there; superadmins get no rows, matching
  * production, where they reach every site by role instead.
  */
+/** Set one fixture's per-site role explicitly, overriding the global mirror. */
+function seedMemberRow(siteId: string, uid: string, role: 'owner' | 'admin' | 'member'): void {
+  const data = { uid, role, status: 'active', addedAt: new Date(0), addedBy: 'system:test' };
+  docStore[`sites/${siteId}/members/${uid}`] = { data };
+  // Registered for collection reads too: GET /members lists the subcollection,
+  // so a row only in docStore is invisible to the route under test.
+  syncCollection(['sites', siteId, 'members', uid], uid, data);
+}
+
 function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
   const globalRole = typeof merged.role === 'string' ? merged.role : 'member';
   if (globalRole === 'superadmin') return;
@@ -352,15 +361,15 @@ function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
     // without SITE_DELETE on the site they own.
     const owns =
       (docStore[`sites/${siteId}`] as { data?: { owner?: unknown } } | undefined)?.data?.owner === uid;
-    docStore[`sites/${siteId}/members/${uid}`] = {
-      data: {
-        uid,
-        role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
-        status: 'active',
-        addedAt: new Date(0),
-        addedBy: 'system:test',
-      },
+    const memberData = {
+      uid,
+      role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
     };
+    docStore[`sites/${siteId}/members/${uid}`] = { data: memberData };
+    syncCollection(['sites', siteId, 'members', uid], uid, memberData);
   }
 }
 
@@ -394,15 +403,15 @@ function seedAuthEmail(email: string, uid: string): void {
 function seedOwnerMembership(siteId: string, merged: Record<string, unknown>): void {
   const owner = merged.owner;
   if (typeof owner !== 'string' || owner.length === 0) return;
-  docStore[`sites/${siteId}/members/${owner}`] = {
-    data: {
-      uid: owner,
-      role: 'owner',
-      status: 'active',
-      addedAt: new Date(0),
-      addedBy: 'system:test',
-    },
+  const ownerRow = {
+    uid: owner,
+    role: 'owner',
+    status: 'active',
+    addedAt: new Date(0),
+    addedBy: 'system:test',
   };
+  docStore[`sites/${siteId}/members/${owner}`] = { data: ownerRow };
+  syncCollection(['sites', siteId, 'members', owner], owner, ownerRow);
 }
 
 function seedSite(siteId: string, data: Record<string, unknown> = {}): void {
@@ -426,11 +435,14 @@ beforeEach(() => {
 // GET /api/sites/{siteId}/members
 
 describe('GET /api/sites/{siteId}/members', () => {
-  it('lists members with derived per-site role + surfaces owner', async () => {
+  it('lists the per-site role from the member ROW, not the global role', async () => {
     authedAsSuperadminWithKey();
     seedSite(SITE, { owner: 'owner-bob' });
     seedUser('owner-bob', { role: 'admin', sites: [] });
-    seedUser('alice', { role: 'admin', sites: [SITE] });
+    // alice is a global MEMBER holding a site-admin row: the exact combination
+    // the old derive-from-global-role listing could not represent.
+    seedUser('alice', { role: 'member', sites: [SITE] });
+    seedMemberRow(SITE, 'alice', 'admin');
     seedUser('member-charlie', { role: 'member', sites: [SITE] });
 
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/members`);
@@ -542,7 +554,12 @@ describe('POST /api/sites/{siteId}/members', () => {
     );
   });
 
-  it('roleHonored=false when adding member-tier user with role=admin (global role unchanged)', async () => {
+  it('adding a global member as site admin writes a real admin row and SAYS so', async () => {
+    // This test previously asserted `roleHonored: false` — while `addMember`
+    // wrote a genuine site-admin row carrying the whole SITE_ADMIN_CAPABILITIES
+    // set. The response, the dashboard toast, both SDKs and the audit row all
+    // stated the inverse of what happened, and it was invisible afterwards
+    // because GET derived the role from the global one.
     authedAsSuperadminWithKey();
     seedSite(SITE);
     seedUser('alice', { role: 'member', sites: [] });
@@ -557,10 +574,37 @@ describe('POST /api/sites/{siteId}/members', () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.roleHonored).toBe(false);
+    expect(body.roleHonored).toBe(true);
+    // The GLOBAL role is untouched and still reported — it simply no longer
+    // decides anything on this site.
     expect(body.globalRole).toBe('member');
     expect(docStore['users/alice']?.data?.role).toBe('member');
-    expect(docStore['users/alice']?.data?.sites).toContain(SITE);
+    // The row that actually grants.
+    expect(docStore[`sites/${SITE}/members/alice`]?.data?.role).toBe('admin');
+  });
+
+  it('removes an ex-owner whose grant is a member ROW with no legacy array entry', async () => {
+    // transferSiteOwnership demotes the outgoing owner by writing a member row
+    // and never touches `users/{uid}.sites[]`. Gating removal on that array
+    // reported `wasMember: false` and toasted "no longer has access" while the
+    // row — the thing that actually grants — stayed live.
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'someone-else' });
+    seedUser('ex-owner', { role: 'member', sites: [] });
+    seedMemberRow(SITE, 'ex-owner', 'admin');
+
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/members/ex-owner`,
+      { method: 'DELETE' },
+    );
+    const res = await memberDELETE(req, {
+      params: Promise.resolve({ siteId: SITE, uid: 'ex-owner' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.wasMember).toBe(true);
+    expect(docStore[`sites/${SITE}/members/ex-owner`]?.data).toBeFalsy();
   });
 
   it('returns 404 for unknown uid', async () => {

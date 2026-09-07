@@ -96,10 +96,11 @@ class Members:
         colleague's address, not their uid); the server trims and lowercases it
         and resolves it through Firebase Auth to the same uid path.
 
-        ``role="admin"`` is honoured only when the target's GLOBAL role is
-        already admin/superadmin; otherwise membership is extended and the
-        response carries ``roleHonored: False``. Promotion is a separate,
-        explicit endpoint — never a side-effect of adding someone to a site.
+        ``role`` is a PER-SITE role, written into the membership document that
+        grants access. It is always honoured, and it changes nothing about the
+        target's account or their access to any other site. ``roleHonored`` in
+        the response is therefore always ``True`` and is retained only for
+        response-shape stability.
         """
         if (uid is None) == (email is None):
             raise ValueError("provide exactly one of uid or email")

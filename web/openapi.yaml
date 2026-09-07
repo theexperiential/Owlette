@@ -7053,12 +7053,16 @@ paths:
       tags: [Site Members]
       summary: add a member to a site
       description: |
-        Adds siteId to the target user's `users/{uid}.sites[]` via
-        `arrayUnion`. The per-site role is derived from global role at
-        read time, so requesting `role: 'admin'` for a member-tier user
-        only succeeds in extending membership — the global role is
-        unchanged (use `/api/users/{uid}/promote` for that). The
-        response includes `roleHonored: false` in that case.
+        Writes `sites/{siteId}/members/{uid}` — the document that grants
+        site access — with the requested per-site role, and adds siteId to
+        the target's legacy `users/{uid}.sites[]` while that field still
+        exists.
+
+        The role is PER SITE. `role: 'admin'` makes them an admin of this
+        site and nothing else; their account role is untouched and they
+        gain nothing on any other site. It is always honoured, so
+        `roleHonored` is always `true` — retained only for response-shape
+        stability.
 
         Identify the target by **exactly one** of `uid` or `email`.
         `email` is trimmed and lowercased, then resolved to a uid through
