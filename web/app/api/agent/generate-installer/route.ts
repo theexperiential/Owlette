@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
-import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertUserHasSiteCapability, requireSession } from '@/lib/apiAuth.server';
+import { Capability } from '@/lib/capabilities';
 import { apiError } from '@/lib/apiErrorResponse';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
@@ -35,7 +36,11 @@ export async function POST(request: NextRequest) {
     const userId = await requireSession(request);
 
     // Verify user has access to the site
-    await assertUserHasSiteAccess(userId, siteId);
+    // MACHINE_ENROLL, not bare membership: issuing a pre-seeded installer mints an agent
+    // identity plus a refresh token that never expires, and revoking one is
+    // site-admin (AGENT_TOKEN_REVOKE). Issue and revoke have to sit at the same
+    // bar, or a read-only member can create credentials it cannot take back.
+    await assertUserHasSiteCapability(userId, siteId, Capability.MACHINE_ENROLL);
 
     // Generate cryptographically secure registration code
     const crypto = await import('crypto');

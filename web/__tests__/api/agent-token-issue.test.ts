@@ -41,6 +41,10 @@ jest.mock('@/lib/apiAuth.server', () => {
     ...actual,
     requireSession: (...a: unknown[]) => mockRequireSession(...a),
     assertUserHasSiteAccess: (...a: unknown[]) => mockAssertUserHasSiteAccess(...a),
+    // MACHINE_ENROLL now gates setup-token and installer generation: both mint an
+    // agent identity plus a never-expiring refresh token, and revoking one is
+    // site-admin, so issuing one cannot be less.
+    assertUserHasSiteCapability: (...a: unknown[]) => mockAssertUserHasSiteAccess(...a),
   };
 });
 

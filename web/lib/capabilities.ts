@@ -33,6 +33,13 @@ export const Capability = {
   // can already destroy its credential. This exposes the narrower action
   // without handing out GLOBAL_SETTINGS_WRITE.
   AGENT_TOKEN_REVOKE: 'AGENT_TOKEN_REVOKE',
+  // Enrolling a machine: setup tokens, installer generation, and authorising a
+  // device-code pairing phrase. The MIRROR of AGENT_TOKEN_REVOKE — all three mint
+  // an agent identity plus a refresh token that never expires, and revoking one
+  // is site-admin, so issuing one cannot be less. It was site MEMBERSHIP until
+  // the per-site-roles migration made `member` read-only, at which point a
+  // read-only user could mint credentials it could not then revoke.
+  MACHINE_ENROLL: 'MACHINE_ENROLL',
   USER_ROLE_MANAGE: 'USER_ROLE_MANAGE',
   USER_DELETE: 'USER_DELETE',
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
@@ -122,6 +129,7 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.SITE_MEMBER_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.MACHINE_ENROLL,
   Capability.ALERT_RULES_MANAGE,
   // NOTE: SITE_DELETE is deliberately absent — see its definition above. It sits
   // on the owner row below, and on nothing else but superadmin.
@@ -147,6 +155,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.MACHINE_ENROLL,
   Capability.ALERT_RULES_MANAGE,
   Capability.SITE_DELETE,
 ]);

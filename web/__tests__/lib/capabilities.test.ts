@@ -9,7 +9,6 @@ import {
   hasCapability,
   isSiteScopedCapability,
   type Actor,
-  type Role,
   type SiteRole,
   type SystemActorName,
   type UserActor,
@@ -32,6 +31,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.MACHINE_ENROLL,
   Capability.ALERT_RULES_MANAGE,
   Capability.SITE_DELETE,
 ];
@@ -78,6 +78,7 @@ describe('Capability enum', () => {
         'TALON_MANAGE',
         'ALERT_RULES_MANAGE',
         'AGENT_TOKEN_REVOKE',
+        'MACHINE_ENROLL',
         'USER_ROLE_MANAGE',
         'USER_DELETE',
         'SYSTEM_PRESET_MANAGE',
@@ -111,6 +112,7 @@ describe('SiteRoleCapabilityMatrix', () => {
         'SITE_MEMBER_MANAGE',
         'TALON_MANAGE',
         'AGENT_TOKEN_REVOKE',
+        'MACHINE_ENROLL',
         'ALERT_RULES_MANAGE',
       ].sort()
     );
