@@ -1101,10 +1101,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Every site the legacy array grants and membership does not. This counter
   // holding at zero is what gates wave 6.1 — not a human reading a dry-run.
+  //
+  // SUPERADMINS ARE EXCLUDED, and the counter is unusable without that. They hold
+  // no member rows by design — the backfill deliberately drops their non-owner
+  // `sites[]` entries because they reach every site by global role — so every
+  // stale entry a superadmin carries would report as drift forever and pin the
+  // gate above zero permanently. For them a missing membership is the intended
+  // state, not a gap. `useSites` never reads their `userSites` either; it takes
+  // the superadmin branch and lists every site.
   useEffect(() => {
-    if (!user?.uid || fallbacks.length === 0) return;
+    if (!user?.uid || role === 'superadmin' || fallbacks.length === 0) return;
     emitMembershipFallback(user.uid, fallbacks);
-  }, [user?.uid, fallbacks]);
+  }, [user?.uid, role, fallbacks]);
 
   const isSuperadmin = computeIsSuperadmin(role);
   const isSiteAdmin = useCallback(
