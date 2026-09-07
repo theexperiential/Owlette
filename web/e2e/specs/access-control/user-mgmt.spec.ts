@@ -32,15 +32,19 @@ test.describe('/admin/users — stats row', () => {
     expect(texts).toEqual(labels);
   });
 
-  test('counts reflect seeded fleet (1 super, 1 admin, 1 member)', async ({ page }) => {
+  test('counts reflect seeded fleet (1 super, 1 admin, 2 members)', async ({ page }) => {
     await page.goto('/admin/users');
 
     // Chip = `.bg-card.rounded-lg` around a p.text-lg count and p.text-xs label.
     const card = (label: string) =>
       page.locator('div.bg-card.rounded-lg').filter({ hasText: label });
 
-    await expect(card('total users').locator('p.text-lg')).toHaveText('3');
-    await expect(card('members').locator('p.text-lg')).toHaveText('1');
+    // Four fixtures, and TWO of them are global `member`: the plain member and
+    // the `owner` fixture. Owner is a per-site standing, not a global role — a
+    // self-serve customer owns a site while remaining a global member — so this
+    // chip counts it under members, which is what the column actually measures.
+    await expect(card('total users').locator('p.text-lg')).toHaveText('4');
+    await expect(card('members').locator('p.text-lg')).toHaveText('2');
     await expect(card('site admins').locator('p.text-lg')).toHaveText('1');
     await expect(card('superadmins').locator('p.text-lg')).toHaveText('1');
   });

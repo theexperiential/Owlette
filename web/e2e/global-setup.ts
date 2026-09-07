@@ -162,7 +162,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   await seedBaseline();
 
   console.log('[global-setup] capturing storageState per role...');
-  for (const role of ['member', 'admin', 'superadmin'] as const) {
+  for (const role of ['member', 'admin', 'superadmin', 'owner'] as const) {
     await captureStorageStateForRole(role);
   }
 

@@ -6,14 +6,30 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from './emulator';
 
-export type TestRole = 'member' | 'admin' | 'superadmin';
+/**
+ * FIXTURE identities, not global roles. `owner` is the important one: a global
+ * `member` who OWNS a site, which is what every self-serve customer actually is
+ * (`bootstrapUser.server.ts` creates them as `member`, and `POST /api/sites` has
+ * no capability gate). That shape is the one that shipped a production bug —
+ * Davor, 2026-09-04 — and the suite could not express it until now.
+ */
+export type TestRole = 'member' | 'admin' | 'superadmin' | 'owner';
+
+/** What actually lands in `users/{uid}.role`. */
+export type GlobalRole = 'member' | 'admin' | 'superadmin';
 
 export interface TestUser {
   uid: string;
   email: string;
   password: string;
-  role: TestRole;
+  /** GLOBAL role. Grants nothing on a site since wave 5.1. */
+  role: GlobalRole;
   sites: string[];
+  /**
+   * Per-site standing, overriding the global-role mirror `seedUser` applies.
+   * This is how a fixture can be a global `member` and a site `owner` at once.
+   */
+  siteRoles?: Record<string, SeedMemberRole>;
   displayName?: string;
 }
 
@@ -46,6 +62,18 @@ export const TEST_USERS: Record<TestRole, TestUser> = {
     role: 'superadmin',
     sites: [],
     displayName: 'E2E Superadmin',
+  },
+  // A global `member` who owns site-C. The global role grants nothing; the
+  // `owner` membership is the whole of their authority, which is exactly the
+  // real customer shape and the one the old superadmin-only suite could not test.
+  owner: {
+    uid: 'owner-uid',
+    email: 'owner@e2e.test',
+    password: 'e2e-owner-password',
+    role: 'member',
+    sites: ['site-C'],
+    siteRoles: { 'site-C': 'owner' },
+    displayName: 'E2E Owner',
   },
 };
 
@@ -121,7 +149,12 @@ export async function seedUser(user: TestUser): Promise<void> {
   // matching production: they reach every site by global role and hold none.
   for (const siteId of user.sites) {
     if (user.role === 'superadmin') continue;
-    await grantMembership(siteId, user.uid, user.role === 'admin' ? 'admin' : 'member');
+    const explicit = user.siteRoles?.[siteId];
+    await grantMembership(
+      siteId,
+      user.uid,
+      explicit ?? (user.role === 'admin' ? 'admin' : 'member')
+    );
   }
 }
 
@@ -195,6 +228,10 @@ export interface TestSite {
 export const TEST_SITES: TestSite[] = [
   { id: 'site-A', name: 'Site A (Assigned)', owner: 'someone-else', timezone: 'UTC' },
   { id: 'site-B', name: 'Site B (Unassigned)', owner: 'someone-else', timezone: 'UTC' },
+  // Owned by a REAL fixture, unlike A and B whose 'someone-else' owner is not a
+  // user. Sorts after both by name, so it never displaces site-A as the default
+  // selection for the fixtures that already depend on that.
+  { id: 'site-C', name: 'Site C (Owned)', owner: 'owner-uid', timezone: 'UTC' },
 ];
 
 export async function seedSite(site: TestSite): Promise<void> {
@@ -214,6 +251,30 @@ export async function seedSite(site: TestSite): Promise<void> {
   // nothing. Written through `seedMemberRow` rather than `grantMembership` so a
   // non-user owner like 'someone-else' still gets no phantom user document.
   await seedMemberRow(site.id, site.owner, 'owner');
+}
+
+/**
+ * Revoke one fixture's membership of a site WITHOUT deleting the site.
+ *
+ * The counterpart to `releaseFixtureSite`, which is for sites a spec created and
+ * must remove entirely. Use this when a spec borrows a BASELINE site (site-A/B/C)
+ * for a fixture that does not normally hold it — the grant has to come back off,
+ * or site auto-selection carries it into every later spec.
+ */
+export async function revokeMembership(siteId: string, uid: string): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .update({ sites: FieldValue.arrayRemove(siteId) })
+    .catch(() => undefined);
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .delete()
+    .catch(() => undefined);
 }
 
 /**
