@@ -33,6 +33,16 @@ export interface SiteAccessFacts {
   siteData: Record<string, unknown> | null;
   /** Global role, normalised. Any unrecognised value reads as 'member'. */
   globalRole: Role;
+  /**
+   * `users/{uid}.role` verbatim — unnormalised, `null` when absent or non-string.
+   *
+   * Exposed because `hoot-utils`' `verifyUserSiteAccess` returns the raw value in
+   * its public `SiteAccessLevel.role` (`string | null`). Without this, folding it
+   * onto the core would quietly rewrite `null` to `'member'` and `'viewer'` to
+   * `'member'`. Every consumer re-narrows the value today, so nothing would have
+   * broken — but that is luck, not a contract, and the type says otherwise.
+   */
+  rawRole: string | null;
   /** Per-site standing. `null` when the principal is neither owner nor assigned. */
   membershipRole: MembershipRole;
   /** `users/{uid}.sites[]`, filtered to strings. Needed to build a UserActor. */
@@ -104,6 +114,7 @@ export async function resolveSiteAccess(
   const userData = userDoc?.exists ? (userDoc.data() as Record<string, unknown>) ?? null : null;
 
   const globalRole = normaliseRole(userData?.role);
+  const rawRole = typeof userData?.role === 'string' ? userData.role : null;
   const sites = toStringArray(userData?.sites);
   const deletedAt = typeof userData?.deletedAt === 'number' ? userData.deletedAt : null;
   const membershipRole = deriveMembership(userId, siteId, siteData, sites);
@@ -113,6 +124,7 @@ export async function resolveSiteAccess(
     siteExists,
     siteData,
     globalRole,
+    rawRole,
     membershipRole,
     sites,
     deletedAt,

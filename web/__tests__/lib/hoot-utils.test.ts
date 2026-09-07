@@ -992,6 +992,12 @@ function makeAccessDb(docs: {
         },
       }),
     }),
+    // verifyUserSiteAccess reads through resolveSiteAccess since task 1.5, and
+    // the core uses ONE batched read rather than two independent gets. Real
+    // getAll preserves argument order and yields a non-existent snapshot for a
+    // missing document, so delegating to each ref's own get() matches it.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
   } as unknown as FirebaseFirestore.Firestore;
 }
 
@@ -1004,6 +1010,37 @@ describe('verifyUserSiteAccess', () => {
   it('throws when the site doc does not exist', async () => {
     const db = makeAccessDb({ users: { role: 'member', sites: ['s1'] }, siteExists: false });
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('Site not found');
+  });
+
+  it('reports user_not_found, NOT site_not_found, when BOTH are missing', async () => {
+    // The one cell where this function's precedence differs from the decision
+    // core it now delegates to: resolveSiteAccess checks the SITE first and
+    // would answer site_not_found. The codes are therefore re-derived from
+    // `facts`, not taken from `reason` — and resolveTalonAuthor treats these two
+    // differently (user_not_found disables the talon as creator_deleted;
+    // site_not_found is deliberately unmapped and rethrows), so the distinction
+    // decides whether a dead-author talon gets switched off.
+    const db = makeAccessDb({ users: null, siteExists: false });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toMatchObject({
+      code: 'user_not_found',
+    });
+  });
+
+  it('returns the RAW role, not the normalised one', async () => {
+    // SiteAccessLevel.role is `string | null` and callers re-narrow it
+    // themselves. The core normalises unknown values to 'member', so returning
+    // its globalRole here would rewrite 'viewer' to 'member' and an absent role
+    // to 'member' — a quiet contract change.
+    const viewer = makeAccessDb({ users: { role: 'viewer', sites: ['s1'] }, sites: {} });
+    await expect(verifyUserSiteAccess(viewer, 'u1', 's1')).resolves.toMatchObject({
+      role: 'viewer',
+      isSiteAdmin: false,
+    });
+
+    const roleless = makeAccessDb({ users: { sites: ['s1'] }, sites: {} });
+    await expect(verifyUserSiteAccess(roleless, 'u1', 's1')).resolves.toMatchObject({
+      role: null,
+    });
   });
 
   it('rejects a soft-deleted user even if their role would otherwise grant access', async () => {
