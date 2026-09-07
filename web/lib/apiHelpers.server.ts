@@ -6,15 +6,18 @@
 import { getAdminDb } from '@/lib/firebase-admin';
 
 /**
- * Canonical site-membership read. Membership lives only on `users/{uid}.sites[]`
- * — there is no inverse `sites/{siteId}.members[]` (see
- * `dev/active/api-sprint/reference/membership-decision.md`) — so every caller
- * goes through here and firestore.rules stays the only other place pinned to the
- * field.
+ * LEGACY read of `users/{uid}.sites[]`. This is NOT the membership seam.
  *
- * `[]` when the user has no `sites` field or no doc at all. This is the explicit
- * assignment list, not the effective one: superadmin access comes from the role
- * check elsewhere.
+ * Site access resolves from `sites/{siteId}/members/{uid}` through
+ * `lib/sitePolicy.server.ts`, and firestore.rules no longer consults this field
+ * at all. The previous version of this comment claimed the opposite on both
+ * counts, which is exactly the kind of stale rationale that gets acted on.
+ *
+ * Retained only for the two hoot/chat scoping callers. Nothing new may gate on
+ * it, and wave 6.1 strips the field — at which point those callers must already
+ * have moved to `resolveSiteAccess` or they will silently scope to nothing.
+ *
+ * `[]` when the user has no `sites` field or no doc at all.
  */
 export async function getUserSiteIds(userId: string): Promise<string[]> {
   const db = getAdminDb();

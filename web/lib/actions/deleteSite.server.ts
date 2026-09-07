@@ -121,11 +121,13 @@ export async function deleteSite(
     }, db);
   }
 
-  // Tombstone the id BEFORE freeing it. Site ids are caller-supplied slugs and
-  // deletion does not clear `users/{uid}.sites[]` (see the TODO above), so without
-  // this a later site reusing the slug silently inherits the previous site's
-  // members — a cross-tenant grant nobody performed. Written first: a tombstone
-  // with no delete is harmless, a delete with no tombstone is the bug.
+  // Tombstone the id BEFORE freeing it. Site ids are caller-supplied slugs, and
+  // step 4 below clears `users/{uid}.sites[]` only for members whose user doc
+  // still exists — a stale entry can outlive the delete on a hard-deleted or
+  // non-member account. So without this, a later site reusing the slug could
+  // inherit a leftover holder: a cross-tenant grant nobody performed. Written
+  // first, because a tombstone with no delete is harmless and a delete with no
+  // tombstone is the bug.
   // Timestamp only. The deleting principal is already in the platform audit row
   // written just above, which is admin-gated; this document is client-readable
   // for the id-availability check and must carry nothing else.

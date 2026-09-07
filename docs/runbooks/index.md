@@ -28,7 +28,6 @@ Use [production-deploy.md](production-deploy.md) for the normal production relea
 - Firebase Functions deploy
 - Firestore rules deploy
 - Storage rules deploy
-- docs site deploy
 - post-deploy checks
 
 Use [agent-installer-release.md](agent-installer-release.md) when the Windows agent installer changes:

@@ -2,10 +2,10 @@
 
 This runbook is for maintainers shipping a normal Owlette production release after
 the release content has already been reviewed. It is written as an at-any-hour
-checklist for the web app, Cloud Functions, Firestore rules, storage rules, and
-the docs site.
+checklist for the web app, Cloud Functions, Firestore rules, and storage
+rules.
 
-> **scope**: regular production release of web + functions + Firestore rules + storage rules + docs site. For agent installer releases see [agent-installer-release.md](agent-installer-release.md). For emergency fixes see [hotfix-rollback.md](hotfix-rollback.md).
+> **scope**: regular production release of web + functions + Firestore rules + storage rules. For agent installer releases see [agent-installer-release.md](agent-installer-release.md). For emergency fixes see [hotfix-rollback.md](hotfix-rollback.md).
 
 > **manual surfaces and deploy order**: [manual-infrastructure.md](manual-infrastructure.md) is the authority on every surface that is not deployed by pushing a branch — the cron-job.org schedules, the Cloudflare load balancer, Firebase console state — and on the order these steps run in. Firestore indexes and rules deploy **before** the web deploy that depends on them, not after; the numbered steps below are otherwise sequential.
 
@@ -51,7 +51,7 @@ the docs site.
 | Cloud Functions | none | no CI workflow | run `FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions --project prod` if functions changed (firebase-tools 15.x) |
 | Firestore rules and indexes | none | no CI workflow | run `firebase deploy --only firestore` if rules or indexes changed |
 | storage rules | none | no CI workflow | run `firebase deploy --only storage` if storage rules changed |
-| docs site | push to `main` touching `docs/**` or `mkdocs.yml` | `.github/workflows/deploy-docs.yml` publishes to `gh-pages` | merge docs changes to `main`; watch workflow |
+| published docs (/docs) | push or merge to `main` | ships with the web prod deploy — fumadocs MDX under `web/content/docs/` is compiled by `npm run build` | none beyond the web deploy; verify `https://owlette.app/docs` in smoke |
 | CLI npm package | tag push matching `cli-v[0-9]+.[0-9]+.[0-9]+` | `.github/workflows/cli-publish.yml` publishes to npm with provenance | out of scope here |
 | agent installer | separate release process | separate runbook | use [agent-installer-release.md](agent-installer-release.md) |
 
@@ -252,16 +252,11 @@ the docs site.
     probe, so a 503 here also means the LB is about to fail this origin out of
     rotation. Then load the dashboard and run the smoke scripts.
 
-    Confirm docs deployment if docs changed.
+    Confirm the published docs if they changed.
 
-    The docs site publishes from `.github/workflows/deploy-docs.yml` when a
-    push to `main` touches:
-
-    - `docs/**`
-    - `mkdocs.yml`
-
-    The workflow publishes to `gh-pages`. Watch it if the release includes docs
-    changes.
+    If `web/content/docs/**` changed, confirm the pages render at
+    `https://owlette.app/docs` after the Railway prod deploy. There is no
+    separate docs deploy.
 
 11. Tag the release and record completion.
 
@@ -279,7 +274,7 @@ the docs site.
     - functions deploy status, if applicable
     - Firestore deploy status, if applicable
     - storage deploy status, if applicable
-    - docs deploy status, if applicable
+    - published docs spot-check, if `web/content/docs/**` changed
     - smoke script results
     - any follow-up rollback risk
 
@@ -299,8 +294,8 @@ the docs site.
   depends on them, before the production web deploy rather than after it.
 - [ ] If storage rules changed, `firebase deploy --only storage` completed
   successfully.
-- [ ] If docs changed, the docs deploy workflow completed and published to
-  `gh-pages`.
+- [ ] If `web/content/docs/**` changed, the affected pages render at
+  `https://owlette.app/docs`.
 - [ ] Status-page readiness script passed:
 
   ```sh
@@ -406,18 +401,17 @@ firebase deploy --only storage
 Console history is also available for storage rules. Use it when it is the
 fastest clear rollback path.
 
-### docs
+### published docs
 
-Docs rollback is a revert of the docs commit on `main`. The docs deploy workflow
-reruns and republishes to `gh-pages`.
+Docs rollback is a revert of the docs commit on `main`.
 
 ```sh
 git revert <offending-docs-sha>
 git push origin main
 ```
 
-Watch `.github/workflows/deploy-docs.yml` after the push if the reverted commit
-touches `docs/**` or `mkdocs.yml`.
+Reverting on `main` triggers the normal Railway web deploy, which rebuilds the
+docs. There is no separate docs workflow to watch.
 
 ## env vars maintained per environment
 
@@ -487,7 +481,8 @@ Required production reminders:
 - If Railway's injected `RAILWAY_PUBLIC_DOMAIN` differs from `owlette.app`, the
   domain string match will not select prod. `ROOST_ENV=prod` avoids that class
   of mistake.
-- Docs deploys only run for pushes to `main` touching `docs/**` or `mkdocs.yml`.
+- Published docs deploy with the web app; repo-root `docs/**` is internal and
+  is not published.
 - CLI package publishing is tag-triggered and out of scope for this runbook.
 
 ## further reading

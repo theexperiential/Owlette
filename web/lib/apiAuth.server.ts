@@ -414,9 +414,11 @@ export async function assertActiveUser(
  *
  * The decision itself moved to `resolveSiteAccess` in Wave 1 Task 1.2 so one
  * implementation could serve both wrappers. This function keeps its signature
- * and its throw behaviour exactly, because five routes call it directly
- * (device-code authorize ×2, setup/generate-token, agent/generate-installer,
- * keys/_shared) and much of the suite mocks it. Preserve both when touching
+ * and its throw behaviour exactly, because two routes call it directly
+ * (`app/api/cli/device-code/authorize`, `app/api/keys/_shared`) and much of the
+ * suite mocks it. The three enrolment routes that used to call it —
+ * setup/generate-token, agent/generate-installer, agent device-code authorize —
+ * moved to `assertUserHasSiteCapability` in 77edefde. Preserve both when touching
  * this: the statuses and messages below are asserted across the suite, and
  * `code: 'user_inactive'` is specifically what lets `authorizedSiteHandler`
  * answer 403 instead of collapsing to 404.

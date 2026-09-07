@@ -411,11 +411,11 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
  * production routes that call it on their own. One decision implementation,
  * without a second call shape to keep in step.
  *
- * NOTE the response mapping: every denial collapses to the SAME 404 —
- * including an inactive user, where `authorizedSiteHandler` answers 403
- * `user_inactive`. That divergence is real, is pinned by
- * `__tests__/lib/authorizationParity.test.ts`, and is what Task 1.3 unifies.
- * It is preserved verbatim here so the extraction itself changes no behaviour.
+ * NOTE the response mapping: an INACTIVE caller is 403 `user_inactive`; every
+ * other denial collapses to 404. Task 1.3 unified this with
+ * `authorizedSiteHandler`, so the divergence this comment used to describe is
+ * gone — `__tests__/lib/authorizationParity.test.ts` now pins the AGREEMENT,
+ * not the difference. Three auditors were nearly misled by the old wording.
  */
 async function assertSiteAccessOrProblem(
   userId: string,
@@ -525,9 +525,10 @@ export async function requireMachineAuthAndScope(
   }
 
   // Agent short-circuit: an agent ID token carries role + site_id + machine_id
-  // claims, but assertSiteAccessOrProblem reads users/{uid}.sites[] and agents
-  // have no user doc — falling through would 404 every agent screenshot/command
-  // call. Validate the token's claims directly instead.
+  // claims, but assertSiteAccessOrProblem resolves through `resolveSiteAccess`,
+  // which requires a `users/{uid}` document AND an active
+  // `sites/{siteId}/members/{uid}` row. An agent has neither, so falling through
+  // would 404 every agent screenshot/command call. Validate the claims directly.
   const authHeader = req.headers.get('authorization') || '';
   const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
   if (bearerMatch && !bearerMatch[1].startsWith('owk_')) {

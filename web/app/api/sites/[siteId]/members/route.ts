@@ -1,20 +1,20 @@
 /**
- * GET  /api/sites/{siteId}/members — membership lives only on `users/{uid}.sites[]`
- *      (dev/active/api-sprint/reference/membership-decision.md), so we query
- *      `users where sites array-contains {siteId}` and additionally surface the
- *      site `owner`, who is always an effective member.
+ * GET  /api/sites/{siteId}/members — reads `sites/{siteId}/members`, the rows
+ *      that actually grant access, and derives each person's role FROM THE ROW.
+ *      It used to query `users where sites array-contains {siteId}` and compute
+ *      the per-site role from the GLOBAL role, which reported a real site-admin
+ *      as a plain member forever.
  *
- * POST /api/sites/{siteId}/members  `{uid | email, role}` — adds siteId to
- *      `users/{uid}.sites[]` via arrayUnion after validating the user exists.
- *      `email` is the dashboard's affordance (an admin knows a colleague's
- *      address, not their uid) and resolves through Admin Auth to the same uid
- *      path. Per-site role is derived from global role + ownership at read
- *      time, so add-with-role is just sugar for that membership write.
- *      Idempotency-Key required.
+ * POST /api/sites/{siteId}/members  `{uid | email, role}` — writes the member
+ *      row through `addMember`, so the requested role is STORED rather than
+ *      derived, and mirrors the id into the legacy `users/{uid}.sites[]` while
+ *      that field still exists. `email` is the dashboard's affordance (an admin
+ *      knows a colleague's address, not their uid) and resolves through Admin
+ *      Auth to the same uid path. Idempotency-Key required.
  *
- * Auth (both verbs): `requireSiteAuthAndScope(req, siteId, 'admin')` — an api key
- * with `site=<siteId>:admin`, or a session/id-token whose caller is a site admin
- * (superadmin OR admin-with-access, matching the dashboard's `isSiteAdmin`).
+ * Auth (both verbs): `authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE' })`,
+ * with api-key permissions `['read','admin']` on GET and `['write','admin']` on
+ * POST. Site access is membership — a global `admin` role grants nothing here.
  *
  * api-sprint wave 3 track 3B (users-api / site-members).
  */

@@ -282,8 +282,9 @@ After publish or deprecation:
 - Confirm `npm view @owlette/cli versions`.
 - Confirm the bad version shows the deprecation message.
 - Confirm install resolves to the intended fixed version.
-### docs site
-Rollback model: revert docs commit on `main`, push, and `deploy-docs` workflow re-runs.
+### published docs
+Rollback model: revert the docs commit on `main` and push — the Railway web
+deploy rebuilds and republishes `/docs`.
 ```bash
 git status
 git checkout main
@@ -292,7 +293,7 @@ git revert <bad-docs-sha>
 git push origin main
 ```
 After push:
-- Watch `deploy-docs`.
+- Watch the Railway prod deploy.
 - Confirm the published docs page reverted.
 - Confirm support or customer links resolve.
 ## things that have gone wrong before (case studies)

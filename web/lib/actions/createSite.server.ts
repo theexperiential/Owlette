@@ -109,9 +109,10 @@ export async function createSite(
     return { kind: 'already_exists' };
   }
 
-  // A retired id is not free. Deleting a site leaves every member's
-  // `users/{uid}.sites[]` entry in place, so reusing the slug would hand the new
-  // site's data to the old site's members. Refused rather than silently reused.
+  // A retired id is not free. deleteSite clears `users/{uid}.sites[]` only for
+  // members whose user doc still exists, so a stale entry can survive a delete
+  // and reusing the slug could hand the new site's data to a leftover holder.
+  // Refused rather than silently reused.
   const tombstone = await db.collection('site_ids').doc(input.siteId).get();
   if (tombstone.exists) {
     return { kind: 'id_retired' };
