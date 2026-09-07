@@ -70,6 +70,15 @@ class FakeFirestore {
     return new FakeCollectionGroup(this, id);
   }
 
+  /**
+   * Batched read. `loadSuccessorActor` fetches the successor's user document and
+   * their membership row together — the successor's authority is per-site, so
+   * both are needed to decide whether they may inherit a talon.
+   */
+  getAll(...refs: FakeDocRef[]) {
+    return Promise.all(refs.map((ref) => ref.get()));
+  }
+
   batch() {
     const ops: BatchOp[] = [];
     return {
@@ -287,8 +296,8 @@ const SITE = 'site-a';
 const TALONS_PATH = `sites/${SITE}/talons`;
 const SECRETS_PATH = `sites/${SITE}/talon_secrets`;
 
-const ADMIN: Actor = { type: 'user', userId: 'admin-uid', role: 'admin', sites: [SITE] };
-const MEMBER: Actor = { type: 'user', userId: 'member-uid', role: 'member', sites: [SITE] };
+const ADMIN: Actor = { type: 'user', userId: 'admin-uid', role: 'admin', siteRoles: { [SITE]: 'admin' } };
+const MEMBER: Actor = { type: 'user', userId: 'member-uid', role: 'member', siteRoles: { [SITE]: 'member' } };
 
 let fake: FakeFirestore;
 let db: Firestore;
@@ -571,7 +580,7 @@ describe('createTalon', () => {
       type: 'user',
       userId: 'admin-elsewhere',
       role: 'admin',
-      sites: ['site-b'],
+      siteRoles: { ['site-b']: 'admin' },
     };
     await expectStoreError(
       createTalon(
@@ -914,7 +923,7 @@ describe('updateTalon', () => {
 
     await updateTalon(
       db,
-      ctxFor({ type: 'user', userId: 'second-admin', role: 'admin', sites: [SITE] }),
+      ctxFor({ type: 'user', userId: 'second-admin', role: 'admin', siteRoles: { [SITE]: 'admin' } }),
       't1',
       talonInput({ outputs: [{ type: 'cortex', directive: 'restart the show' }] }),
     );
@@ -1134,9 +1143,28 @@ describe('listTalonsAuthoredByAcrossSites', () => {
 });
 
 describe('reassignTalons', () => {
-  /** An eligible successor: admin, assigned to this site, not deleted. */
-  function seedSuccessor(uid: string, overrides: DocData = {}): void {
+  /**
+   * An eligible successor: a site admin here, not deleted.
+   *
+   * The membership row is what makes them eligible — the global role grants
+   * nothing on a site now, so seeding only `users/{uid}` produces a successor the
+   * store correctly refuses. `siteRole: null` seeds no row, for the tests that
+   * want that refusal.
+   */
+  function seedSuccessor(
+    uid: string,
+    overrides: DocData = {},
+    siteRole: 'owner' | 'admin' | 'member' | null = 'admin',
+  ): void {
     fake.docs.set(`users/${uid}`, { role: 'admin', sites: [SITE], ...overrides });
+    if (siteRole === null) return;
+    fake.docs.set(`sites/${SITE}/members/${uid}`, {
+      uid,
+      role: siteRole,
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
   }
 
   it('moves every talon the departing author wrote', async () => {
@@ -1300,9 +1328,11 @@ describe('reassignTalons', () => {
   });
 
   it('refuses a successor with no access to the site', async () => {
-    // Admin of ANOTHER site: TALON_MANAGE is site-scoped, so this is the
-    // "handed it to someone who cannot run it" failure.
-    seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
+    // No membership on THIS site: TALON_MANAGE is site-scoped, so this is the
+    // "handed it to someone who cannot run it" failure. The global `admin` role
+    // on the seeded user document is deliberately left in place — it must not
+    // rescue them.
+    seedSuccessor('successor-uid', { sites: ['site-elsewhere'] }, null);
     seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
 
     await expectStoreError(
@@ -1314,7 +1344,7 @@ describe('reassignTalons', () => {
   });
 
   it('refuses a member — TALON_MANAGE is what authoring takes', async () => {
-    seedSuccessor('successor-uid', { role: 'member' });
+    seedSuccessor('successor-uid', { role: 'member' }, 'member');
     seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
 
     await expectStoreError(
@@ -1395,7 +1425,7 @@ describe('reassignTalons', () => {
     // seedable user fails only the second. These pin observable behaviour, not
     // the isolated inner gate.
     it('refuses an ineligible successor for a talon that runs commands', async () => {
-      seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
+      seedSuccessor('successor-uid', { sites: ['site-elsewhere'] }, null);
       seedTalon('t1', {
         name: 'alpha',
         createdBy: 'leaver-uid',

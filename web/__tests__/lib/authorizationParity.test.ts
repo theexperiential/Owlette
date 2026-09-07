@@ -39,7 +39,20 @@ import type { NextRequest } from 'next/server';
 const store = {
   users: new Map<string, Record<string, unknown> | null>(),
   sites: new Map<string, Record<string, unknown> | null>(),
+  /** `sites/{siteId}/members/{uid}`, keyed `${siteId}/${uid}`. THE grant. */
+  members: new Map<string, Record<string, unknown> | null>(),
 };
+
+/** Give `uid` standing on `siteId`, as `membership.server.ts` writes it. */
+function grant(siteId: string, uid: string, role: 'owner' | 'admin' | 'member'): void {
+  store.members.set(`${siteId}/${uid}`, {
+    uid,
+    role,
+    status: 'active',
+    addedAt: new Date(0),
+    addedBy: 'system:test',
+  });
+}
 
 /** Reads recorded per document path, so we can pin the read COST of each path. */
 const reads: string[] = [];
@@ -56,6 +69,12 @@ function resolveDoc(path: string) {
   // the SITE document, so a Wave 4 membership-subcollection read would silently
   // answer with unrelated data and this matrix would pass while testing nothing.
   // Anything deeper is reported as non-existent, which fails loudly instead.
+  // `sites/{siteId}/members/{uid}` — resolved explicitly, never by falling back
+  // to a shorter prefix, or a membership read would answer with the SITE
+  // document and this matrix would pass while testing nothing.
+  if (segments.length === 4 && segments[0] === 'sites' && segments[2] === 'members') {
+    return snapshot(segments[3], store.members.get(`${segments[1]}/${segments[3]}`) ?? null);
+  }
   if (segments.length !== 2) return snapshot(segments[segments.length - 1] ?? 'unknown', null);
   const [collection, id] = segments;
   if (collection === 'users') return snapshot(id, store.users.get(id) ?? null);
@@ -268,8 +287,10 @@ beforeEach(() => {
   resolveAuthThrows = null;
   resolveAuthResult = { userId: ALICE, keyContext: null };
 
+  store.members.clear();
   store.sites.set(SITE, { owner: ALICE, name: 'Site A' });
   store.users.set(ALICE, { role: 'admin', sites: [SITE] });
+  grant(SITE, ALICE, 'admin');
 });
 
 describe('authorization parity — shared behaviour (both paths must agree)', () => {
@@ -281,14 +302,16 @@ describe('authorization parity — shared behaviour (both paths must agree)', ()
   it('allows a superadmin who is not a member', async () => {
     store.users.set(ALICE, { role: 'superadmin', sites: [] });
     store.sites.set(SITE, { owner: 'someone_else' });
+    store.members.clear();
 
     expect((await runPathA(SITE)).status).toBe(200);
     expect((await runPathB(SITE)).status).toBe(200);
   });
 
-  it('allows the site owner even when sites[] omits the site', async () => {
+  it('allows the site owner, whose global role grants nothing', async () => {
     store.users.set(ALICE, { role: 'member', sites: [] });
     store.sites.set(SITE, { owner: ALICE });
+    grant(SITE, ALICE, 'owner');
 
     expect((await runPathA(SITE)).status).toBe(200);
     expect((await runPathB(SITE)).status).toBe(200);
@@ -316,6 +339,7 @@ describe('authorization parity — shared behaviour (both paths must agree)', ()
   it('collapses "member of no such site" into the SAME 404 as a missing site', async () => {
     store.users.set(ALICE, { role: 'member', sites: ['other-site'] });
     store.sites.set(SITE, { owner: 'someone_else' });
+    store.members.clear();
 
     const denied = await runPathB(SITE);
     store.sites.delete(SITE);
@@ -385,6 +409,7 @@ describe('CONVERGENCE 1 — an inactive caller is 403 on BOTH paths', () => {
     // existence to anyone who asks.
     store.users.set(ALICE, { role: 'member', sites: [] });
     store.sites.set(SITE, { owner: 'someone_else' });
+    store.members.clear();
     expect((await runPathA(SITE)).status).toBe(404);
     expect((await runPathB(SITE)).status).toBe(404);
   });

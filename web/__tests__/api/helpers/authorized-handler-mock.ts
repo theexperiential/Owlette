@@ -42,7 +42,7 @@ function normalizeUserId(value: unknown): string {
 
 function makeSiteContext(userId: string, siteId: string): HandlerContext {
   return {
-    actor: { type: 'user', userId, role: 'superadmin', sites: siteId ? [siteId] : [] },
+    actor: { type: 'user', userId, role: 'superadmin', siteRoles: {} },
     siteId,
     correlationId: 'test-correlation-id',
     auth: { userId, keyContext: null },

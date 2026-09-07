@@ -23,6 +23,24 @@ let siteDoc: { exists: boolean; data: () => unknown } = {
 };
 // `customers/{uid}` for the control-plane billing gate. Absent by default, which
 // `resolveBillingState()` reads as 'trialing' — the posture every other test here assumes.
+/**
+ * `sites/{siteId}/members/{uid}` — the row site access resolves from. Absent by
+ * default so a test that wants standing has to say so; the legacy `owner` field
+ * on `siteDoc` no longer grants anything.
+ */
+let memberDoc: { exists: boolean; data: () => unknown } = {
+  exists: false,
+  data: () => undefined,
+};
+
+/** Give the caller per-site standing. */
+function setMember(role: 'owner' | 'admin' | 'member'): void {
+  memberDoc = {
+    exists: true,
+    data: () => ({ uid: 'uid_alice', role, status: 'active', addedAt: new Date(0), addedBy: 'system:test' }),
+  };
+}
+
 let customerDoc: { exists: boolean; data: () => unknown } = {
   exists: false,
   data: () => undefined,
@@ -52,6 +70,11 @@ function buildDoc(path: string): unknown {
       // resolve which doc this is
       if (path.startsWith('users/')) {
         return Promise.resolve(userDoc);
+      }
+      // Before the generic `sites/` branch: a membership read would otherwise
+      // come back as the site document.
+      if (/^sites\/[^/]+\/members\//.test(path)) {
+        return Promise.resolve(memberDoc);
       }
       if (path.startsWith('sites/')) {
         return Promise.resolve(siteDoc);
@@ -213,6 +236,8 @@ beforeEach(() => {
   };
   userDoc = { exists: true, data: () => ({ role: 'admin', sites: ['site-a'] }) };
   siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+  // Ownership is a member row now; the `owner` field above grants nothing.
+  setMember('admin');
   customerDoc = { exists: false, data: () => undefined };
   requireScopeMock.mockReturnValue({ isLegacy: false });
   assertUserHasSiteAccessMock.mockResolvedValue({ siteId: 'site-a', siteData: {} });
@@ -252,7 +277,7 @@ describe('authorizedSiteHandler — happy path', () => {
     expect(res.status).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
     const ctx = handler.mock.calls[0][1];
-    expect(ctx.actor).toEqual({ type: 'user', userId: 'uid_alice', role: 'admin', sites: ['site-a'] });
+    expect(ctx.actor).toEqual({ type: 'user', userId: 'uid_alice', role: 'admin', siteRoles: { ['site-a']: 'admin' } });
     expect(ctx.siteId).toBe('site-a');
     expect(typeof ctx.correlationId).toBe('string');
     expect(ctx.correlationId).toMatch(/^[0-9a-f]{22}$/);
@@ -393,6 +418,8 @@ describe('authorizedSiteHandler — denials', () => {
   it('returns 404 when site access fails (collapsed from 403/404)', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: [] }) };
     siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
+    // No membership row: this is what "no access" looks like now.
+    memberDoc = { exists: false, data: () => undefined };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -446,11 +473,11 @@ describe('authorizedSiteHandler — denials', () => {
 
   it('returns 403 + deny audit when the capability is missing', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
-    // Owned by someone else, or the owner short-circuit would grant the
-    // capability and this would assert nothing. (The default fixture owner is
-    // the caller, which is exactly how this test used to pass for the wrong
-    // reason once siteData stopped being stubbed empty.)
     siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
+    // Standing at `member`, so the caller HAS access to the site but not this
+    // capability — which is what separates a 403 here from the 404 above. The
+    // default fixture grants `admin`, and leaving it would assert nothing.
+    setMember('member');
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -505,14 +532,19 @@ describe('authorizedSiteHandler — denials', () => {
   });
 });
 
-describe('authorizedSiteHandler — site owner short-circuit', () => {
-  // Self-serve owners are role `member` (bootstrapUser) and `/api/sites` POST has
-  // no capability gate, so without the short-circuit the creator of a site is
-  // locked out of every site-scoped route on it — including DELETE, which is how
+describe('authorizedSiteHandler — ownership is a per-site role', () => {
+  // Self-serve owners are global role `member` (bootstrapUser) and `/api/sites`
+  // POST has no capability gate, so a matrix keyed on the GLOBAL role locked the
+  // creator of a site out of every route on it — including DELETE, which is how
   // this surfaced ("capability not granted" on delete site, Davor, 2026-09-04).
-  it('grants a site-scoped capability to a member who owns the site', async () => {
-    userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+  //
+  // The fix used to be an ownership short-circuit that read `sites/{id}.owner`
+  // and bypassed the matrix. `owner` is a row IN the matrix now, so the grant
+  // comes from the matrix itself and the bypass is gone.
+  it('grants a site-scoped capability to a global member who OWNS the site', async () => {
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: [] }) };
     siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+    setMember('owner');
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -520,11 +552,29 @@ describe('authorizedSiteHandler — site owner short-circuit', () => {
     expect(handler).toHaveBeenCalled();
   });
 
-  // Negative control: identical actor, site owned by someone else. Without it a
-  // blanket member-allow would pass the test above just as well.
-  it('still denies the same member on a site they do not own', async () => {
+  it('grants SITE_DELETE to the owner and refuses it to a site admin', async () => {
+    // The one capability that separates the two rows.
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: [] }) };
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+
+    setMember('owner');
+    const ownerHandler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const asOwner = authorizedSiteHandler({ capability: 'SITE_DELETE', siteIdParam: 'path' })(ownerHandler);
+    expect((await asOwner(makeRequest(), pathParamsFor('site-a'))).status).toBe(200);
+
+    setMember('admin');
+    const adminHandler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const asAdmin = authorizedSiteHandler({ capability: 'SITE_DELETE', siteIdParam: 'path' })(adminHandler);
+    expect((await asAdmin(makeRequest(), pathParamsFor('site-a'))).status).toBe(403);
+    expect(adminHandler).not.toHaveBeenCalled();
+  });
+
+  // Negative control: identical user, membership only at `member`. Without it a
+  // blanket allow would pass the tests above just as well.
+  it('denies a plain member the same capability', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
     siteDoc = { exists: true, data: () => ({ owner: 'uid_bob' }) };
+    setMember('member');
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
@@ -532,11 +582,25 @@ describe('authorizedSiteHandler — site owner short-circuit', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // Ownership stands in for the role matrix only within the site. A platform
-  // capability must stay unreachable, or owning a site would confer global admin.
+  it('the legacy owner field alone grants nothing', async () => {
+    // `sites/{siteId}.owner` is no longer read on the auth path. A site pointing
+    // at this user with no member row is a repair job, not a grant.
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: [] }) };
+    siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+    memberDoc = { exists: false, data: () => undefined };
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'SITE_MEMBER_MANAGE', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(404);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // A per-site role covers the site and nothing wider. A platform capability
+  // must stay unreachable, or owning a site would confer global admin.
   it('does not let ownership grant a capability that is not site-scoped', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
     siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+    setMember('owner');
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
     const wrapped = authorizedSiteHandler({ capability: 'GLOBAL_SETTINGS_WRITE', siteIdParam: 'path' })(handler);
     const res = await wrapped(makeRequest(), pathParamsFor('site-a'));

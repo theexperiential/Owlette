@@ -5,7 +5,7 @@
 
 import { tool, jsonSchema } from 'ai';
 import { decryptApiKey } from '@/lib/llm-encryption.server';
-import { resolveSiteAccess } from '@/lib/sitePolicy.server';
+import { resolveSiteAccess, type MembershipRole } from '@/lib/sitePolicy.server';
 import {
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
@@ -101,7 +101,10 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
 
 export interface BuildExecutableToolsOptions {
   userId?: string;
+  /** GLOBAL role. Grants nothing on a site; kept for audit attribution. */
   userRole?: string | null;
+  /** PER-SITE standing. Omit it and every site-scoped tool denies. */
+  userSiteRole?: MembershipRole;
   /** Unattended attribution for the autonomous Hoot path (no session). Wins over
    *  userId/userRole so the audit row reads `system:<name>`, not a phantom user. */
   systemActor?: SystemActorName;
@@ -157,7 +160,11 @@ function actionContextForHoot(
     type: 'user',
     userId,
     role: normalizeActorRole(options.userRole),
-    sites: [siteId],
+    // Was `sites: [siteId]` — a fabricated membership that asserted the caller
+    // belonged to the site without ever checking, so the global role alone
+    // decided what the tools could do. The real standing is resolved by
+    // `verifyUserSiteAccess` and threaded in; absent, nothing site-scoped runs.
+    siteRoles: options.userSiteRole ? { [siteId]: options.userSiteRole } : {},
   };
   return {
     siteId,
@@ -276,7 +283,14 @@ export async function resolveSiteKeyOwner(
  * `isSiteAdmin` mirrors AuthContext's `isSiteAdmin(siteId)`.
  */
 export interface SiteAccessLevel {
+  /** GLOBAL `users/{uid}.role`, unnormalised. Carries no site privilege. */
   role: string | null;
+  /**
+   * PER-SITE standing from `sites/{siteId}/members/{uid}`, or null for none.
+   * This is what grants; `role` above does not. Callers building a `UserActor`
+   * must pass this through, or every site-scoped capability denies.
+   */
+  siteRole: MembershipRole;
   isSuperadmin: boolean;
   isSiteAdmin: boolean;
   isSiteOwner: boolean;
@@ -353,13 +367,22 @@ export async function verifyUserSiteAccess(
 
   const isSuperadmin = facts.globalRole === 'superadmin';
   const isSiteOwner = facts.membershipRole === 'owner';
-  // Mirrors AuthContext.isSiteAdmin; members never get admin privileges.
-  // `membershipRole !== null` is exactly the old `isSiteOwner || isAssigned`.
-  const isSiteAdmin = isSuperadmin || (facts.globalRole === 'admin' && facts.membershipRole !== null);
+  // Mirrors AuthContext.computeIsSiteAdmin: per-site standing decides, and the
+  // global role contributes nothing but superadmin. This previously read
+  // `globalRole === 'admin' && membershipRole !== null`, which is how one global
+  // admin held tier-3 Hoot on every site it was assigned to.
+  const isSiteAdmin =
+    isSuperadmin || facts.membershipRole === 'owner' || facts.membershipRole === 'admin';
 
   // `rawRole`, not `globalRole`: this returns the unnormalised value, so a user
   // doc with no role stays `null` rather than becoming 'member'.
-  return { role: facts.rawRole, isSuperadmin, isSiteAdmin, isSiteOwner };
+  return {
+    role: facts.rawRole,
+    siteRole: facts.membershipRole,
+    isSuperadmin,
+    isSiteAdmin,
+    isSiteOwner,
+  };
 }
 
 /**

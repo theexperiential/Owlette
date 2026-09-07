@@ -53,9 +53,9 @@ import {
   type Actor,
   type Capability,
   type Role,
+  type SiteRole,
   type UserActor,
   hasCapability,
-  isSiteScopedCapability,
 } from '@/lib/capabilities';
 import {
   generateCorrelationId,
@@ -178,13 +178,23 @@ function toPermissionList(
   return Array.isArray(p) ? p : [p];
 }
 
-function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
+/**
+ * `siteRoles` carries the caller's standing on the site this request names, and
+ * is `{}` on platform routes where no site was resolved. An empty map denies
+ * every site-scoped capability, which is the correct default: a route that never
+ * resolved membership must not be able to act on a site.
+ */
+function authToActor(
+  auth: ResolvedAuth,
+  role: Role,
+  siteRoles: Record<string, SiteRole>,
+): UserActor {
   return {
     type: 'user',
     userId: auth.userId,
     ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
     role,
-    sites,
+    siteRoles,
   };
 }
 
@@ -199,10 +209,9 @@ async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
   }
   const rawRole = data?.role;
   const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
-  const sites = Array.isArray(data?.sites)
-    ? (data?.sites as unknown[]).filter((s): s is string => typeof s === 'string')
-    : [];
-  return authToActor(auth, role, sites);
+  // No site is in scope on this path, so no per-site standing is resolved and
+  // every site-scoped capability denies. Platform routes are the only callers.
+  return authToActor(auth, role, {});
 }
 
 function authErrorToResponse(err: ApiAuthError): NextResponse {
@@ -512,7 +521,6 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       // it answers 403 for an inactive user where _shared collapses to 404.
       // Wave 1 Task 1.3 unifies the two mappings; keeping them separate here
       // is what lets the parity matrix stay green across this extraction.
-      let siteData: Record<string, unknown> | null = null;
       let outcome: SiteAccessOutcome;
       try {
         outcome = await resolveSiteAccess(auth.userId, siteId);
@@ -536,8 +544,15 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         return problemNotFound('site not found or no access');
       }
 
-      siteData = outcome.facts.siteData;
-      actor = authToActor(auth, outcome.facts.globalRole, outcome.facts.sites);
+      actor = authToActor(
+        auth,
+        outcome.facts.globalRole,
+        // Reached only when the outcome is ok, so a superadmin may legitimately
+        // have no membership; their capabilities short-circuit on global role.
+        outcome.facts.membershipRole
+          ? { [siteId]: outcome.facts.membershipRole }
+          : {},
+      );
 
       // 5. Read kill-switch config.
       const config = await securityConfig.read();
@@ -594,24 +609,13 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         ? 'capability'
         : undefined;
       if (config.capability_enforcement) {
-        // The site owner short-circuits, mirroring `requireSiteCapability` in
-        // app/api/_shared.ts: self-serve owners are created with global role
-        // `member` (lib/actions/bootstrapUser.server.ts) and any authenticated
-        // user may create a site (`/api/sites` POST), so a strict matrix check
-        // locks an owner out of every route on the site they own — including
-        // renaming and deleting it.
-        //
-        // Site-scoped capabilities only. A platform capability (USER_ROLE_MANAGE,
-        // INSTALLER_MANAGE, GLOBAL_SETTINGS_WRITE …) must never be reachable by
-        // owning a site, so ownership cannot stand in for the matrix there.
-        // `typeof owner === 'string'` is load-bearing: an ownerless site doc and an
-        // absent userId would otherwise compare undefined === undefined and hand out
-        // site-admin on a site nobody owns.
-        const ownsSite =
-          isSiteScopedCapability(options.capability) &&
-          typeof siteData?.owner === 'string' &&
-          siteData.owner === auth.userId;
-        const ok = ownsSite || hasCapability(actor as Actor, options.capability, siteId);
+        // No ownership short-circuit. It existed because self-serve owners are
+        // created with global role `member` (lib/actions/bootstrapUser.server.ts),
+        // so a matrix keyed on the GLOBAL role locked an owner out of their own
+        // site. The matrix is keyed on per-site standing now, and `owner` is a
+        // row in it — so ownership is granted by the matrix rather than routed
+        // around it, and `sites/{siteId}.owner` is no longer read here at all.
+        const ok = hasCapability(actor as Actor, options.capability, siteId);
         if (!ok) {
           denyAudit(siteId, {
             correlationId,

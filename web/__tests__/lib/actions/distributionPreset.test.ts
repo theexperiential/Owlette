@@ -84,7 +84,7 @@ const ACTOR: UserActor = {
   type: 'user',
   userId: 'uid_alice',
   role: 'admin',
-  sites: ['site-a'],
+  siteRoles: { ['site-a']: 'admin' },
 };
 
 const AUDIT_ACTOR = 'user:uid_alice';

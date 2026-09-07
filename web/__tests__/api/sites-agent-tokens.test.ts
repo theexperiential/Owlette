@@ -9,14 +9,14 @@ type TestUserActor = {
   type: 'user';
   userId: string;
   role: 'member' | 'admin' | 'superadmin';
-  sites: string[];
+  siteRoles: Record<string, 'owner' | 'admin' | 'member'>;
 };
 
 const SUPERADMIN: TestUserActor = {
   type: 'user',
   userId: 'test-admin',
   role: 'superadmin',
-  sites: [],
+  siteRoles: {},
 };
 
 let tokenDocs: TokenDoc[] = [];
@@ -167,7 +167,7 @@ describe('/api/sites/{siteId}/agent-tokens', () => {
   // on site-scoped AGENT_TOKEN_REVOKE, so a site admin could revoke a token they
   // could not list. These three cases fail if that split ever comes back.
   it('lets a site admin list tokens for a site they are assigned to', async () => {
-    mockActor = { type: 'user', userId: 'u1', role: 'admin', sites: ['site-a'] };
+    mockActor = { type: 'user', userId: 'u1', role: 'admin', siteRoles: { ['site-a']: 'admin' } };
     tokenDocs = [
       { id: 'live', siteId: 'site-a', machineId: 'm1', createdAt: timestamp('2026-02-01T00:00:00Z') },
     ];
@@ -182,7 +182,7 @@ describe('/api/sites/{siteId}/agent-tokens', () => {
   });
 
   it('denies a site admin listing tokens for a site they are NOT assigned to', async () => {
-    mockActor = { type: 'user', userId: 'u1', role: 'admin', sites: ['site-a'] };
+    mockActor = { type: 'user', userId: 'u1', role: 'admin', siteRoles: { ['site-a']: 'admin' } };
 
     const res = await GET(
       new NextRequest('http://localhost/api/sites/site-b/agent-tokens'),
@@ -193,7 +193,7 @@ describe('/api/sites/{siteId}/agent-tokens', () => {
   });
 
   it('denies a member listing tokens on their own site', async () => {
-    mockActor = { type: 'user', userId: 'u2', role: 'member', sites: ['site-a'] };
+    mockActor = { type: 'user', userId: 'u2', role: 'member', siteRoles: { ['site-a']: 'member' } };
 
     const res = await GET(
       new NextRequest('http://localhost/api/sites/site-a/agent-tokens'),

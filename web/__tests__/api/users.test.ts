@@ -240,6 +240,9 @@ const mockRunTransaction = jest.fn(
         ref: { update: (patch: Record<string, unknown>) => Promise<void> },
         patch: Record<string, unknown>,
       ) => ref.update(patch),
+      // `removeMember` deletes the membership row inside the transaction. It only
+      // reaches this now that fixtures actually have member rows to delete.
+      delete: (ref: { delete: () => Promise<void> }) => ref.delete(),
     };
     return cb(tx);
   },
@@ -407,19 +410,72 @@ function authedAsKeyMissingScope(perm: 'read' | 'write' | 'admin'): void {
   seedUser('user-superadmin', { role: 'superadmin' });
 }
 
+/**
+ * Membership rows for a seeded fixture, as `membership.server.ts` writes them.
+ *
+ * Site access resolves from these and nothing else, so seeding `users/{uid}.sites`
+ * alone now grants nothing. The GLOBAL role is mirrored onto each site because
+ * that is what it used to confer there; superadmins get no rows, matching
+ * production, where they reach every site by role instead.
+ */
+function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
+  const globalRole = typeof merged.role === 'string' ? merged.role : 'member';
+  if (globalRole === 'superadmin') return;
+  const sites = Array.isArray(merged.sites) ? (merged.sites as string[]) : [];
+  for (const siteId of sites) {
+    // `sites/{siteId}.owner` WAS the ownership grant, so a fixture the site
+    // points at becomes an owner row — not the mirrored global role. Self-serve
+    // owners carry global role `member`, and mirroring that would leave them
+    // without SITE_DELETE on the site they own.
+    const owns =
+      (docStore[`sites/${siteId}`] as { data?: { owner?: unknown } } | undefined)?.data?.owner === uid;
+    docStore[`sites/${siteId}/members/${uid}`] = {
+      data: {
+        uid,
+        role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
+        status: 'active',
+        addedAt: new Date(0),
+        addedBy: 'system:test',
+      },
+    };
+  }
+}
+
 function seedUser(uid: string, data: Record<string, unknown>): void {
   const path = `users/${uid}`;
   const merged = { email: `${uid}@example.com`, role: 'member', sites: [], ...data };
   docStore[path] = { data: merged };
+  seedMembershipFor(uid, merged);
   if (!collectionDocs['users']) collectionDocs['users'] = [];
   const idx = collectionDocs['users'].findIndex((d) => d.id === uid);
   if (idx >= 0) collectionDocs['users'][idx] = { id: uid, data: merged };
   else collectionDocs['users'].push({ id: uid, data: merged });
 }
 
+/**
+ * The owner's membership row. `sites/{siteId}.owner` WAS the ownership grant, so
+ * declaring an owner has to produce the row that now carries it — and it is done
+ * here as well as in `seedUser` because fixtures seed users and sites in either
+ * order, and whichever runs second must still leave the owner with `owner`.
+ */
+function seedOwnerMembership(siteId: string, merged: Record<string, unknown>): void {
+  const owner = merged.owner;
+  if (typeof owner !== 'string' || owner.length === 0) return;
+  docStore[`sites/${siteId}/members/${owner}`] = {
+    data: {
+      uid: owner,
+      role: 'owner',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    },
+  };
+}
+
 function seedSite(siteId: string, data: Record<string, unknown> = {}): void {
   const path = `sites/${siteId}`;
   docStore[path] = { data: { owner: 'user-superadmin', ...data } };
+  seedOwnerMembership(siteId, docStore[path].data as Record<string, unknown>);
   if (!collectionDocs['sites']) collectionDocs['sites'] = [];
   const idx = collectionDocs['sites'].findIndex((d) => d.id === siteId);
   if (idx >= 0) {

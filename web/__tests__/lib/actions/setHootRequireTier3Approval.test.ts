@@ -31,7 +31,7 @@ import { setHootRequireTier3Approval } from '@/lib/actions/setHootRequireTier3Ap
 import { ActionInputError, type ActionContext } from '@/lib/actions/createProcess.server';
 
 const SITE = 'site-a';
-const ACTOR: Actor = { type: 'user', userId: 'uid', role: 'admin', sites: [SITE] };
+const ACTOR: Actor = { type: 'user', userId: 'uid', role: 'admin', siteRoles: { [SITE]: 'admin' } };
 const CTX: ActionContext = { siteId: SITE, actor: ACTOR, auditActor: 'user:uid' };
 
 beforeEach(() => {

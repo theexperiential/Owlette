@@ -311,7 +311,7 @@ const ctx = {
   auditActor: 'user:admin',
   // `deleteUser` needs the caller for the talon store's audit context; other
   // action cores ignore the extra field.
-  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
+  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, siteRoles: {} },
   endpoint: '/test',
   method: 'POST',
 };
@@ -424,6 +424,15 @@ describe('deleteUser', () => {
   function talonDb(): FakeDb {
     const db = new FakeDb();
     db.seed('users/bob', { role: 'admin', sites: ['site-a'] });
+    // Bob's authority to inherit the talons is his membership on site-a. The
+    // global `admin` above grants nothing on a site.
+    db.seed('sites/site-a/members/bob', {
+      uid: 'bob',
+      role: 'admin',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
     db.seed('sites/site-a/talons/t1', {
       name: 'nightly restart',
       enabled: true,

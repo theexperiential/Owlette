@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createMockRequest } from '../helpers/utils';
-import { mocks, mockDbFactory } from '../helpers/firestore-mock';
+import { mocks, mockDbFactory, seedMember } from '../helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
 const mockResolveAuth = jest.fn();
@@ -57,6 +57,9 @@ function disableRoostForSite() {
     roostEnabled: false,
     name: 'Disabled site',
   });
+  // The caller still has to reach the site for the kill switch to be the thing
+  // that stops them; without standing they would be refused before the gate.
+  seedMember(SITE, 'user-1', 'owner');
 }
 
 function authed() {
@@ -67,6 +70,8 @@ function authed() {
 beforeEach(() => {
   jest.clearAllMocks();
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   authed();
 });
 

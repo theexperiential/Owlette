@@ -6,6 +6,7 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedMember
 } from './helpers/firestore-mock';
 import { verifySignature } from '@/lib/webhookSignature';
 
@@ -154,6 +155,7 @@ function authedAsOperator() {
 
 function authedAsReadOnly() {
   mocks.siteDocs.set(SITE, { owner: 'user-readonly' });
+  seedMember(SITE, 'user-readonly', 'owner');
   // readonly preset: ['read'] on roost:*
   mockResolveAuth.mockResolvedValue({
     userId: 'user-readonly',
@@ -199,7 +201,10 @@ beforeEach(() => {
   mocks.batchDelete.mockClear();
   mocks.batchCommit.mockResolvedValue(undefined);
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-operator' });
+  seedMember(SITE, 'user-operator', 'owner');
   mocks.get.mockResolvedValue(docSnapshot('idem', null)); // idempotency cache miss
   // no webhook subscriptions unless a test seeds some
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));

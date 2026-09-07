@@ -101,7 +101,7 @@ const actor: UserActor = {
   type: 'user',
   userId: 'user-superadmin',
   role: 'superadmin',
-  sites: [],
+  siteRoles: {},
 };
 
 function seedVersion(version: string, data: Record<string, unknown> = {}): void {

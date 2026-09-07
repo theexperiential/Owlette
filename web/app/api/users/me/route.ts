@@ -75,11 +75,9 @@ async function resolveSelfActor(request: NextRequest): Promise<ActorRecord> {
   const rawRole = data?.role;
   const role: Role =
     rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
-  const sites = Array.isArray(data?.sites)
-    ? (data?.sites as unknown[]).filter((s): s is string => typeof s === 'string')
-    : [];
-
-  const actor: UserActor = { type: 'user', userId, role, sites };
+  // No site is in scope: USER_SELF_DELETE is a platform capability, so no
+  // per-site standing is resolved and nothing site-scoped is reachable here.
+  const actor: UserActor = { type: 'user', userId, role, siteRoles: {} };
   return { actor, userId, role };
 }
 

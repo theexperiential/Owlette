@@ -965,31 +965,42 @@ describe('resolveSiteKeyOwner', () => {
 // verifyUserSiteAccess
 
 /**
- * Build a db stub whose `collection(name).doc(id).get()` resolves to the
- * data in `docs[name]`. Absent entries return `{ exists: false }`.
+ * Build a db stub for `resolveSiteAccess`, which reads three documents:
+ * `users/{uid}`, `sites/{siteId}`, and `sites/{siteId}/members/{uid}`.
+ *
+ * `member` is the one that grants. `sites` is still accepted because the site
+ * document must exist for the site to be found at all, but its `owner` field is
+ * no longer consulted for access — passing an owner without a member row is now
+ * a refusal, and there are tests below that say so.
  */
 function makeAccessDb(docs: {
   users?: Record<string, unknown> | null;
   sites?: Record<string, unknown> | null;
+  member?: Record<string, unknown> | null;
   siteExists?: boolean;
 }) {
+  const siteDoc = () =>
+    docs.siteExists === false
+      ? { exists: false, data: () => undefined }
+      : { exists: true, data: () => docs.sites ?? {} };
+  const userDoc = () =>
+    docs.users
+      ? { exists: true, data: () => docs.users }
+      : { exists: false, data: () => undefined };
+  const memberDoc = () =>
+    docs.member
+      ? { exists: true, data: () => docs.member }
+      : { exists: false, data: () => undefined };
+
   return {
     collection: (name: string) => ({
       doc: (_id: string) => ({
-        get: async () => {
-          if (name === 'users') {
-            return docs.users
-              ? { exists: true, data: () => docs.users }
-              : { exists: false, data: () => undefined };
-          }
-          if (name === 'sites') {
-            if (docs.siteExists === false) {
-              return { exists: false };
-            }
-            return { exists: true, data: () => docs.sites ?? {} };
-          }
-          return { exists: false };
-        },
+        get: async () => (name === 'users' ? userDoc() : name === 'sites' ? siteDoc() : { exists: false }),
+        collection: (sub: string) => ({
+          doc: (_innerId: string) => ({
+            get: async () => (sub === 'members' ? memberDoc() : { exists: false, data: () => undefined }),
+          }),
+        }),
       }),
     }),
     // verifyUserSiteAccess reads through resolveSiteAccess since task 1.5, and
@@ -1002,42 +1013,41 @@ function makeAccessDb(docs: {
 }
 
 describe('verifyUserSiteAccess', () => {
+  /** An active membership row at the given per-site role. */
+  const member = (role: 'owner' | 'admin' | 'member') => ({
+    uid: 'u1',
+    role,
+    status: 'active',
+    addedAt: new Date(0),
+    addedBy: 'system:test',
+  });
+
   it('throws when the user doc does not exist', async () => {
-    const db = makeAccessDb({ users: null, sites: { owner: 'someone' } });
+    const db = makeAccessDb({ users: null, sites: {} });
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('User not found');
   });
 
   it('throws when the site doc does not exist', async () => {
-    const db = makeAccessDb({ users: { role: 'member', sites: ['s1'] }, siteExists: false });
+    const db = makeAccessDb({ users: { role: 'member' }, siteExists: false });
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('Site not found');
   });
 
-  it('reports user_not_found, NOT site_not_found, when BOTH are missing', async () => {
-    // The one cell where this function's precedence differs from the decision
-    // core it now delegates to: resolveSiteAccess checks the SITE first and
-    // would answer site_not_found. The codes are therefore re-derived from
-    // `facts`, not taken from `reason` — and resolveTalonAuthor treats these two
-    // differently (user_not_found disables the talon as creator_deleted;
-    // site_not_found is deliberately unmapped and rethrows), so the distinction
-    // decides whether a dead-author talon gets switched off.
-    const db = makeAccessDb({ users: null, siteExists: false });
-    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toMatchObject({
-      code: 'user_not_found',
-    });
-  });
-
-  it('returns the RAW role, not the normalised one', async () => {
+  it('reports the RAW global role, unnormalised', async () => {
     // SiteAccessLevel.role is `string | null` and callers re-narrow it
     // themselves. The core normalises unknown values to 'member', so returning
     // its globalRole here would rewrite 'viewer' to 'member' and an absent role
     // to 'member' — a quiet contract change.
-    const viewer = makeAccessDb({ users: { role: 'viewer', sites: ['s1'] }, sites: {} });
+    const viewer = makeAccessDb({
+      users: { role: 'viewer' },
+      sites: {},
+      member: member('member'),
+    });
     await expect(verifyUserSiteAccess(viewer, 'u1', 's1')).resolves.toMatchObject({
       role: 'viewer',
       isSiteAdmin: false,
     });
 
-    const roleless = makeAccessDb({ users: { sites: ['s1'] }, sites: {} });
+    const roleless = makeAccessDb({ users: {}, sites: {}, member: member('member') });
     await expect(verifyUserSiteAccess(roleless, 'u1', 's1')).resolves.toMatchObject({
       role: null,
     });
@@ -1047,69 +1057,81 @@ describe('verifyUserSiteAccess', () => {
     // Regression: a soft-deleted superadmin holding a stale iron-session cookie
     // must not retain Hoot access (incl. tier-3 tools) until the cookie lapses.
     const db = makeAccessDb({
-      users: { role: 'superadmin', sites: [], deletedAt: 1700000000000 },
-      sites: { owner: 'someone' },
+      users: { role: 'superadmin', deletedAt: 1700000000000 },
+      sites: {},
     });
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
       /deleted or inactive/
     );
   });
 
-  it('grants superadmin full access with isSiteAdmin=true', async () => {
-    const db = makeAccessDb({
-      users: { role: 'superadmin', sites: [] },
-      sites: { owner: 'someone' },
-    });
+  it('grants superadmin full access holding NO membership row', async () => {
+    // Superadmins reach every site by global role and deliberately hold no
+    // member rows, so this is the shape production actually produces.
+    const db = makeAccessDb({ users: { role: 'superadmin' }, sites: {} });
     const access = await verifyUserSiteAccess(db, 'u1', 's1');
     expect(access.isSuperadmin).toBe(true);
     expect(access.isSiteAdmin).toBe(true);
+    expect(access.siteRole).toBeNull();
   });
 
-  it('grants a freshly-created site owner access even without sites[] entry', async () => {
-    // Regression: previously rejected fresh owners because the user doc's
-    // sites[] array is not updated on site creation.
+  it('an owner membership grants ownership and site-admin', async () => {
     const db = makeAccessDb({
-      users: { role: 'admin', sites: [] },
-      sites: { owner: 'u1' },
+      users: { role: 'member' },
+      sites: {},
+      member: member('owner'),
     });
     const access = await verifyUserSiteAccess(db, 'u1', 's1');
+    expect(access.siteRole).toBe('owner');
     expect(access.isSiteOwner).toBe(true);
     expect(access.isSiteAdmin).toBe(true);
   });
 
-  it('grants admin role with site assignment isSiteAdmin=true', async () => {
+  it('an admin membership grants site-admin but not ownership', async () => {
     const db = makeAccessDb({
-      users: { role: 'admin', sites: ['s1'] },
-      sites: { owner: 'other' },
+      users: { role: 'member' },
+      sites: {},
+      member: member('admin'),
     });
     const access = await verifyUserSiteAccess(db, 'u1', 's1');
     expect(access.isSiteAdmin).toBe(true);
+    expect(access.isSiteOwner).toBe(false);
   });
 
-  it('grants member with assignment site access but NOT admin', async () => {
+  it('a member membership grants access but NOT admin', async () => {
     const db = makeAccessDb({
-      users: { role: 'member', sites: ['s1'] },
-      sites: { owner: 'other' },
+      users: { role: 'member' },
+      sites: {},
+      member: member('member'),
     });
     const access = await verifyUserSiteAccess(db, 'u1', 's1');
     expect(access.isSiteAdmin).toBe(false);
-    expect(access.role).toBe('member');
+    expect(access.siteRole).toBe('member');
   });
 
-  it('grants member-owner site access but NOT admin', async () => {
-    const db = makeAccessDb({
-      users: { role: 'member', sites: [] },
-      sites: { owner: 'u1' },
-    });
-    const access = await verifyUserSiteAccess(db, 'u1', 's1');
-    expect(access.isSiteOwner).toBe(true);
-    expect(access.isSiteAdmin).toBe(false);
+  it('a GLOBAL admin with no membership is refused outright', async () => {
+    // The headline change. This user previously reached the site through
+    // `sites[]` and held tier-3 Hoot on it; the global role now grants nothing.
+    const db = makeAccessDb({ users: { role: 'admin', sites: ['s1'] }, sites: {} });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
+      /do not have access/
+    );
   });
 
-  it('rejects users who are not superadmin/owner/assigned', async () => {
+  it('the legacy owner field alone does not grant access', async () => {
+    // `sites/{siteId}.owner` is no longer read. A site pointing at this user with
+    // no member row is a repair job, not a grant.
+    const db = makeAccessDb({ users: { role: 'member' }, sites: { owner: 'u1' } });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
+      /do not have access/
+    );
+  });
+
+  it('a non-active membership grants nothing', async () => {
     const db = makeAccessDb({
-      users: { role: 'member', sites: ['other'] },
-      sites: { owner: 'other' },
+      users: { role: 'member' },
+      sites: {},
+      member: { ...member('admin'), status: 'invited' },
     });
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
       /do not have access/
@@ -1122,13 +1144,13 @@ describe('verifyUserSiteAccess', () => {
    * Firestore outage, so every branch that says no has to say which no it is.
    */
   it.each([
-    ['user_not_found', { users: null, sites: { owner: 'someone' } }],
-    ['site_not_found', { users: { role: 'member', sites: ['s1'] }, siteExists: false }],
+    ['user_not_found', { users: null, sites: {} }],
+    ['site_not_found', { users: { role: 'member' }, siteExists: false }],
     [
       'user_deleted',
-      { users: { role: 'admin', sites: ['s1'], deletedAt: 1700000000000 }, sites: {} },
+      { users: { role: 'admin', deletedAt: 1700000000000 }, sites: {} },
     ],
-    ['no_site_access', { users: { role: 'member', sites: ['other'] }, sites: { owner: 'x' } }],
+    ['no_site_access', { users: { role: 'member' }, sites: { owner: 'x' } }],
   ])('refuses with code %s', async (code, docs) => {
     const db = makeAccessDb(docs as Parameters<typeof makeAccessDb>[0]);
 

@@ -222,16 +222,57 @@ function putDoc(path: string, data: Record<string, unknown>): void {
 }
 
 function seedSite(siteId = SITE, data: Record<string, unknown> = {}): void {
-  putDoc(`sites/${siteId}`, { name: siteId, owner: 'owner-uid', ...data });
+  const merged = { name: siteId, owner: 'owner-uid', ...data };
+  putDoc(`sites/${siteId}`, merged);
+  // `sites/{siteId}.owner` WAS the ownership grant, so declaring an owner has to
+  // produce the row that now carries it. Done here as well as in `seedUser`
+  // because fixtures seed users and sites in either order.
+  if (typeof merged.owner === 'string' && merged.owner.length > 0) {
+    putDoc(`sites/${siteId}/members/${merged.owner}`, {
+      uid: merged.owner,
+      role: 'owner',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
+  }
+}
+
+/**
+ * Membership rows for a seeded fixture, as `membership.server.ts` writes them.
+ *
+ * Site access resolves from these and nothing else, so seeding `users/{uid}.sites`
+ * alone now grants nothing. The GLOBAL role is mirrored onto each site because
+ * that is what it used to confer there; superadmins get no rows, matching
+ * production, where they reach every site by role instead.
+ */
+function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
+  const globalRole = typeof merged.role === 'string' ? merged.role : 'member';
+  if (globalRole === 'superadmin') return;
+  const sites = Array.isArray(merged.sites) ? (merged.sites as string[]) : [];
+  for (const siteId of sites) {
+    // `sites/{siteId}.owner` WAS the ownership grant, so a fixture the site
+    // points at becomes an owner row rather than the mirrored global role.
+    const owns = (docStore[`sites/${siteId}`] as { owner?: unknown } | undefined)?.owner === uid;
+    putDoc(`sites/${siteId}/members/${uid}`, {
+      uid,
+      role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
+  }
 }
 
 function seedUser(uid: string, data: Record<string, unknown> = {}): void {
-  putDoc(`users/${uid}`, {
+  const merged = {
     email: `${uid}@example.com`,
     role: 'superadmin',
     sites: [SITE],
     ...data,
-  });
+  };
+  putDoc(`users/${uid}`, merged);
+  seedMembershipFor(uid, merged);
 }
 
 function seedMachine(machineId = MACHINE, data: Record<string, unknown> = {}): void {
