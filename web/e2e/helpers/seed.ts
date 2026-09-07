@@ -84,7 +84,9 @@ export async function seedUser(user: TestUser): Promise<void> {
   await db.collection('users').doc(user.uid).set({
     email: user.email,
     role: user.role,
-    sites: user.sites,
+    // Membership is granted below, through grantMembership — seeded empty here
+    // so there is exactly one writer of `sites[]`.
+    sites: [],
     displayName: user.displayName ?? '',
     createdAt: new Date(),
     // MFA bypass — avoids the /setup-2fa and /verify-2fa redirect gates.
@@ -110,6 +112,42 @@ export async function seedUser(user: TestUser): Promise<void> {
       processesExpanded: true,
     },
   });
+
+  // One writer, not two: the user document above no longer carries membership.
+  for (const siteId of user.sites) {
+    await grantMembership(siteId, user.uid, 'member');
+  }
+}
+
+/** Per-site standing a fixture can grant. Mirrors the production role set. */
+export type SeedMemberRole = 'owner' | 'admin' | 'member';
+
+/**
+ * THE seeding entry point for site membership. Every fixture that needs a user
+ * on a site goes through here — nothing should write `users/{uid}.sites[]` or
+ * `sites/{siteId}.owner` directly any more.
+ *
+ * Today it writes exactly the two legacy fields it always did, so fixtures
+ * behave identically. The point is the seam: when wave 3 starts backfilling
+ * `sites/{siteId}/members/{uid}`, seeds gain it here, once, instead of in every
+ * spec that happens to seed a user.
+ *
+ * `owner` writes the site's owner pointer as well as the membership, because
+ * that is what ownership means in the legacy shape.
+ */
+export async function grantMembership(
+  siteId: string,
+  uid: string,
+  role: SeedMemberRole = 'member',
+): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .set({ sites: FieldValue.arrayUnion(siteId) }, { merge: true });
+  if (role === 'owner') {
+    await db.collection('sites').doc(siteId).set({ owner: uid }, { merge: true });
+  }
 }
 
 export interface TestSite {
@@ -128,6 +166,11 @@ export async function seedSite(site: TestSite): Promise<void> {
   const db = getAdminDb();
   await db.collection('sites').doc(site.id).set({
     name: site.name,
+    // `owner` stays part of the SITE document rather than going through
+    // grantMembership: TEST_SITES owners are deliberately NOT test users
+    // ('someone-else'), which is what makes site-A "assigned but not owned".
+    // Routing it through the membership helper would mint phantom user
+    // documents for owners that are not meant to exist.
     owner: site.owner,
     timezone: site.timezone ?? 'UTC',
     createdAt: new Date(),

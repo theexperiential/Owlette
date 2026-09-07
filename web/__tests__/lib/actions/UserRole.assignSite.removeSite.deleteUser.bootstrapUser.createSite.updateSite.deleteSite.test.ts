@@ -675,6 +675,17 @@ describe('site CRUD actions', () => {
     // by owner. The membership assertion is the point — an owner-only write
     // passes every other assertion here.
     expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
+
+    // ...and the NEW shape, in the SAME batch. This was written as a helper in
+    // wave 2 and never actually called, so site creation kept minting owners
+    // with no member document. That makes the wave 3 backfill target MOVE —
+    // every site created after it would need repairing again — and leaves
+    // wave 4's fallback counter unable to reach the zero wave 6 waits on.
+    expect(db.docs.get('sites/site-a/members/owner-1')).toMatchObject({
+      uid: 'owner-1',
+      role: 'owner',
+      status: 'active',
+    });
   });
 
   it('createSite preserves memberships the creator already had', async () => {

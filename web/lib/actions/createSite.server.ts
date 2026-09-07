@@ -18,6 +18,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { validateSiteId } from '@/lib/validators';
+import { addOwnerToBatch } from '@/lib/membership.server';
 
 const NAME_MAX_LENGTH = 200;
 
@@ -131,6 +132,17 @@ export async function createSite(
   });
   batch.update(db.collection('users').doc(input.ownerUid), {
     sites: FieldValue.arrayUnion(input.siteId),
+  });
+  // The owner's member document rides the SAME batch, so a new site is created
+  // in both shapes atomically or not at all. Without this, every site created
+  // after the Wave 3 backfill would be missing its owner row — the backfill
+  // target would move under it and Wave 4's fallback counter could never reach
+  // zero, which is the gate Wave 6 waits on.
+  addOwnerToBatch(batch, {
+    siteId: input.siteId,
+    ownerUid: input.ownerUid,
+    now: nowDate,
+    db,
   });
   await batch.commit();
 
