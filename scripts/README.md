@@ -33,7 +33,6 @@ pipeline lives in `vm/`.
 |---|---|
 | `checks/smoke-r2-roundtrip.mjs` | R2 chunk-pipeline round-trip against a deployed env (used in deploy runbooks). |
 | `checks/security-boundary-probe.mjs` | 60s synthetic privileged-read probe against dev (`docs/runbooks/security-boundary-monitoring.md`). |
-| `checks/test-rules.mjs` | Firestore rules matrix under the emulator (the jest twin is `web` → `npm run test:rules`). |
 | `checks/sentinel-emulator.mjs` | Prove Admin SDK writes hit the emulator, not prod. |
 
 ## migrations/ — one-shot, already executed

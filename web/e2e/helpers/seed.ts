@@ -34,9 +34,18 @@ export interface TestUser {
 }
 
 /**
- * Canonical test-user fleet; mirrors scripts/checks/test-rules.mjs. admin-uid is a
- * site-admin on site-A, not a platform superadmin. super-uid has empty sites[]
- * and reaches everything via the canAccessSite fall-through.
+ * Canonical test-user fleet. admin-uid is a site-admin on site-A via its member
+ * ROW, not a platform superadmin; super-uid reaches every site through the
+ * superadmin short-circuit in `canAccessSite`, which runs before membership is
+ * consulted at all.
+ *
+ * The rules matrix these once mirrored (`scripts/checks/test-rules.mjs`) was
+ * deleted 2026-09-07: it seeded `users/{uid}.sites[]` with no member rows and
+ * asserted the site read SUCCEEDED, which the per-site-roles migration made
+ * false. It ran in no CI job, so it sat red and unread — and the obvious way to
+ * "fix" that red is to make the rules honour `sites[]` again, reopening the
+ * escalation the migration closed. Its coverage lives in `web/__tests__/rules/`,
+ * which the `rules` CI job actually runs.
  */
 export const TEST_USERS: Record<TestRole, TestUser> = {
   member: {
