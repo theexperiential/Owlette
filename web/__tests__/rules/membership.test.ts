@@ -217,6 +217,47 @@ describe('per-site roles', () => {
   });
 });
 
+describe('webhook documents are not member-readable', () => {
+  // They can still carry a legacy in-document signing secret — webhookSender
+  // falls back to one, and dev holds two such documents — so a member read is a
+  // key disclosure that survives removal from the site.
+  beforeEach(async () => {
+    await seedAsAdmin(async (db) => {
+      await setDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-1'), {
+        url: 'https://hooks.example.com/x',
+        events: ['process.crashed'],
+        signingSecret: 'legacy-in-document-secret',
+      });
+    });
+  });
+
+  test('a plain member cannot read a webhook document', async () => {
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(getDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-1')));
+  });
+
+  test('a site admin can', async () => {
+    const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
+
+    await assertSucceeds(getDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-1')));
+  });
+
+  test('an owner can', async () => {
+    const db = await asUser(OWNER_UID, 'member', [SITE_A], { [SITE_A]: 'owner' });
+
+    await assertSucceeds(getDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-1')));
+  });
+
+  test('nobody may write one from the client', async () => {
+    const db = await asUser(ADMIN_UID, 'admin', [SITE_A]);
+
+    await assertFails(
+      setDoc(doc(db, 'sites', SITE_A, 'webhooks', 'wh-2'), { url: 'https://evil.example' }),
+    );
+  });
+});
+
 describe('member documents: the collectionGroup read path', () => {
   test('a user can query their own memberships across sites', async () => {
     // The Wave 4.2 listener. It is legal only because the recursive
