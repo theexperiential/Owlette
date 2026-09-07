@@ -89,13 +89,24 @@ const CHAT = 'chat-77';
 /** Sentinel — executors hand the db straight to the mocked store. */
 const db = { __db: 'sentinel' } as unknown as FirebaseFirestore.Firestore;
 
-const ADMIN: BuildExecutableToolsOptions = { userId: 'uid_alice', userRole: 'admin' };
-const MEMBER: BuildExecutableToolsOptions = { userId: 'uid_bob', userRole: 'member' };
+// `userSiteRole` is the standing that grants; `userRole` is the global tier and
+// confers nothing on a site. Omitting the former denies every site-scoped tool,
+// which is the correct default but not what these fixtures mean.
+const ADMIN: BuildExecutableToolsOptions = {
+  userId: 'uid_alice',
+  userRole: 'admin',
+  userSiteRole: 'admin',
+};
+const MEMBER: BuildExecutableToolsOptions = {
+  userId: 'uid_bob',
+  userRole: 'member',
+  userSiteRole: 'member',
+};
 
 /** The store context a chat-authored talon must be written with. */
 const adminStoreContext = {
   siteId: SITE,
-  actor: { type: 'user', userId: 'uid_alice', role: 'admin', sites: [SITE] },
+  actor: { type: 'user', userId: 'uid_alice', role: 'admin', siteRoles: { [SITE]: 'admin' } },
   auditActor: 'cortex:user_uid_alice',
   via: 'cortex',
   chatId: CHAT,

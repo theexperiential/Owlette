@@ -44,7 +44,7 @@ const ACTOR: Actor = {
   type: 'user',
   userId: 'uid_alice',
   role: 'admin',
-  sites: [SITE],
+  siteRoles: { [SITE]: 'admin' },
 };
 const CTX: ActionContext = { siteId: SITE, actor: ACTOR, auditActor: 'user:uid_alice' };
 

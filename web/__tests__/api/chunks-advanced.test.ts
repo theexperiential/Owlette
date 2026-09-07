@@ -6,6 +6,7 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedMember
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -63,7 +64,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   makeAuthed();
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
+  seedMember(SITE, 'user-1', 'owner');
   mocks.set.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('x', {})));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));

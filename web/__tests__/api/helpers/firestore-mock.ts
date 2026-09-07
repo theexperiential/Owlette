@@ -37,6 +37,28 @@ export const mocks = {
   collectionGet: jest.fn(),
   /** explicit data for top-level sites/{siteId} document reads */
   siteDocs: new Map<string, Record<string, unknown> | null>(),
+  /**
+   * Explicit data for `sites/{siteId}/members/{uid}` reads, keyed
+   * `${siteId}/${uid}`. Defaults to ABSENT — site access is membership now, so a
+   * suite that wants a caller to have standing has to say so (see `seedMember`).
+   *
+   * Deliberately not derived from `siteDocs.owner`: synthesising a member row
+   * from the legacy owner field would keep these tests green even if production
+   * regressed to reading it, which is the whole failure this migration removes.
+   */
+  memberDocs: new Map<string, Record<string, unknown> | null>(),
+  /**
+   * Explicit data for `users/{uid}` reads, keyed by uid. Falls through to the
+   * `get` catch-all when a uid is absent, so suites that never seed one behave
+   * exactly as before.
+   *
+   * Seeding matters because `mocks.get` is a QUEUE: suites stage route documents
+   * with `mockResolvedValueOnce`, and every unaddressed read shifts that queue.
+   * The authorization path reads `users/{uid}` on EVERY request now — it used to
+   * skip it whenever the caller owned the site — so leaving it on the catch-all
+   * silently consumes the document the test staged for the route.
+   */
+  userDocs: new Map<string, Record<string, unknown> | null>(),
   /** requireAdminOrIdToken */
   requireAdmin: jest.fn().mockResolvedValue({ userId: 'test-admin' }),
 };
@@ -62,6 +84,16 @@ function buildDoc(path: string): Record<string, unknown> {
           return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
         }
         return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      // Answered here rather than by the `mocks.get` catch-all, which most suites
+      // point at a single user document — a membership read would otherwise come
+      // back as that user doc and be parsed as a garbage member row.
+      if (parts.length === 4 && parts[0] === 'sites' && parts[2] === 'members') {
+        const key = `${parts[1]}/${parts[3]}`;
+        return Promise.resolve(docSnapshot(parts[3], mocks.memberDocs.get(key) ?? null));
+      }
+      if (parts.length === 2 && parts[0] === 'users' && mocks.userDocs.has(parts[1])) {
+        return Promise.resolve(docSnapshot(parts[1], mocks.userDocs.get(parts[1]) ?? null));
       }
       return mocks.get(path);
     },
@@ -113,6 +145,33 @@ export function mockDbFactory(): Record<string, unknown> {
   };
 }
 
+/**
+ * Give `uid` standing on `siteId`, as `membership.server.ts` would write it.
+ *
+ * Site-scoped capabilities resolve from this row and nothing else, so a suite
+ * exercising anything beyond a superadmin has to call it.
+ */
+export function seedMember(
+  siteId: string,
+  uid: string,
+  role: 'owner' | 'admin' | 'member' = 'admin',
+): void {
+  mocks.memberDocs.set(`${siteId}/${uid}`, {
+    uid,
+    role,
+    status: 'active',
+    addedAt: new Date(0),
+    addedBy: 'system:test',
+  });
+  // A member needs a live user document to pass the soft-delete check, and
+  // seeding it here takes that read off the `mocks.get` queue — see `userDocs`.
+  // Global role `member` on purpose: it must grant nothing by itself, so a suite
+  // that passes with it is proving the membership row did the work.
+  if (!mocks.userDocs.has(uid)) {
+    mocks.userDocs.set(uid, { email: `${uid}@example.test`, role: 'member', sites: [] });
+  }
+}
+
 /** Firestore document snapshot returned by doc().get(). */
 export function docSnapshot(
   id: string,
@@ -142,10 +201,20 @@ const ALL_PERMISSIONS = ['read', 'write', 'deploy', 'rollback', 'admin'] as cons
 /** Default owner uid used by `seedSiteOwner` / `apiKeyAuth`. */
 export const SITE_OWNER = 'user-1';
 
-/** Seed `sites/{siteId}.owner`. Clears the map so scenarios can't inherit. */
+/**
+ * Seed `sites/{siteId}.owner` AND the owner's membership row.
+ *
+ * The field alone grants nothing now — site access resolves from
+ * `sites/{siteId}/members/{uid}` — so seeding only the field would produce a
+ * fixture whose "owner" is refused by every site-scoped route.
+ *
+ * Clears both maps so scenarios can't inherit a previous owner's standing.
+ */
 export function seedSiteOwner(siteId: string, owner: string = SITE_OWNER): void {
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
   mocks.siteDocs.set(siteId, { owner });
+  seedMember(siteId, owner, 'owner');
 }
 
 /** `ResolvedAuth` with wildcard api-key scopes, so scope never answers the request. */

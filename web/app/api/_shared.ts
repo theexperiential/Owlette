@@ -29,17 +29,16 @@ import type { ApiKeyPermission, ApiKeyResource } from '@/lib/apiKeyTypes';
 import {
   Capability,
   hasCapability,
-  type Role,
   type UserActor,
 } from '@/lib/capabilities';
 import { checkRoostVersion } from '@/lib/versionHeader';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { SITE_ID_RE, resolveSiteAccess } from '@/lib/sitePolicy.server';
 
 export const MAX_HASHES_PER_REQUEST = 1000;
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const RESOURCE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 // legacy helpers, for routes still on requireAdminOrIdToken
 
@@ -109,6 +108,18 @@ export async function requireSiteScope(
     return null;
   } catch (err) {
     if (err instanceof ApiAuthError) {
+      // An INACTIVE caller is 403, not the collapsed 404 (Wave 1 task 1.3).
+      // Masking exists to stop a stranger enumerating sites; it has no job to do
+      // when the caller has authenticated and it is their OWN account that is
+      // gone. Telling them 404 sends them hunting for a missing site instead of
+      // a disabled login. `authorizedSiteHandler` has always answered 403 here;
+      // both paths now agree.
+      //
+      // NOTE this fires for a MISSING user document as well as a soft-deleted
+      // one, so an api key whose owner was hard-deleted also moves 404 -> 403.
+      if (err.code === 'user_inactive') {
+        return problemForbidden(err.message);
+      }
       if (err.status === 404 || err.status === 403) {
         return problemNotFound('site not found or no access');
       }
@@ -116,6 +127,42 @@ export async function requireSiteScope(
     }
     throw err;
   }
+}
+
+/**
+ * Every site named in a bulk membership request must be one the caller's api key
+ * is scoped for — the same `site=<id>:write` + `:admin` the equivalent
+ * `/api/sites/{siteId}/members` call demands.
+ *
+ * Without this, `user=*:write` reached membership on every site in the
+ * deployment while naming none of them, so a key confined to one site could not
+ * touch /members elsewhere but could do the same job through here.
+ *
+ * Session and id-token callers are unaffected: `requireScope` returns early when
+ * there is no key context, and they are already superadmin-only because
+ * `authorizedPlatformHandler` capability-checks SITE_MEMBER_MANAGE with no
+ * siteId, which only superadmin satisfies.
+ */
+export function requireSiteScopesForBulkMembership(
+  auth: ResolvedAuth,
+  siteIds: string[],
+): NextResponse | null {
+  for (const siteId of siteIds) {
+    for (const permission of ['write', 'admin'] as const) {
+      try {
+        requireScope(auth, 'site', siteId, permission);
+      } catch (err) {
+        if (err instanceof ApiAuthError) {
+          return problemScopeInsufficient(
+            `api key is not scoped for site ${siteId}`,
+            { resource: 'site', id: siteId, permission },
+          );
+        }
+        throw err;
+      }
+    }
+  }
+  return null;
 }
 
 export function validateResourceId(id: string, fieldName: string): NextResponse | null {
@@ -282,51 +329,48 @@ function runScopeCheck(
   }
 }
 
-function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
-  return {
-    type: 'user',
-    userId: auth.userId,
-    ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
-    role,
-    sites,
-  };
-}
-
-async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
-  const db = getAdminDb();
-  const userDoc = await db.collection('users').doc(auth.userId).get();
-  const data = userDoc.exists ? userDoc.data() : null;
-  const rawRole = data?.role;
-  const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
-  const sites = Array.isArray(data?.sites)
-    ? (data?.sites as unknown[]).filter((s): s is string => typeof s === 'string')
-    : [];
-  return authToActor(auth, role, sites);
-}
-
 /**
  * Site-scoped capability gate for routes that authorize through
  * `requireSiteAuthAndScope`, which checks site MEMBERSHIP + api-key scope but no
  * capability (unlike `authorizedSiteHandler`, which runs its own capability
- * step). Works identically for session and api-key callers: `loadUserActor`
- * reads the role from `users/{uid}` either way, and `authToActor` carries the
- * key id onto the actor.
+ * step). Works identically for session and api-key callers.
  *
- * The site owner short-circuits: self-serve owners are created with global role
- * `member` (`lib/actions/bootstrapUser.server.ts`) and any authenticated user
- * may create a site (`/api/sites` POST), so a strict matrix check would lock an
- * owner out of the site they own.
+ * Resolves through `resolveSiteAccess` — the SAME decision core
+ * `authorizedSiteHandler` uses — so the two paths cannot drift on what
+ * membership means. It used to read `users/{uid}` on its own and combine the
+ * GLOBAL role with `sites[]`, which is precisely how one global `admin` came to
+ * hold site-admin on every site in its array.
+ *
+ * The ownership short-circuit is gone. It existed because self-serve owners are
+ * created with global role `member` (`lib/actions/bootstrapUser.server.ts`), so a
+ * matrix keyed on the global role locked an owner out of their own site. The
+ * matrix is keyed on per-site standing now and `owner` is a row in it, so
+ * ownership is granted by the matrix rather than routed around it.
  */
 async function requireSiteCapability(
   auth: ResolvedAuth,
   capability: Capability,
   siteId: string,
 ): Promise<NextResponse | null> {
-  const siteSnap = await getAdminDb().collection('sites').doc(siteId).get();
-  const siteData = siteSnap.exists ? siteSnap.data() : null;
-  if (siteData?.owner === auth.userId) return null;
+  const outcome = await resolveSiteAccess(auth.userId, siteId);
+  // A refusal here is not distinguished by reason: membership and scope were
+  // already checked upstream by `requireSiteAuthAndScope`, so reaching this with
+  // no access means the capability is not granted either way, and saying more
+  // would leak whether the site exists.
+  if (!outcome.ok) return problemForbidden('capability not granted');
 
-  const actor = await loadUserActor(auth);
+  const actor: UserActor = {
+    type: 'user',
+    userId: auth.userId,
+    ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
+    role: outcome.facts.globalRole,
+    // A superadmin legitimately holds no membership; their capabilities
+    // short-circuit on the global role before this map is consulted.
+    siteRoles: outcome.facts.membershipRole
+      ? { [siteId]: outcome.facts.membershipRole }
+      : {},
+  };
+
   if (!hasCapability(actor, capability, siteId)) {
     return problemForbidden('capability not granted');
   }
@@ -356,6 +400,23 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
   return permission !== 'read';
 }
 
+/**
+ * Site access for the `_shared` family.
+ *
+ * Goes through `assertUserHasSiteAccess`, which since Wave 1 Task 1.2 is a thin
+ * adapter over the single decision core in `lib/sitePolicy.server.ts`. Calling
+ * the adapter rather than the core directly is deliberate: this family needs
+ * only pass/fail — it builds no actor, so it has no use for the role and
+ * membership facts the core returns — and the adapter already serves five
+ * production routes that call it on their own. One decision implementation,
+ * without a second call shape to keep in step.
+ *
+ * NOTE the response mapping: every denial collapses to the SAME 404 —
+ * including an inactive user, where `authorizedSiteHandler` answers 403
+ * `user_inactive`. That divergence is real, is pinned by
+ * `__tests__/lib/authorizationParity.test.ts`, and is what Task 1.3 unifies.
+ * It is preserved verbatim here so the extraction itself changes no behaviour.
+ */
 async function assertSiteAccessOrProblem(
   userId: string,
   siteId: string,
@@ -365,6 +426,17 @@ async function assertSiteAccessOrProblem(
     return null;
   } catch (err) {
     if (err instanceof ApiAuthError) {
+      // An INACTIVE caller is 403, not the collapsed 404 (Wave 1 task 1.3).
+      // Masking exists to stop a stranger enumerating sites; it has no job to
+      // do once the caller has authenticated and it is their OWN account that
+      // is gone. A 404 sends them hunting for a missing site instead of a
+      // disabled login. `authorizedSiteHandler` has always answered 403 here.
+      //
+      // NOTE this fires for a MISSING user document as well as a soft-deleted
+      // one, so an api key whose owner was hard-deleted also moves 404 -> 403.
+      if (err.code === 'user_inactive') {
+        return problemForbidden(err.message);
+      }
       if (err.status === 404 || err.status === 403) {
         return problemNotFound('site not found or no access');
       }
@@ -379,6 +451,16 @@ export async function requireSiteAuthAndScope(
   siteId: string,
   permission: ApiKeyPermission,
 ): Promise<ScopedAuthResult> {
+  const versionCheck = checkRoostVersion(req);
+  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  // AFTER auth (Wave 1 task 1.3). This ran first, so an unauthenticated caller
+  // could learn whether a site id was well-formed before proving anything;
+  // authenticating first refuses them at 401 and reveals nothing. It also makes
+  // both gates answer identically, which is the point of the task.
   if (!SITE_ID_RE.test(siteId)) {
     return {
       ok: false,
@@ -387,12 +469,6 @@ export async function requireSiteAuthAndScope(
       }),
     };
   }
-
-  const versionCheck = checkRoostVersion(req);
-  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
-
-  const authResult = await resolveAuthOrProblem(req);
-  if (!authResult.ok) return authResult;
 
   const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
   if (accessError) return { ok: false, response: accessError };

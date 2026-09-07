@@ -45,7 +45,7 @@ import { ProcessConfigError } from '@/lib/processConfig.server';
 const SITE = 'site-a';
 const MACHINE = 'mach-1';
 const PID = 'proc-1';
-const ACTOR: Actor = { type: 'user', userId: 'uid', role: 'admin', sites: [SITE] };
+const ACTOR: Actor = { type: 'user', userId: 'uid', role: 'admin', siteRoles: { [SITE]: 'admin' } };
 const CTX: ActionContext = { siteId: SITE, actor: ACTOR, auditActor: 'user:uid' };
 
 function row(): MockProcRow {

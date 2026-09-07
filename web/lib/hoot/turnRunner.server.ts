@@ -475,6 +475,7 @@ export function startTurn(
         {
           userId: params.userId,
           userRole: params.access.role,
+          userSiteRole: params.access.siteRole,
           requireTier3Approval,
           toolCallbacks: {
             onCommandQueued: (toolCallId: string, commandId: string, machineId: string) =>

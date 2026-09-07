@@ -96,7 +96,7 @@ const USER_ACTOR: Actor = {
   type: 'user',
   userId: 'user_42',
   role: 'admin',
-  sites: [SITE],
+  siteRoles: { [SITE]: 'admin' },
 };
 
 function ctxFor(overrides: Partial<ExecuteMachineCommandContext> = {}): ExecuteMachineCommandContext {

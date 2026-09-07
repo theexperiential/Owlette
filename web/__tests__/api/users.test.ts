@@ -240,6 +240,9 @@ const mockRunTransaction = jest.fn(
         ref: { update: (patch: Record<string, unknown>) => Promise<void> },
         patch: Record<string, unknown>,
       ) => ref.update(patch),
+      // `removeMember` deletes the membership row inside the transaction. It only
+      // reaches this now that fixtures actually have member rows to delete.
+      delete: (ref: { delete: () => Promise<void> }) => ref.delete(),
     };
     return cb(tx);
   },
@@ -300,6 +303,20 @@ function makeBatch() {
       patch: Record<string, unknown>,
     ) => ops.push(() => ref.update(patch)),
     delete: (ref: { delete: () => Promise<void> }) => ops.push(() => ref.delete()),
+    // create() must FAIL on an existing document, not behave like set() — that
+    // difference is the whole reason addMember cannot overwrite an owner row.
+    create: (
+      ref: { set: (d: Record<string, unknown>) => Promise<void>; get: () => Promise<{ exists: boolean }> },
+      data: Record<string, unknown>,
+    ) =>
+      ops.push(async () => {
+        if ((await ref.get()).exists) {
+          const err = new Error('Document already exists') as Error & { code: number };
+          err.code = 6;
+          throw err;
+        }
+        await ref.set(data);
+      }),
     commit: async () => {
       for (const op of ops) await op();
     },
@@ -338,6 +355,12 @@ import { GET as userTalonsGET } from '@/app/api/users/[uid]/talons/route';
 function authedAsSuperadminWithKey(
   perm: 'read' | 'write' | 'admin',
   userId = 'user-superadmin',
+  /**
+   * Sites the key is scoped for. The bulk membership routes now require
+   * `site=<id>:write` + `:admin` for every site they touch — a `user=*` scope
+   * names no site, and used to reach membership on all of them.
+   */
+  siteScopes: string[] = [],
 ): void {
   mockResolveAuth.mockResolvedValue({
     userId,
@@ -345,7 +368,14 @@ function authedAsSuperadminWithKey(
       keyId: 'key_test',
       environment: 'live',
       isLegacy: false,
-      scopes: [{ resource: 'user', id: '*', permissions: [perm] }],
+      scopes: [
+        { resource: 'user', id: '*', permissions: [perm] },
+        ...siteScopes.map((id) => ({
+          resource: 'site',
+          id,
+          permissions: ['write', 'admin'],
+        })),
+      ],
       expiresAt: null,
     },
   });
@@ -380,19 +410,72 @@ function authedAsKeyMissingScope(perm: 'read' | 'write' | 'admin'): void {
   seedUser('user-superadmin', { role: 'superadmin' });
 }
 
+/**
+ * Membership rows for a seeded fixture, as `membership.server.ts` writes them.
+ *
+ * Site access resolves from these and nothing else, so seeding `users/{uid}.sites`
+ * alone now grants nothing. The GLOBAL role is mirrored onto each site because
+ * that is what it used to confer there; superadmins get no rows, matching
+ * production, where they reach every site by role instead.
+ */
+function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
+  const globalRole = typeof merged.role === 'string' ? merged.role : 'member';
+  if (globalRole === 'superadmin') return;
+  const sites = Array.isArray(merged.sites) ? (merged.sites as string[]) : [];
+  for (const siteId of sites) {
+    // `sites/{siteId}.owner` WAS the ownership grant, so a fixture the site
+    // points at becomes an owner row — not the mirrored global role. Self-serve
+    // owners carry global role `member`, and mirroring that would leave them
+    // without SITE_DELETE on the site they own.
+    const owns =
+      (docStore[`sites/${siteId}`] as { data?: { owner?: unknown } } | undefined)?.data?.owner === uid;
+    docStore[`sites/${siteId}/members/${uid}`] = {
+      data: {
+        uid,
+        role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
+        status: 'active',
+        addedAt: new Date(0),
+        addedBy: 'system:test',
+      },
+    };
+  }
+}
+
 function seedUser(uid: string, data: Record<string, unknown>): void {
   const path = `users/${uid}`;
   const merged = { email: `${uid}@example.com`, role: 'member', sites: [], ...data };
   docStore[path] = { data: merged };
+  seedMembershipFor(uid, merged);
   if (!collectionDocs['users']) collectionDocs['users'] = [];
   const idx = collectionDocs['users'].findIndex((d) => d.id === uid);
   if (idx >= 0) collectionDocs['users'][idx] = { id: uid, data: merged };
   else collectionDocs['users'].push({ id: uid, data: merged });
 }
 
+/**
+ * The owner's membership row. `sites/{siteId}.owner` WAS the ownership grant, so
+ * declaring an owner has to produce the row that now carries it — and it is done
+ * here as well as in `seedUser` because fixtures seed users and sites in either
+ * order, and whichever runs second must still leave the owner with `owner`.
+ */
+function seedOwnerMembership(siteId: string, merged: Record<string, unknown>): void {
+  const owner = merged.owner;
+  if (typeof owner !== 'string' || owner.length === 0) return;
+  docStore[`sites/${siteId}/members/${owner}`] = {
+    data: {
+      uid: owner,
+      role: 'owner',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    },
+  };
+}
+
 function seedSite(siteId: string, data: Record<string, unknown> = {}): void {
   const path = `sites/${siteId}`;
   docStore[path] = { data: { owner: 'user-superadmin', ...data } };
+  seedOwnerMembership(siteId, docStore[path].data as Record<string, unknown>);
   if (!collectionDocs['sites']) collectionDocs['sites'] = [];
   const idx = collectionDocs['sites'].findIndex((d) => d.id === siteId);
   if (idx >= 0) {
@@ -573,7 +656,7 @@ describe('GET /api/users/{uid}', () => {
 
 describe('POST /api/users/{uid}/promote', () => {
   it('promotes a member to admin atomically + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -604,7 +687,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('rejects invalid role with 400', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -619,7 +702,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('returns 404 for unknown uid', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
 
     const req = createMockRequest(
       'http://localhost/api/users/ghost/promote',
@@ -633,7 +716,7 @@ describe('POST /api/users/{uid}/promote', () => {
   });
 
   it('noop when user is already at requested role', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('admin');
     seedUser('alice', { role: 'admin' });
 
     const req = createMockRequest(
@@ -648,6 +731,39 @@ describe('POST /api/users/{uid}/promote', () => {
     expect(res.status).toBe(200);
     expect(body.changed).toBe(false);
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  // THE GUARD. /promote can grant `superadmin`, which confers every capability on
+  // every site — so it demands `user=*:admin`, the same bar as user-delete and
+  // mfa-reset. A `write` key formerly reached it, so a deliberately narrowed
+  // delegation could mint a principal stronger than the key itself while being
+  // unable to delete a user. The ACTOR was always superadmin-gated by the
+  // capability; the SCOPE tier was the hole.
+  it('refuses a user=*:write key — minting a superadmin needs admin scope', async () => {
+    authedAsSuperadminWithKey('write');
+    seedUser('alice', { role: 'member' });
+
+    const res = await promotePOST(
+      createMockRequest('http://localhost/api/users/alice/promote', {
+        method: 'POST',
+        body: { role: 'superadmin' },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(res.status).toBe(403);
+
+    // NEGATIVE CONTROL: the identical call on an `admin` key succeeds, so the
+    // refusal above is about the scope tier and not a blanket denial.
+    authedAsSuperadminWithKey('admin');
+    seedUser('alice', { role: 'member' });
+    const ok = await promotePOST(
+      createMockRequest('http://localhost/api/users/alice/promote', {
+        method: 'POST',
+        body: { role: 'superadmin' },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(ok.status).toBe(200);
   });
 
   it('rejects api key without write scope (403 scope_insufficient)', async () => {
@@ -767,7 +883,7 @@ describe('POST /api/users/{uid}/demote', () => {
 
 describe('POST /api/users/{uid}/assign-sites', () => {
   it('adds siteIds via arrayUnion + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'member', sites: [] });
     seedSite('site-a');
     seedSite('site-b');
@@ -792,8 +908,51 @@ describe('POST /api/users/{uid}/assign-sites', () => {
     );
   });
 
+  // THE CONFINEMENT. These bulk routes are gated on `user=*:write`, which names
+  // no site. Before this check, a key confined to one site could not touch
+  // /members elsewhere but could add or remove anyone on EVERY site through
+  // here, which defeats the point of `site=X:...`.
+  it('refuses a site the api key is NOT scoped for', async () => {
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a']);
+    seedUser('alice', { role: 'member', sites: [] });
+    seedSite('site-a');
+    seedSite('site-b');
+
+    const res = await assignSitesPOST(
+      createMockRequest('http://localhost/api/users/alice/assign-sites', {
+        method: 'POST',
+        body: { siteIds: ['site-a', 'site-b'] },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('scope_insufficient');
+    // Refused before ANY write — not a partial application.
+    expect(docStore['users/alice']?.data?.sites).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the same call succeeds once both sites are scoped', async () => {
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b']);
+    seedUser('alice', { role: 'member', sites: [] });
+    seedSite('site-a');
+    seedSite('site-b');
+
+    const res = await assignSitesPOST(
+      createMockRequest('http://localhost/api/users/alice/assign-sites', {
+        method: 'POST',
+        body: { siteIds: ['site-a', 'site-b'] },
+      }),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    expect(res.status).toBe(200);
+  });
+
   it('rejects when any siteId is unknown (400 unknown_site, no partial mutation)', async () => {
-    authedAsSuperadminWithKey('write');
+    // Wildcard site scope, so the SCOPE check passes and the unknown-site check
+    // is what answers. Scope is deliberately evaluated first: a caller should
+    // not learn whether a site exists on a site they are not scoped for.
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['*']);
     seedUser('alice', { role: 'member', sites: [] });
     seedSite('site-a');
     // site-zzz intentionally unseeded
@@ -814,7 +973,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
   });
 
   it('rejects empty array with 400', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'member' });
 
     const req = createMockRequest(
@@ -829,7 +988,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
   });
 
   it('returns 404 for unknown user', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedSite('site-a');
 
     const req = createMockRequest(
@@ -848,7 +1007,7 @@ describe('POST /api/users/{uid}/assign-sites', () => {
 
 describe('POST /api/users/{uid}/remove-sites', () => {
   it('removes siteIds via arrayRemove + emits audit', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', {
       role: 'admin',
       sites: ['site-a', 'site-b', 'site-c'],
@@ -875,7 +1034,7 @@ describe('POST /api/users/{uid}/remove-sites', () => {
   });
 
   it('rejects empty siteIds array', async () => {
-    authedAsSuperadminWithKey('write');
+    authedAsSuperadminWithKey('write', 'user-superadmin', ['site-a', 'site-b', 'site-c']);
     seedUser('alice', { role: 'admin', sites: ['site-a'] });
 
     const req = createMockRequest(
@@ -931,6 +1090,57 @@ describe('DELETE /api/users/{uid}', () => {
         attributes: expect.objectContaining({ verb: 'soft_deleted' }),
       }),
     );
+  });
+
+  // A deployment must always keep at least MIN_SUPERADMINS active superadmins.
+  // setUserRole has always refused the last DEMOTE; delete reached the same end
+  // state uncounted, and unlike a demote it is unrecoverable — USER_ROLE_MANAGE
+  // exists only in SUPERADMIN_CAPABILITIES, so no one would be left to appoint a
+  // replacement.
+  it('refuses to delete the LAST active superadmin (409 last_superadmin)', async () => {
+    authedAsSuperadminWithKey('admin', 'user-superadmin');
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/user-superadmin', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'user-superadmin' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe('last_superadmin');
+    expect(body.minSuperadmins).toBe(1);
+    // Refused BEFORE any mutation — no soft-delete stamp landed.
+    expect(docStore['users/user-superadmin']?.data?.deletedAt).toBeUndefined();
+  });
+
+  it('allows deleting a superadmin while another active one remains', async () => {
+    // NEGATIVE CONTROL for the floor: same operation, one more superadmin.
+    // Without this, a guard that refused every superadmin delete would pass.
+    authedAsSuperadminWithKey('admin');
+    seedUser('second-sa', { role: 'superadmin', email: 'sa2@example.com' });
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/second-sa', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'second-sa' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore['users/second-sa']?.data?.deletedAt).toBeDefined();
+  });
+
+  it('does not count SOFT-DELETED superadmins toward the floor', async () => {
+    authedAsSuperadminWithKey('admin', 'user-superadmin');
+    // A deleted superadmin cannot authenticate, so it must not hold the floor
+    // open — the same exclusion setUserRole makes.
+    seedUser('ghost-sa', { role: 'superadmin', deletedAt: 1700000000000 });
+
+    const res = await detailDELETE(
+      createMockRequest('http://localhost/api/users/user-superadmin', { method: 'DELETE' }),
+      { params: Promise.resolve({ uid: 'user-superadmin' }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('last_superadmin');
   });
 
   it('refuses delete when user owns sites and successorUid is missing (409 orphan_sites)', async () => {

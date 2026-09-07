@@ -1,21 +1,22 @@
 /**
  * assignSiteToUser action core (security-boundary-migration wave 3.9).
  *
- * Adds siteIds to `users/{uid}.sites[]` via `arrayUnion` (Firestore de-dupes). Every id
- * is checked against `sites/{id}` first; if any are unknown the whole request is rejected
- * with `unknown_sites` and nothing is added — partial assignments confuse callers.
+ * Adds each siteId through `lib/membership.server.ts`, the single membership writer, which
+ * dual-writes the member document and the legacy `users/{uid}.sites[]` entry. Every id is
+ * checked against `sites/{id}` first; if any are unknown the whole request is rejected with
+ * `unknown_sites` and nothing is added — partial assignments confuse callers.
  *
  * Capability `SITE_MEMBER_MANAGE` is enforced handler-side; this core only validates and
  * writes.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
-import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
+import { addMember } from '@/lib/membership.server';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 export const MAX_SITES_PER_REQUEST = 100;
-const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface AssignSiteToUserInput {
   uid: string;
@@ -37,6 +38,8 @@ export type AssignSiteToUserResult =
   | { kind: 'invalid_format'; malformed: string[] }
   | { kind: 'too_many'; count: number; max: number }
   | { kind: 'unknown_sites'; unknownSites: string[] }
+  /** A membership write was refused. Sites before this one were assigned. */
+  | { kind: 'assign_failed'; siteId: string; reason: string }
   | { kind: 'updated'; assignedSiteIds: string[] };
 
 export async function assignSiteToUser(
@@ -55,7 +58,7 @@ export async function assignSiteToUser(
     };
   }
   const malformed = input.siteIds.filter(
-    (s) => typeof s !== 'string' || !SITE_ID_REGEX.test(s as string),
+    (s) => typeof s !== 'string' || !SITE_ID_RE.test(s as string),
   );
   if (malformed.length > 0) {
     return { kind: 'invalid_format', malformed: malformed as string[] };
@@ -85,9 +88,30 @@ export async function assignSiteToUser(
     return { kind: 'unknown_sites', unknownSites };
   }
 
-  await userRef.update({
-    sites: FieldValue.arrayUnion(...validatedSiteIds),
-  });
+  // Through the single membership writer (Wave 2 task 2.4), one site at a time.
+  //
+  // This was a single `arrayUnion` over every site — one write instead of N,
+  // which is genuinely cheaper, and it is given up on purpose. That write
+  // touched ONLY the legacy field, so a user assigned in bulk got no member
+  // document and was invisible in the new shape; and a second membership-write
+  // path is precisely what this wave exists to remove.
+  //
+  // `already_member` is not an error. This action is bulk and idempotent by
+  // contract — re-assigning a site someone already has is a no-op — and
+  // `create()` refusing means nothing was overwritten, so there is nothing to
+  // report.
+  for (const siteId of validatedSiteIds) {
+    const result = await addMember({
+      siteId,
+      uid: input.uid,
+      role: 'member',
+      addedBy: ctx.auditActor,
+      db: input.db,
+    });
+    if (!result.ok && result.failure.kind !== 'already_member') {
+      return { kind: 'assign_failed', siteId, reason: result.failure.kind };
+    }
+  }
 
   emitMutation({
     kind: 'user_mutated',

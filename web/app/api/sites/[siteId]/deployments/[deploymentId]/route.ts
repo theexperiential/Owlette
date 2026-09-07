@@ -10,8 +10,8 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
   applyAuthDeprecations,
+  auditActorIdentifier,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -27,13 +27,15 @@ type RouteParams = { siteId: string; deploymentId: string };
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
   apiKeyPermission: 'read',
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId, deploymentId } = await routeContext.params;
-    const auth = await requireSiteAuthAndScope(request, siteId, 'read');
-    if (!auth.ok) return auth.response;
 
     const db = getAdminDb();
     const deploymentRef = db
@@ -72,7 +74,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
         completedAt: timestampToIso(data.completedAt),
         updatedAt: timestampToIso(data.updatedAt),
       }),
-      auth.scopeCheck,
+      ctx.scopeCheck,
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments/[deploymentId]:GET');
@@ -84,6 +86,10 @@ export const GET = authorizedSiteHandler<RouteParams>({
 export const DELETE = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {
@@ -92,21 +98,19 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'write');
-    if (!auth.ok) return auth.response;
 
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
         const result = await deleteDeployment({
           siteId,
           deploymentId,
-          actorIdentifier: actorIdentifier(auth),
+          actorIdentifier: auditActorIdentifier(ctx.auth),
           correlationId: ctx.correlationId,
         });
 
@@ -120,7 +124,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
             siteId: result.siteId,
             deleted: true,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
       { requireKey: true },
@@ -132,11 +136,6 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
 
 /* helpers */
 
-function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
-  return auth.auth.keyContext
-    ? `apiKey:${auth.auth.keyContext.keyId}`
-    : `user:${auth.userId}`;
-}
 
 function deleteDeploymentErrorToResponse(
   result: Extract<DeleteDeploymentResult, { ok: false }>,

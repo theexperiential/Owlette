@@ -5,6 +5,7 @@ import {
   mocks,
   docSnapshot,
   querySnapshot,
+  seedMember
 } from './helpers/firestore-mock';
 import { verifySignature } from '@/lib/webhookSignature';
 
@@ -44,6 +45,16 @@ function mockBuildDoc(
           return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
         }
         return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      // Same two interceptions as helpers/firestore-mock: membership and the
+      // user document are path-addressed so the authorization reads do not
+      // consume documents this suite staged on the `mocks.get` queue.
+      if (parts.length === 4 && parts[0] === 'sites' && parts[2] === 'members') {
+        const key = `${parts[1]}/${parts[3]}`;
+        return Promise.resolve(docSnapshot(parts[3], mocks.memberDocs.get(key) ?? null));
+      }
+      if (parts.length === 2 && parts[0] === 'users' && mocks.userDocs.has(parts[1])) {
+        return Promise.resolve(docSnapshot(parts[1], mocks.userDocs.get(parts[1]) ?? null));
       }
       return mocks.get();
     },
@@ -204,7 +215,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
+  seedMember(SITE, 'user-1', 'owner');
   mocks.get.mockResolvedValue(docSnapshot('user-1', {
     role: 'admin',
     sites: [SITE],

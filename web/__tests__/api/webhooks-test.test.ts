@@ -17,6 +17,7 @@ import {
   mockDbFactory,
   docSnapshot,
   seedSiteOwner,
+  seedMember,
 } from './helpers/firestore-mock';
 
 jest.mock('@/lib/logger', () => ({
@@ -92,6 +93,14 @@ function seedCaller(
       : options.webhook;
   mockResolveAuth.mockResolvedValue({ userId, keyContext: null });
   seedSiteOwner(SITE, 'owner-someone-else');
+  // Standing is a member row now. Mirror the global role onto each site the
+  // fixture claims, which is what that role used to confer there; superadmins
+  // get none, matching production, where they reach every site by role.
+  if (role !== 'superadmin') {
+    for (const siteId of sites) {
+      seedMember(siteId, userId, role === 'admin' ? 'admin' : 'member');
+    }
+  }
   mocks.get.mockImplementation((path?: unknown) =>
     Promise.resolve(
       typeof path === 'string' && path.startsWith('users/')

@@ -22,6 +22,27 @@ import type { Firestore } from 'firebase/firestore';
 /** Roles recognised by `firestore.rules` users/{uid}.role. */
 export type UserRole = 'member' | 'admin' | 'superadmin';
 
+/** Per-site roles held on `sites/{siteId}/members/{uid}`. */
+export type SiteRole = 'owner' | 'admin' | 'member';
+
+/**
+ * Global role -> the per-site role a fixture receives on each of its sites.
+ *
+ * Site access is a membership DOCUMENT now, so seeding `users/{uid}.sites[]`
+ * alone grants nothing at all. `asUser` writes both, and this mapping is what
+ * keeps an existing spec meaning what it meant before the cut: an `admin`
+ * fixture was a site admin on its sites, a `member` fixture a plain member.
+ *
+ * Superadmins get NO member rows — they reach every site by global role and the
+ * rules short-circuit before the membership term. Seeding rows for them would
+ * exercise a shape production never writes.
+ */
+const MIRRORED_SITE_ROLE: Record<UserRole, SiteRole | null> = {
+  superadmin: null,
+  admin: 'admin',
+  member: 'member',
+};
+
 const PROJECT_ID = 'demo-rules-harness';
 
 // Emulator host/port comes from firebase.json — keep in sync.
@@ -84,19 +105,28 @@ export async function seedAsAdmin(
 }
 
 /**
- * Authenticated user context, with `users/{uid}` seeded so `canAccessSite` /
- * `isSiteAdmin` / `isSuperadmin` can resolve role + sites.
+ * Authenticated user context, with `users/{uid}` seeded so `isSuperadmin` and
+ * `isNotDeletedUser` resolve, and a membership document per site so
+ * `canAccessSite` / `isSiteAdmin` / `isSiteOwner` resolve.
+ *
+ * Membership is THE grant. `sites` alone no longer confers access — it is still
+ * written because write-validation rules reference the field until it is
+ * stripped, but nothing in the auth path reads it.
+ *
+ * `siteRoles` overrides the mirrored role for specific sites, which is how a
+ * spec seeds an owner or a plain member of a site it would otherwise administer.
  */
 export async function asUser(
   uid: string,
   role: UserRole,
   sites: string[],
+  siteRoles: Record<string, SiteRole> = {},
 ): Promise<Firestore> {
   if (!env) {
     throw new Error('asUser() called before initRulesHarness()');
   }
 
-  // Rules disabled: no client may write users/{uid}.role.
+  // Rules disabled: no client may write users/{uid}.role or a member document.
   await seedAsAdmin(async (db) => {
     const { doc, setDoc } = await import('firebase/firestore');
     await setDoc(doc(db, 'users', uid), {
@@ -105,6 +135,19 @@ export async function asUser(
       role,
       sites,
     });
+
+    const mirrored = MIRRORED_SITE_ROLE[role];
+    for (const siteId of sites) {
+      const siteRole = siteRoles[siteId] ?? mirrored;
+      if (!siteRole) continue;
+      await setDoc(doc(db, 'sites', siteId, 'members', uid), {
+        uid,
+        role: siteRole,
+        status: 'active',
+        addedAt: new Date(),
+        addedBy: 'system:rules-harness',
+      });
+    }
   });
 
   const ctx = env.authenticatedContext(uid);

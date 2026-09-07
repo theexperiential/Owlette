@@ -27,8 +27,8 @@ import {
   MAX_PAGE_SIZE,
 } from '@/lib/chatStorage.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 export async function GET(request: NextRequest) {
   try {

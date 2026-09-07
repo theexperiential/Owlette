@@ -5,6 +5,7 @@
 
 import { tool, jsonSchema } from 'ai';
 import { decryptApiKey } from '@/lib/llm-encryption.server';
+import { resolveSiteAccess, type MembershipRole } from '@/lib/sitePolicy.server';
 import {
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
@@ -100,7 +101,10 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
 
 export interface BuildExecutableToolsOptions {
   userId?: string;
+  /** GLOBAL role. Grants nothing on a site; kept for audit attribution. */
   userRole?: string | null;
+  /** PER-SITE standing. Omit it and every site-scoped tool denies. */
+  userSiteRole?: MembershipRole;
   /** Unattended attribution for the autonomous Hoot path (no session). Wins over
    *  userId/userRole so the audit row reads `system:<name>`, not a phantom user. */
   systemActor?: SystemActorName;
@@ -134,6 +138,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeActorRole(role: string | null | undefined): Role {
+  // Unknown values, `'user'` included, are the same tier as `'member'`: no
+  // global privilege. See normaliseRole in lib/sitePolicy.server.ts.
   return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'member';
 }
 
@@ -156,7 +162,11 @@ function actionContextForHoot(
     type: 'user',
     userId,
     role: normalizeActorRole(options.userRole),
-    sites: [siteId],
+    // Was `sites: [siteId]` — a fabricated membership that asserted the caller
+    // belonged to the site without ever checking, so the global role alone
+    // decided what the tools could do. The real standing is resolved by
+    // `verifyUserSiteAccess` and threaded in; absent, nothing site-scoped runs.
+    siteRoles: options.userSiteRole ? { [siteId]: options.userSiteRole } : {},
   };
   return {
     siteId,
@@ -275,7 +285,14 @@ export async function resolveSiteKeyOwner(
  * `isSiteAdmin` mirrors AuthContext's `isSiteAdmin(siteId)`.
  */
 export interface SiteAccessLevel {
+  /** GLOBAL `users/{uid}.role`, unnormalised. Carries no site privilege. */
   role: string | null;
+  /**
+   * PER-SITE standing from `sites/{siteId}/members/{uid}`, or null for none.
+   * This is what grants; `role` above does not. Callers building a `UserActor`
+   * must pass this through, or every site-scoped capability denies.
+   */
+  siteRole: MembershipRole;
   isSuperadmin: boolean;
   isSiteAdmin: boolean;
   isSiteOwner: boolean;
@@ -308,51 +325,66 @@ export class SiteAccessError extends Error {
 
 /**
  * Verify site access and return the caller's access level; throws on no-access.
- * Granted iff superadmin, site owner, or listed in `users/{uid}.sites[]` — owner
- * is honored explicitly so a fresh site's owner is not locked out before
- * `sites[]` catches up. Matches `assertUserHasSiteAccess` in apiAuth.server.
+ *
+ * A thin adapter over `resolveSiteAccess` (lib/sitePolicy.server.ts) since Wave 1
+ * task 1.5. This was the THIRD independent membership derivation in the codebase
+ * and the one every unattended talon run goes through.
+ *
+ * The core's precedence differs from the one this function has always reported,
+ * so the codes are re-derived from `facts` rather than taken from `reason`:
+ * the core checks the SITE first and collapses "no user document" and
+ * "soft-deleted" into a single `user_inactive`, while this reports
+ * user_not_found > site_not_found > user_deleted > no_site_access. The facts
+ * carry `userExists`, `siteExists` and `deletedAt` on the denial branch too, so
+ * the original order is reproducible exactly.
+ *
+ * Preserving the codes is not cosmetic. `resolveTalonAuthor` maps them to decide
+ * whether to DISABLE a talon, and `followupSweep` persists the raw code string as
+ * `turnError` — a renamed code is stored-data drift.
  */
 export async function verifyUserSiteAccess(
   db: FirebaseFirestore.Firestore,
   userId: string,
   siteId: string
 ): Promise<SiteAccessLevel> {
-  const [userDoc, siteDoc] = await Promise.all([
-    db.collection('users').doc(userId).get(),
-    db.collection('sites').doc(siteId).get(),
-  ]);
+  const outcome = await resolveSiteAccess(userId, siteId, db);
+  const { facts } = outcome;
 
-  if (!userDoc.exists) {
+  // This function's own precedence, not the core's.
+  if (!facts.userExists) {
     throw new SiteAccessError('user_not_found', 'User not found');
   }
-  if (!siteDoc.exists) {
+  if (!facts.siteExists) {
     throw new SiteAccessError('site_not_found', 'Site not found');
   }
-
-  const userData = userDoc.data()!;
-
   // Soft-delete does not invalidate the iron-session cookie, so without this a
   // deleted superadmin (granted by role, not sites[]) keeps driving tier-3 Hoot
-  // until the cookie lapses. Mirrors assertUserDataActive() in apiAuth.server.
-  if (typeof userData.deletedAt === 'number') {
+  // until the cookie lapses.
+  if (facts.deletedAt !== null) {
     throw new SiteAccessError('user_deleted', 'User is deleted or inactive');
   }
-
-  const siteData = siteDoc.data() || {};
-  const role: string | null = typeof userData.role === 'string' ? userData.role : null;
-  const isSuperadmin = role === 'superadmin';
-  const isSiteOwner = siteData.owner === userId;
-  const userSites: string[] = Array.isArray(userData.sites) ? userData.sites : [];
-  const isAssigned = userSites.includes(siteId);
-
-  if (!isSuperadmin && !isSiteOwner && !isAssigned) {
+  if (!outcome.ok) {
     throw new SiteAccessError('no_site_access', 'You do not have access to this site');
   }
 
-  // Mirrors AuthContext.isSiteAdmin; members never get admin privileges.
-  const isSiteAdmin = isSuperadmin || (role === 'admin' && (isSiteOwner || isAssigned));
+  const isSuperadmin = facts.globalRole === 'superadmin';
+  const isSiteOwner = facts.membershipRole === 'owner';
+  // Mirrors AuthContext.computeIsSiteAdmin: per-site standing decides, and the
+  // global role contributes nothing but superadmin. This previously read
+  // `globalRole === 'admin' && membershipRole !== null`, which is how one global
+  // admin held tier-3 Hoot on every site it was assigned to.
+  const isSiteAdmin =
+    isSuperadmin || facts.membershipRole === 'owner' || facts.membershipRole === 'admin';
 
-  return { role, isSuperadmin, isSiteAdmin, isSiteOwner };
+  // `rawRole`, not `globalRole`: this returns the unnormalised value, so a user
+  // doc with no role stays `null` rather than becoming 'member'.
+  return {
+    role: facts.rawRole,
+    siteRole: facts.membershipRole,
+    isSuperadmin,
+    isSiteAdmin,
+    isSiteOwner,
+  };
 }
 
 /**

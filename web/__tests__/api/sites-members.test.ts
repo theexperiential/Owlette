@@ -32,10 +32,15 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
             type: 'user',
             userId: 'user-1',
             role: 'admin',
-            sites: [params.siteId],
+            siteRoles: { [params.siteId]: 'admin' },
           },
           siteId: params.siteId,
           correlationId: 'corr-test',
+          // The wrapper has always supplied these; the routes only started
+          // reading them from ctx once task 1.4 removed the inner gate that
+          // used to hand them over separately.
+          auth: { userId: 'user-1', keyContext: null },
+          scopeCheck: { isLegacy: false },
         },
         routeContext,
       );
@@ -223,6 +228,8 @@ const mockRunTransaction = jest.fn(
         ref: { update: (patch: Record<string, unknown>) => Promise<void> },
         patch: Record<string, unknown>,
       ) => ref.update(patch),
+      // removeMember deletes the member row inside its transaction.
+      delete: (ref: { delete: () => Promise<void> }) => ref.delete(),
     };
     return cb(tx);
   },
@@ -234,6 +241,23 @@ function makeBatch() {
   return {
     set: (ref: { set: (d: Record<string, unknown>) => Promise<void> }, data: Record<string, unknown>) =>
       ops.push(() => ref.set(data)),
+    // create() is what makes addMember refuse to overwrite an existing row, so
+    // the fake must model how it DIFFERS from set(): it fails when the document
+    // already exists, with the ALREADY_EXISTS code the helper matches on. A
+    // create() that behaved like set() would let the site-takeover guard pass
+    // its tests while being absent in effect.
+    create: (
+      ref: { set: (d: Record<string, unknown>) => Promise<void>; path: string },
+      data: Record<string, unknown>,
+    ) =>
+      ops.push(async () => {
+        if (docStore[ref.path] !== undefined) {
+          const err = new Error('Document already exists') as Error & { code: number };
+          err.code = 6;
+          throw err;
+        }
+        await ref.set(data);
+      }),
     update: (
       ref: { update: (p: Record<string, unknown>) => Promise<void> },
       patch: Record<string, unknown>,
@@ -264,6 +288,11 @@ const mockGetUserByEmail = jest.fn(async (email: string) => {
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
+    // Batched read used by lib/sitePolicy.server.ts. Real getAll preserves
+    // argument order and yields a non-existent snapshot for a missing doc,
+    // so delegating to each ref's own get() matches its observable shape.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
     collection: (name: string) => makeCollectionRef([name]),
     runTransaction: mockRunTransaction,
     batch: makeBatch,
@@ -281,7 +310,10 @@ import {
   GET as membersGET,
   POST as membersPOST,
 } from '@/app/api/sites/[siteId]/members/route';
-import { DELETE as memberDELETE } from '@/app/api/sites/[siteId]/members/[uid]/route';
+import {
+  DELETE as memberDELETE,
+  PATCH as memberPATCH,
+} from '@/app/api/sites/[siteId]/members/[uid]/route';
 
 const SITE = 'site-alpha';
 
@@ -301,28 +333,35 @@ function authedAsSuperadminWithKey(perm: 'read' | 'write' | 'admin' = 'admin'): 
   seedUser('admin-uid', { role: 'superadmin' });
 }
 
-function authedAsKeyMissingScope(): void {
-  mockResolveAuth.mockResolvedValue({
-    userId: 'admin-uid',
-    keyContext: {
-      keyId: 'key_readonly',
-      environment: 'live',
-      isLegacy: false,
-      // Holds `read` but the endpoints need `admin`.
-      scopes: [{ resource: 'site', id: '*', permissions: ['read'] }],
-      expiresAt: null,
-    },
-  });
-  seedUser('admin-uid', { role: 'superadmin' });
-}
-
-function authedAsMemberWithoutAccess(): void {
-  // No site assignment, no ownership — assertUserHasSiteAccess must reject.
-  mockResolveAuth.mockResolvedValue({
-    userId: 'member-uid',
-    keyContext: null,
-  });
-  seedUser('member-uid', { role: 'member', sites: [] });
+/**
+ * Membership rows for a seeded fixture, as `membership.server.ts` writes them.
+ *
+ * Site access resolves from these and nothing else, so seeding `users/{uid}.sites`
+ * alone now grants nothing. The GLOBAL role is mirrored onto each site because
+ * that is what it used to confer there; superadmins get no rows, matching
+ * production, where they reach every site by role instead.
+ */
+function seedMembershipFor(uid: string, merged: Record<string, unknown>): void {
+  const globalRole = typeof merged.role === 'string' ? merged.role : 'member';
+  if (globalRole === 'superadmin') return;
+  const sites = Array.isArray(merged.sites) ? (merged.sites as string[]) : [];
+  for (const siteId of sites) {
+    // `sites/{siteId}.owner` WAS the ownership grant, so a fixture the site
+    // points at becomes an owner row — not the mirrored global role. Self-serve
+    // owners carry global role `member`, and mirroring that would leave them
+    // without SITE_DELETE on the site they own.
+    const owns =
+      (docStore[`sites/${siteId}`] as { data?: { owner?: unknown } } | undefined)?.data?.owner === uid;
+    docStore[`sites/${siteId}/members/${uid}`] = {
+      data: {
+        uid,
+        role: owns ? 'owner' : globalRole === 'admin' ? 'admin' : 'member',
+        status: 'active',
+        addedAt: new Date(0),
+        addedBy: 'system:test',
+      },
+    };
+  }
 }
 
 function seedUser(uid: string, data: Record<string, unknown>): void {
@@ -334,6 +373,7 @@ function seedUser(uid: string, data: Record<string, unknown>): void {
     ...data,
   };
   docStore[path] = { data: merged };
+  seedMembershipFor(uid, merged);
   if (!collectionDocs['users']) collectionDocs['users'] = [];
   const idx = collectionDocs['users'].findIndex((d) => d.id === uid);
   if (idx >= 0) collectionDocs['users'][idx] = { id: uid, data: merged };
@@ -345,10 +385,31 @@ function seedAuthEmail(email: string, uid: string): void {
   authEmailToUid[email] = uid;
 }
 
+/**
+ * The owner's membership row. `sites/{siteId}.owner` WAS the ownership grant, so
+ * declaring an owner has to produce the row that now carries it — and it is done
+ * here as well as in `seedUser` because fixtures seed users and sites in either
+ * order, and whichever runs second must still leave the owner with `owner`.
+ */
+function seedOwnerMembership(siteId: string, merged: Record<string, unknown>): void {
+  const owner = merged.owner;
+  if (typeof owner !== 'string' || owner.length === 0) return;
+  docStore[`sites/${siteId}/members/${owner}`] = {
+    data: {
+      uid: owner,
+      role: 'owner',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    },
+  };
+}
+
 function seedSite(siteId: string, data: Record<string, unknown> = {}): void {
   const path = `sites/${siteId}`;
   const merged = { owner: 'admin-uid', ...data };
   docStore[path] = { data: merged };
+  seedOwnerMembership(siteId, merged);
   if (!collectionDocs['sites']) collectionDocs['sites'] = [];
   const idx = collectionDocs['sites'].findIndex((d) => d.id === siteId);
   if (idx >= 0) collectionDocs['sites'][idx] = { id: siteId, data: merged };
@@ -438,36 +499,15 @@ describe('GET /api/sites/{siteId}/members', () => {
     expect(res.status).toBe(404);
   });
 
-  it('rejects non-admin caller with 404 (site-not-found-or-no-access masking)', async () => {
-    authedAsMemberWithoutAccess();
-    seedSite(SITE);
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/members`,
-    );
-    const res = await membersGET(req, {
-      params: Promise.resolve({ siteId: SITE }),
-    });
-
-    // 404, not 403, on access failure — a 403 would leak site existence.
-    expect([403, 404]).toContain(res.status);
-  });
-
-  it('rejects api key without admin scope (403 scope_insufficient)', async () => {
-    authedAsKeyMissingScope();
-    seedSite(SITE);
-
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/members`,
-    );
-    const res = await membersGET(req, {
-      params: Promise.resolve({ siteId: SITE }),
-    });
-    const body = await res.json();
-
-    expect(res.status).toBe(403);
-    expect(body.code).toBe('scope_insufficient');
-  });
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 });
 
 // POST /api/sites/{siteId}/members
@@ -920,5 +960,122 @@ describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
       expect(res.status).toBe(400);
       expect(docStore['users/alice']?.data?.sites).toEqual([SITE]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 2 task 2.3 — the membership endpoints now go through the single writer
+// in lib/membership.server.ts, and PATCH exists for the first time.
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/sites/{siteId}/members/{uid} — per-site role change', () => {
+  it('promotes a member to site admin WITHOUT touching their global role', async () => {
+    // The whole point of per-site roles: before this endpoint existed, making
+    // someone an admin "here" meant promoting them globally, on every site they
+    // belong to. That is the leak this closes.
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('alice', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/alice`] = {
+      data: { uid: 'alice', role: 'member', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/alice`, {
+        method: 'PATCH',
+        body: { role: 'admin' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(docStore[`sites/${SITE}/members/alice`]?.data?.role).toBe('admin');
+    // Global role untouched.
+    expect(docStore['users/alice']?.data?.role).toBe('member');
+  });
+
+  it('refuses to change the OWNER\'s role (409 cannot_change_owner_role)', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'owner-uid' });
+    seedUser('owner-uid', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/owner-uid`] = {
+      data: { uid: 'owner-uid', role: 'owner', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/owner-uid`, {
+        method: 'PATCH',
+        body: { role: 'member' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'owner-uid' }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('cannot_change_owner_role');
+    // Unchanged — the demote-the-owner path writes nothing.
+    expect(docStore[`sites/${SITE}/members/owner-uid`]?.data?.role).toBe('owner');
+  });
+
+  it('cannot assign owner — an admin may not promote anyone into ownership', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('alice', { role: 'member', sites: [SITE] });
+    docStore[`sites/${SITE}/members/alice`] = {
+      data: { uid: 'alice', role: 'member', status: 'active' },
+    };
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/alice`, {
+        method: 'PATCH',
+        body: { role: 'owner' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(400);
+    expect(docStore[`sites/${SITE}/members/alice`]?.data?.role).toBe('member');
+  });
+
+  it('404s for a uid with no membership on this site', async () => {
+    authedAsSuperadminWithKey();
+    seedSite(SITE);
+    seedUser('stranger', { role: 'member', sites: [] });
+
+    const res = await memberPATCH(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members/stranger`, {
+        method: 'PATCH',
+        body: { role: 'admin' },
+      }),
+      { params: Promise.resolve({ siteId: SITE, uid: 'stranger' }) },
+    );
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/sites/{siteId}/members — owner guard', () => {
+  it('refuses to re-add the site OWNER as a lesser member', async () => {
+    // create() alone does not protect a site that predates the members
+    // subcollection: its owner has no row to collide with until the Wave 3
+    // backfill, so without this explicit check the owner would be handed a
+    // `member` row and silently demoted in the new shape.
+    authedAsSuperadminWithKey();
+    seedSite(SITE, { owner: 'owner-uid' });
+    seedUser('owner-uid', { role: 'member', sites: [SITE] });
+
+    const res = await membersPOST(
+      createMockRequest(`http://localhost/api/sites/${SITE}/members`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-owner-readd' },
+        body: { uid: 'owner-uid', role: 'member' },
+      }),
+      { params: Promise.resolve({ siteId: SITE }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('target_is_owner');
+    // The owner's row is untouched — still `owner`, not downgraded. It exists
+    // now (ownership IS a member row), so absence is no longer the assertion.
+    expect(docStore[`sites/${SITE}/members/owner-uid`]?.data?.role).toBe('owner');
   });
 });

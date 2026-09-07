@@ -17,7 +17,7 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
       return handler(
         request,
         {
-          actor: { type: 'user', userId: 'admin-uid', role: 'admin', sites: [params.siteId] },
+          actor: { type: 'user', userId: 'admin-uid', role: 'admin', siteRoles: { [params.siteId]: 'admin' } },
           siteId: params.siteId,
           correlationId: 'corr-test',
           auth: { userId: 'admin-uid', keyContext: null },

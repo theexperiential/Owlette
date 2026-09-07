@@ -13,11 +13,11 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 import type { UserActor } from '@/lib/capabilities';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 const VALID_OPERATORS = new Set(['>', '<', '>=', '<=']);
 const VALID_SEVERITIES = new Set(['info', 'warning', 'critical']);
 const VALID_CHANNELS = new Set(['email', 'webhook']);
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface AlertRuleInput {
   id: string;

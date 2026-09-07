@@ -3,12 +3,14 @@
  */
 import {
   Capability,
-  RoleCapabilityMatrix,
+  SiteRoleCapabilityMatrix,
+  GlobalRoleCapabilityMatrix,
   SystemCapabilityMatrix,
   hasCapability,
   isSiteScopedCapability,
   type Actor,
   type Role,
+  type SiteRole,
   type SystemActorName,
   type UserActor,
   type SystemActor,
@@ -43,7 +45,7 @@ function userActor(overrides: Partial<UserActor> = {}): UserActor {
     type: 'user',
     userId: 'uid_default',
     role: 'member',
-    sites: [],
+    siteRoles: {},
     ...overrides,
   };
 }
@@ -88,18 +90,14 @@ describe('Capability enum', () => {
   });
 });
 
-describe('RoleCapabilityMatrix', () => {
-  it('member gets self-prefs + self-delete + machine-view (read-only)', () => {
-    expect([...RoleCapabilityMatrix.member].sort()).toEqual(
-      ['USER_SELF_DELETE', 'USER_SELF_PREFS', 'MACHINE_VIEW'].sort()
-    );
+describe('SiteRoleCapabilityMatrix', () => {
+  it('member is a read-only operator: it may watch a machine and nothing else', () => {
+    expect([...SiteRoleCapabilityMatrix.member].sort()).toEqual(['MACHINE_VIEW']);
   });
 
-  it('admin gets member caps plus the site-scoped admin caps', () => {
-    expect([...RoleCapabilityMatrix.admin].sort()).toEqual(
+  it('admin adds every site-scoped write, but NOT destroying the site', () => {
+    expect([...SiteRoleCapabilityMatrix.admin].sort()).toEqual(
       [
-        'USER_SELF_PREFS',
-        'USER_SELF_DELETE',
         'MACHINE_VIEW',
         'MACHINE_EXEC_COMMAND',
         'MACHINE_CONFIG_WRITE',
@@ -116,24 +114,56 @@ describe('RoleCapabilityMatrix', () => {
         'ALERT_RULES_MANAGE',
       ].sort()
     );
+    expect(SiteRoleCapabilityMatrix.admin).not.toContain(Capability.SITE_DELETE);
   });
 
-  it('superadmin gets every capability', () => {
-    expect([...RoleCapabilityMatrix.superadmin].sort()).toEqual(
-      [...ALL_CAPABILITIES].sort()
+  it('owner is admin plus SITE_DELETE, and nothing else', () => {
+    expect([...SiteRoleCapabilityMatrix.owner].sort()).toEqual(
+      [...SiteRoleCapabilityMatrix.admin, Capability.SITE_DELETE].sort()
     );
   });
 
-  it('admin includes MACHINE_REMOVE, site-scoped to assigned sites', () => {
-    expect(RoleCapabilityMatrix.admin).toContain(Capability.MACHINE_REMOVE);
-    expect(isSiteScopedCapability(Capability.MACHINE_REMOVE)).toBe(true);
+  it('no per-site role reaches a platform capability', () => {
+    // Owning a site must never be a route to installer uploads or role
+    // management. This is the containment the whole per-site model rests on.
+    for (const role of ['owner', 'admin', 'member'] as SiteRole[]) {
+      for (const cap of GLOBAL_CAPABILITIES) {
+        expect(SiteRoleCapabilityMatrix[role]).not.toContain(cap);
+      }
+    }
   });
 
-  it('admin does NOT include any global capability', () => {
-    for (const cap of GLOBAL_CAPABILITIES) {
-      if (cap === Capability.USER_SELF_PREFS || cap === Capability.USER_SELF_DELETE) continue;
-      expect(RoleCapabilityMatrix.admin).not.toContain(cap);
+  it('every per-site capability is declared site-scoped', () => {
+    // A capability in the site matrix that is not site-scoped would be granted
+    // globally by `hasCapability`'s non-scoped branch.
+    for (const role of ['owner', 'admin', 'member'] as SiteRole[]) {
+      for (const cap of SiteRoleCapabilityMatrix[role]) {
+        expect(isSiteScopedCapability(cap)).toBe(true);
+      }
     }
+  });
+});
+
+describe('GlobalRoleCapabilityMatrix', () => {
+  it('a global role grants self-service and nothing more', () => {
+    expect([...GlobalRoleCapabilityMatrix.member].sort()).toEqual(
+      ['USER_SELF_DELETE', 'USER_SELF_PREFS'].sort()
+    );
+  });
+
+  it('global `admin` is worth exactly what `member` is', () => {
+    // The migration's headline change. `admin` used to carry every site-scoped
+    // write on each site in `sites[]`; per-site standing carries that now, so
+    // the global tier confers nothing on its own.
+    expect([...GlobalRoleCapabilityMatrix.admin].sort()).toEqual(
+      [...GlobalRoleCapabilityMatrix.member].sort()
+    );
+  });
+
+  it('superadmin gets every capability', () => {
+    expect([...GlobalRoleCapabilityMatrix.superadmin].sort()).toEqual(
+      [...ALL_CAPABILITIES].sort()
+    );
   });
 });
 
@@ -171,69 +201,81 @@ describe('isSiteScopedCapability', () => {
   });
 });
 
-describe('hasCapability — user actor (every role × every capability)', () => {
-  const roles: Role[] = ['member', 'admin', 'superadmin'];
+describe('hasCapability — per-site role × every capability', () => {
+  const siteRoles: SiteRole[] = ['member', 'admin', 'owner'];
 
-  for (const role of roles) {
+  for (const siteRole of siteRoles) {
     for (const cap of ALL_CAPABILITIES) {
-      const grants = RoleCapabilityMatrix[role].includes(cap);
+      const grants = SiteRoleCapabilityMatrix[siteRole].includes(cap);
       const isScoped = SITE_SCOPED.includes(cap);
 
-      it(`${role} × ${cap} — granted=${grants}, scoped=${isScoped}`, () => {
-        const actor = userActor({
-          role,
-          sites: ['site_a'],
-        });
+      it(`${siteRole} on site_a × ${cap} — granted=${grants}`, () => {
+        // Global role `member`: the standing under test must be the only source
+        // of authority, so a global tier that granted anything would mask it.
+        const actor = userActor({ role: 'member', siteRoles: { site_a: siteRole } });
 
-        if (!grants) {
-          expect(hasCapability(actor, cap, 'site_a')).toBe(false);
+        if (isScoped) {
+          expect(hasCapability(actor, cap, 'site_a')).toBe(grants);
+          // Standing on site_a says nothing about site_b.
+          expect(hasCapability(actor, cap, 'site_b')).toBe(false);
+          // A site-scoped capability with no site named is always denied.
           expect(hasCapability(actor, cap)).toBe(false);
           return;
         }
 
-        if (isScoped) {
-          if (role === 'superadmin') {
-            expect(hasCapability(actor, cap, 'site_anywhere')).toBe(true);
-            expect(hasCapability(actor, cap)).toBe(true);
-          } else {
-            expect(hasCapability(actor, cap, 'site_a')).toBe(true);
-            expect(hasCapability(actor, cap, 'site_other')).toBe(false);
-            expect(hasCapability(actor, cap)).toBe(false);
-          }
-        } else {
-          expect(hasCapability(actor, cap)).toBe(true);
-          expect(hasCapability(actor, cap, 'site_a')).toBe(true);
-        }
+        // Not site-scoped: only the self-service pair is reachable without
+        // superadmin, and per-site standing cannot add to it.
+        const selfService =
+          cap === Capability.USER_SELF_PREFS || cap === Capability.USER_SELF_DELETE;
+        expect(hasCapability(actor, cap)).toBe(selfService);
+        expect(hasCapability(actor, cap, 'site_a')).toBe(selfService);
       });
     }
   }
+
+  it('a global admin with no membership is denied every site-scoped capability', () => {
+    const actor = userActor({ role: 'admin', siteRoles: {} });
+    for (const cap of SITE_SCOPED) {
+      expect(hasCapability(actor, cap, 'site_a')).toBe(false);
+    }
+  });
+
+  it('superadmin holds every capability while holding no membership at all', () => {
+    // Superadmins deliberately have no member rows; they short-circuit above the
+    // site matrix, so an empty `siteRoles` must not narrow them.
+    const actor = userActor({ role: 'superadmin', siteRoles: {} });
+    for (const cap of ALL_CAPABILITIES) {
+      expect(hasCapability(actor, cap)).toBe(true);
+      expect(hasCapability(actor, cap, 'site_anything')).toBe(true);
+    }
+  });
 });
 
 describe('hasCapability — site-scope enforcement edge cases', () => {
   it('admin with empty sites array is denied every site-scoped capability', () => {
-    const actor = userActor({ role: 'admin', sites: [] });
+    const actor = userActor({ role: 'admin', siteRoles: {} });
     for (const cap of SITE_SCOPED) {
       expect(hasCapability(actor, cap, 'site_a')).toBe(false);
     }
   });
 
   it('admin without siteId argument is denied site-scoped capabilities', () => {
-    const actor = userActor({ role: 'admin', sites: ['site_a'] });
+    const actor = userActor({ role: 'admin', siteRoles: { ['site_a']: 'admin' } });
     for (const cap of SITE_SCOPED) {
-      if (!RoleCapabilityMatrix.admin.includes(cap)) continue;
+      if (!SiteRoleCapabilityMatrix.admin.includes(cap)) continue;
       expect(hasCapability(actor, cap)).toBe(false);
     }
   });
 
   it('admin granted only on assigned site', () => {
-    const actor = userActor({ role: 'admin', sites: ['site_a', 'site_b'] });
+    const actor = userActor({ role: 'admin', siteRoles: { ['site_a']: 'admin', ['site_b']: 'admin' } });
     expect(hasCapability(actor, Capability.DEPLOYMENT_MANAGE, 'site_a')).toBe(true);
     expect(hasCapability(actor, Capability.DEPLOYMENT_MANAGE, 'site_b')).toBe(true);
     expect(hasCapability(actor, Capability.DEPLOYMENT_MANAGE, 'site_c')).toBe(false);
   });
 
   it('superadmin bypasses site-scope check entirely (no siteId required)', () => {
-    const actor = userActor({ role: 'superadmin', sites: [] });
+    const actor = userActor({ role: 'superadmin', siteRoles: {} });
     for (const cap of SITE_SCOPED) {
       expect(hasCapability(actor, cap)).toBe(true);
       expect(hasCapability(actor, cap, 'site_anything')).toBe(true);
@@ -241,7 +283,7 @@ describe('hasCapability — site-scope enforcement edge cases', () => {
   });
 
   it('member is denied site-scoped WRITE capabilities even on their assigned site (but MACHINE_VIEW is allowed)', () => {
-    const actor = userActor({ role: 'member', sites: ['site_a'] });
+    const actor = userActor({ role: 'member', siteRoles: { ['site_a']: 'member' } });
     for (const cap of SITE_SCOPED) {
       // MACHINE_VIEW is the one site-scoped capability members hold (read-only
       // screenshot / live view); every other site-scoped cap is a write and denied.
@@ -251,14 +293,14 @@ describe('hasCapability — site-scope enforcement edge cases', () => {
   });
 
   it('member gets MACHINE_VIEW only on assigned sites, never unscoped', () => {
-    const actor = userActor({ role: 'member', sites: ['site_a'] });
+    const actor = userActor({ role: 'member', siteRoles: { ['site_a']: 'member' } });
     expect(hasCapability(actor, Capability.MACHINE_VIEW, 'site_a')).toBe(true);
     expect(hasCapability(actor, Capability.MACHINE_VIEW, 'site_other')).toBe(false);
     expect(hasCapability(actor, Capability.MACHINE_VIEW)).toBe(false);
   });
 
   it('member retains self-prefs and self-delete (global, no siteId required)', () => {
-    const actor = userActor({ role: 'member', sites: [] });
+    const actor = userActor({ role: 'member', siteRoles: {} });
     expect(hasCapability(actor, Capability.USER_SELF_PREFS)).toBe(true);
     expect(hasCapability(actor, Capability.USER_SELF_DELETE)).toBe(true);
   });
@@ -335,7 +377,7 @@ describe('hasCapability — system actor allowlist', () => {
 });
 
 describe('ALERT_RULES_MANAGE — site-admin grant for PUT /api/sites/{siteId}/alerts', () => {
-  const admin = userActor({ userId: 'u1', role: 'admin', sites: ['s1'] });
+  const admin = userActor({ userId: 'u1', role: 'admin', siteRoles: { ['s1']: 'admin' } });
 
   it('admin holds it on an assigned site only', () => {
     expect(hasCapability(admin, Capability.ALERT_RULES_MANAGE, 's1')).toBe(true);
@@ -344,12 +386,12 @@ describe('ALERT_RULES_MANAGE — site-admin grant for PUT /api/sites/{siteId}/al
   });
 
   it('member never holds it, even on their own site', () => {
-    const member = userActor({ userId: 'u1', role: 'member', sites: ['s1'] });
+    const member = userActor({ userId: 'u1', role: 'member', siteRoles: { ['s1']: 'member' } });
     expect(hasCapability(member, Capability.ALERT_RULES_MANAGE, 's1')).toBe(false);
   });
 
   it('superadmin holds it unscoped', () => {
-    const superadmin = userActor({ userId: 'u0', role: 'superadmin', sites: [] });
+    const superadmin = userActor({ userId: 'u0', role: 'superadmin', siteRoles: {} });
     expect(hasCapability(superadmin, Capability.ALERT_RULES_MANAGE)).toBe(true);
     expect(hasCapability(superadmin, Capability.ALERT_RULES_MANAGE, 's2')).toBe(true);
   });
@@ -359,17 +401,17 @@ describe('ALERT_RULES_MANAGE — site-admin grant for PUT /api/sites/{siteId}/al
     // site-scoped capability. Granting the old one to admins would silently open
     // every platform settings route — this assertion must fail if that happens.
     expect(hasCapability(admin, Capability.GLOBAL_SETTINGS_WRITE, 's1')).toBe(false);
-    expect(RoleCapabilityMatrix.admin).not.toContain(Capability.GLOBAL_SETTINGS_WRITE);
+    expect(SiteRoleCapabilityMatrix.admin).not.toContain(Capability.GLOBAL_SETTINGS_WRITE);
   });
 });
 
 describe('AGENT_TOKEN_REVOKE — site-admin grant for the agent-tokens list + revoke routes', () => {
   // The role × capability sweep above derives its expectations from
-  // RoleCapabilityMatrix, so it stays green whether or not admins hold this
+  // SiteRoleCapabilityMatrix, so it stays green whether or not admins hold this
   // capability. These assertions pin the grant itself: GET/POST
   // /api/sites/{siteId}/agent-tokens both run on it, and the admin tokens page
   // 403s the moment it is withdrawn.
-  const admin = userActor({ userId: 'u1', role: 'admin', sites: ['s1'] });
+  const admin = userActor({ userId: 'u1', role: 'admin', siteRoles: { ['s1']: 'admin' } });
 
   it('admin holds it on an assigned site only', () => {
     expect(hasCapability(admin, Capability.AGENT_TOKEN_REVOKE, 's1')).toBe(true);
@@ -378,24 +420,24 @@ describe('AGENT_TOKEN_REVOKE — site-admin grant for the agent-tokens list + re
   });
 
   it('member never holds it, even on their own site', () => {
-    const member = userActor({ userId: 'u2', role: 'member', sites: ['s1'] });
+    const member = userActor({ userId: 'u2', role: 'member', siteRoles: { ['s1']: 'member' } });
     expect(hasCapability(member, Capability.AGENT_TOKEN_REVOKE, 's1')).toBe(false);
   });
 
   it('superadmin holds it unscoped', () => {
-    const superadmin = userActor({ userId: 'u0', role: 'superadmin', sites: [] });
+    const superadmin = userActor({ userId: 'u0', role: 'superadmin', siteRoles: {} });
     expect(hasCapability(superadmin, Capability.AGENT_TOKEN_REVOKE)).toBe(true);
     expect(hasCapability(superadmin, Capability.AGENT_TOKEN_REVOKE, 's2')).toBe(true);
   });
 });
 
 describe('hasCapability — discriminated union routing', () => {
-  it('routes user actor through RoleCapabilityMatrix', () => {
+  it('routes user actor through SiteRoleCapabilityMatrix', () => {
     const actor: Actor = {
       type: 'user',
       userId: 'uid_x',
       role: 'admin',
-      sites: ['site_a'],
+      siteRoles: { ['site_a']: 'admin' },
     };
     expect(hasCapability(actor, Capability.DEPLOYMENT_MANAGE, 'site_a')).toBe(true);
   });

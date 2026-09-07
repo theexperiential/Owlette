@@ -27,7 +27,7 @@ const actor: UserActor = {
   type: 'user',
   userId: 'user-admin',
   role: 'superadmin',
-  sites: [],
+  siteRoles: {},
 };
 
 const validInput = {

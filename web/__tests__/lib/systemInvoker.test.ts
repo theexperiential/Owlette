@@ -402,7 +402,7 @@ describe('invokeAsSystem — invalid actor', () => {
     await expect(
       invokeAsSystem({
         // @ts-expect-error intentional bad input
-        actor: { type: 'user', userId: 'u1', role: 'admin', sites: [SITE] },
+        actor: { type: 'user', userId: 'u1', role: 'admin', siteRoles: { [SITE]: 'admin' } },
         capability: Capability.MACHINE_EXEC_COMMAND,
         siteId: SITE,
         action: async () => undefined,

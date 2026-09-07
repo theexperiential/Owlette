@@ -20,8 +20,8 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import {
   applyAuthDeprecations,
+  auditActorIdentifier,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -45,13 +45,15 @@ const MAX_PAGE_SIZE = 100;
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
   apiKeyPermission: 'read',
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
-    const auth = await requireSiteAuthAndScope(request, siteId, 'read');
-    if (!auth.ok) return auth.response;
 
     const parsedPagination = parsePagination(request.nextUrl.searchParams, {
       defaultPageSize: DEFAULT_PAGE_SIZE,
@@ -80,7 +82,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
 
     return applyAuthDeprecations(
       NextResponse.json({ items, next_page_token: nextPageToken }),
-      auth.scopeCheck,
+      ctx.scopeCheck,
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/deployments:GET');
@@ -92,6 +94,10 @@ export const GET = authorizedSiteHandler<RouteParams>({
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {
@@ -101,21 +107,19 @@ export const POST = authorizedSiteHandler<RouteParams>({
     if (!parsed.ok) return parsed.response;
     const body = (parsed.body ?? {}) as CreateDeploymentInput;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'write');
-    if (!auth.ok) return auth.response;
 
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
         const result = await createDeployment(body, {
           siteId,
-          createdBy: auth.userId,
-          actorIdentifier: actorIdentifier(auth),
+          createdBy: ctx.actor.userId,
+          actorIdentifier: auditActorIdentifier(ctx.auth),
           correlationId: ctx.correlationId,
         });
 
@@ -133,7 +137,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             },
             { status: 201 },
           ),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
       { requireKey: true },
@@ -145,11 +149,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
 
 // helpers
 
-function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
-  return auth.auth.keyContext
-    ? `apiKey:${auth.auth.keyContext.keyId}`
-    : `user:${auth.userId}`;
-}
 
 function createDeploymentErrorToResponse(
   result: Extract<CreateDeploymentResult, { ok: false }>,

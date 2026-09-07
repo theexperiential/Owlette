@@ -20,11 +20,12 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { FieldValue } from 'firebase-admin/firestore';
 import {
+  problem,
   problemFromError,
   problemNotFound,
   problemValidation,
+  ProblemType,
 } from '@/lib/apiErrors';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
@@ -33,8 +34,8 @@ import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../_shared';
+import { addMember, type AssignableRole } from '@/lib/membership.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_ADD_ROLES = new Set(['member', 'admin']);
@@ -79,12 +80,16 @@ function derivePerSiteRole(
 export const GET = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
-  apiKeyPermission: 'read',
-})(async (request: NextRequest, _ctx, routeContext) => {
+  // Opted in because these routes already enforced it through the inner
+  // _shared gate; without this, removing that gate would silently drop the
+  // 400 on an unsupported Roost-Version.
+  roostVersioned: true,
+  // read AND admin: the inner gate asked for admin, the outer for read, and
+  // permissions are not hierarchical, so both were genuinely required.
+  apiKeyPermission: ['read', 'admin'],
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     const db = getAdminDb();
 
@@ -153,7 +158,7 @@ export const GET = authorizedSiteHandler<RouteParams>({
 
     return applyAuthDeprecations(
       NextResponse.json({ members }),
-      auth.scopeCheck,
+      ctx.scopeCheck,
     );
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/members:GET');
@@ -163,21 +168,23 @@ export const GET = authorizedSiteHandler<RouteParams>({
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'SITE_MEMBER_MANAGE',
   siteIdParam: 'path',
+  // write AND admin: the inner gate asked for admin while the wrapper defaulted
+  // to write, and permissions are not hierarchical, so both were required. The
+  // inner gate is gone; the requirement it carried is stated here.
+  apiKeyPermission: ['write', 'admin'],
   targetKind: 'user',
-})(async (request: NextRequest, _ctx, routeContext) => {
+})(async (request: NextRequest, ctx, routeContext) => {
   try {
     const { siteId } = await routeContext.params;
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'admin');
-    if (!auth.ok) return auth.response;
 
     return await withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -265,10 +272,50 @@ export const POST = authorizedSiteHandler<RouteParams>({
           );
         }
 
-        // Add siteId to user.sites[] (idempotent via arrayUnion).
-        await userRef.update({
-          sites: FieldValue.arrayUnion(siteId),
+        // OWNER GUARD. `addMember` uses create(), which refuses to overwrite an
+        // existing member row — but that protects nothing on a site created before
+        // the members subcollection existed, because its owner has no row to
+        // collide with until the Wave 3 backfill. The legacy `owner` field is the
+        // only thing reliably true today, so it is checked here. Without this,
+        // POSTing the owner of a pre-backfill site would write them a `member` row
+        // and quietly demote the owner in the new shape.
+        const siteSnapForOwner = await db.collection('sites').doc(siteId).get();
+        const ownerUid = (siteSnapForOwner.data() ?? {}).owner;
+        if (typeof ownerUid === 'string' && ownerUid === targetUid) {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'target already owns this site',
+            status: 409,
+            detail:
+              'the site owner is already a member and cannot be re-added with a lesser role',
+            instance: `/api/sites/${siteId}/members`,
+            code: 'target_is_owner',
+          });
+        }
+
+        // Wave 2 task 2.3: through the single writer, which dual-writes the member
+        // document and the legacy `sites[]` entry in one batch.
+        //
+        // `already_member` maps to this endpoint's existing 200: the route is
+        // documented idempotent and clients rely on it. That mapping is safe
+        // precisely BECAUSE create() refused — nothing was overwritten, so
+        // reporting success costs no integrity. The helper's job is to never
+        // silently clobber; the HTTP semantic is the route's to choose.
+        // VALID_ADD_ROLES holds exactly these two and the check above already
+        // rejected anything else; `Set.has` just does not narrow the type.
+        const assignableRole: AssignableRole =
+          requestedRole === 'admin' ? 'admin' : 'member';
+        const added = await addMember({
+          siteId,
+          uid: targetUid,
+          role: assignableRole,
+          addedBy: ctx.actor.userId,
         });
+        if (!added.ok && added.failure.kind !== 'already_member') {
+          return problemValidation('could not add member', {
+            'body.role': ['must be one of: admin, member'],
+          });
+        }
 
         // Per-site role is derived from global role at read time, and membership is
         // the only explicit write, so an `admin` request is honored only when the
@@ -284,9 +331,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'site_member_mutated',
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
+          actor: ctx.auth.keyContext
+            ? `apiKey:${ctx.auth.keyContext.keyId}`
+            : `user:${ctx.actor.userId}`,
           targetId: targetUid,
           attributes: {
             endpoint: `/api/sites/${siteId}/members`,
@@ -306,7 +353,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             roleHonored,
             globalRole: targetGlobalRole,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
     );

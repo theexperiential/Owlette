@@ -1,7 +1,17 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { collection, onSnapshot, doc, getDoc, Timestamp, type Unsubscribe } from 'firebase/firestore';
+import {
+  collection,
+  collectionGroup,
+  onSnapshot,
+  doc,
+  getDoc,
+  query,
+  where,
+  Timestamp,
+  type Unsubscribe,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
 
@@ -562,6 +572,133 @@ function joinMachineDevices(machine: Machine): Machine {
   return { ...machine, devices };
 }
 
+/** Per-site role held on `sites/{siteId}/members/{uid}`. */
+export type SiteRole = 'owner' | 'admin' | 'member';
+
+const SITE_ROLES: readonly string[] = ['owner', 'admin', 'member'];
+
+export interface SiteMemberships {
+  /** siteId -> the caller's role there. Empty until the listener first resolves. */
+  roleMap: Map<string, SiteRole>;
+  loading: boolean;
+  /**
+   * Non-null when the listener was refused or failed.
+   *
+   * Deliberately surfaced rather than swallowed: a permission-denied that
+   * renders as an empty list is indistinguishable from genuinely having no
+   * sites, and "create your first site" shown to a user who has several is the
+   * exact shape of the two access regressions this migration exists to end.
+   */
+  error: string | null;
+}
+
+function roleMapsEqual(a: Map<string, SiteRole>, b: Map<string, SiteRole>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
+/**
+ * The caller's site memberships, live.
+ *
+ * ONE `collectionGroup` listener replaces walking `users/{uid}.sites[]` and
+ * reading each site document to discover standing. The query filters on the
+ * `uid` FIELD, not the document id, because that is the term Firestore can prove
+ * against the rules — see the recursive members block in `firestore.rules`, which
+ * is also what makes a collection-group query legal at all.
+ *
+ * No composite index is needed: a single-field equality is covered by automatic
+ * single-field indexing at collection-group scope. Role is filtered in memory,
+ * over tens of documents.
+ */
+export function useSiteMemberships(userId?: string): SiteMemberships {
+  const [roleMap, setRoleMap] = useState<Map<string, SiteRole>>(() => new Map());
+  // `db` is a module constant, so its absence is knowable at first render.
+  const [loading, setLoading] = useState(Boolean(db));
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase not configured');
+  const [subscribedUid, setSubscribedUid] = useState<string | undefined>(userId);
+
+  // Reset during render, not in the effect: React's documented way to adjust
+  // state when a prop changes, and it avoids the cascading render an effect-body
+  // setState causes. It also fixes what a reset-in-effect would miss — on sign-out
+  // `userId` goes undefined and the effect returns early, so without this the map
+  // would keep publishing the previous user's sites.
+  if (subscribedUid !== userId) {
+    setSubscribedUid(userId);
+    setRoleMap(new Map());
+    setLoading(Boolean(db));
+    setError(db ? null : 'Firebase not configured');
+  }
+
+  useEffect(() => {
+    // Nothing to subscribe to; the state above already says so.
+    if (!db) return;
+    // Auth still resolving. `loading` is already true and no listener has
+    // published — publishing an empty map here would read downstream as
+    // "this user has no sites".
+    if (!userId) return;
+
+    const membershipQuery = query(
+      collectionGroup(db, 'members'),
+      where('uid', '==', userId),
+    );
+
+    const unsubscribe = onSnapshot(
+      membershipQuery,
+      (snapshot) => {
+        const next = new Map<string, SiteRole>();
+        snapshot.forEach((memberDoc) => {
+          // sites/{siteId}/members/{uid} — the grandparent is the site.
+          const siteId = memberDoc.ref.parent.parent?.id;
+          if (!siteId) return;
+          const data = memberDoc.data();
+          if (data.status !== 'active') return;
+          if (typeof data.role !== 'string' || !SITE_ROLES.includes(data.role)) return;
+          next.set(siteId, data.role as SiteRole);
+        });
+        setRoleMap((prev) => (roleMapsEqual(prev, next) ? prev : next));
+        setLoading(false);
+      },
+      (err) => {
+        console.error('[membership] collectionGroup listener failed:', err);
+        setError(err.message);
+        setLoading(false);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [userId]);
+
+  return { roleMap, loading, error };
+}
+
+export interface MembershipUnion {
+  /** Site ids from membership and the legacy array, deduplicated and sorted. */
+  sites: string[];
+  /** Sites the legacy array grants but membership does not. Must reach zero. */
+  fallbacks: string[];
+}
+
+/**
+ * Union the membership map with the legacy `users/{uid}.sites[]` for one release.
+ *
+ * Publishing the union means a user whose backfill has not landed keeps working,
+ * and `fallbacks` is the measurement that says when it has: every entry is a site
+ * the legacy field grants and membership does not. Wave 6 strips the legacy field
+ * only once that counter has held at zero — a number, not someone's reading of a
+ * dry-run.
+ *
+ * Pure so it can be tested without a Firestore listener.
+ */
+export function unionMembership(
+  roleMap: Map<string, SiteRole>,
+  legacySites: string[],
+): MembershipUnion {
+  const fallbacks = legacySites.filter((siteId) => !roleMap.has(siteId));
+  const sites = Array.from(new Set([...roleMap.keys(), ...legacySites])).sort();
+  return { sites, fallbacks };
+}
+
 export function useSites(userId?: string, userSites?: string[], isSuperadmin?: boolean) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
@@ -667,7 +804,12 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
             updateStateFromMap();
           },
           (err) => {
+            // Surfaced, not swallowed. A permission-denied here used to render as
+            // "no sites", which is indistinguishable from genuinely having none —
+            // so an access regression looked like an empty account. The other
+            // sites keep their own listeners; this reports the one that failed.
             console.error(`Error fetching site ${siteId}:`, err);
+            setError(`site ${siteId}: ${err.message}`);
             setLoading(false);
           }
         );

@@ -26,6 +26,8 @@ import * as Sentry from '@sentry/nextjs';
 // Type-only: mfaFactors.server.ts is Admin-SDK code that must never reach the
 // client bundle; `import type` is erased at compile time.
 import type { MfaFactorInventory } from '@/lib/mfaFactors.server';
+import { useSiteMemberships, unionMembership, type SiteRole } from '@/hooks/useFirestore';
+import { emitMembershipFallback, emitMembershipListenerError } from '@/lib/membershipMetrics';
 
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
@@ -206,15 +208,28 @@ export function computeIsSuperadmin(role: UserRole | null): boolean {
 }
 
 /**
- * Site-admin for `siteId`? Superadmins pass for every site; admins only for
- * their `userSites[]`. Exported so it's testable without AuthProvider.
+ * Site-admin for `siteId`? Superadmins pass for every site; everyone else needs
+ * an `owner` or `admin` role on that specific site.
+ *
+ * The global role no longer participates beyond superadmin: a global `admin` is
+ * worth nothing on a site it holds no membership for, which is the whole point of
+ * per-site roles. Owners rank above admins and satisfy this too.
+ *
+ * Exported so it's testable without AuthProvider.
  */
 export function computeIsSiteAdmin(
   role: UserRole | null,
-  userSites: string[],
+  roleMap: Map<string, SiteRole>,
   siteId: string
 ): boolean {
-  return role === 'superadmin' || (role === 'admin' && userSites.includes(siteId));
+  if (role === 'superadmin') return true;
+  // A null global role means the user document has not resolved — pre-auth, doc
+  // missing, or the listener errored. Membership alone must not grant off a
+  // half-loaded session, so this stays fail-closed exactly as it was before the
+  // role map replaced `sites[]`.
+  if (role === null) return false;
+  const siteRole = roleMap.get(siteId);
+  return siteRole === 'owner' || siteRole === 'admin';
 }
 
 export interface UserPreferences {
@@ -328,7 +343,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
-  const [userSites, setUserSites] = useState<string[]>([]);
+  // The LEGACY `users/{uid}.sites[]` array. No longer the source of site access —
+  // it is unioned with membership below for one release, and the gap between the
+  // two is what `membership_fallback` counts. Deleted in wave 6.1.
+  const [legacySites, setLegacySites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<MfaFactorInventory>(NO_MFA_FACTORS);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, apiKeyAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
@@ -435,10 +453,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (docSnap.exists()) {
                 const userData = docSnap.data();
                 const rawRole = userData.role;
+                // `'user'` maps onto the same tier as `'member'`. Wave 5.2 rewrites
+                // every non-superadmin global role to `'user'`, and a parser that
+                // returned null for it would strip a live session's role mid-flight
+                // — every site-admin control vanishing from an open tab with no
+                // reload. Accept both spellings before that migration runs, not after.
                 const newRole: UserRole | null =
-                  rawRole === 'member' || rawRole === 'admin' || rawRole === 'superadmin'
+                  rawRole === 'superadmin' || rawRole === 'admin'
                     ? rawRole
-                    : null;
+                    : rawRole === 'member' || rawRole === 'user'
+                      ? 'member'
+                      : null;
                 const newSites: string[] = userData.sites || [];
                 const newRequiresMfa = userData.requiresMfaSetup || false;
                 const newMfaFactors = readMfaFactorsFromDoc(userData);
@@ -447,7 +472,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                 // Identity-preserving setters: avoid re-renders on equal values.
                 setRole(prev => prev === newRole ? prev : newRole);
-                setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
+                setLegacySites(prev => arraysEqual(prev, newSites) ? prev : newSites);
                 setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
                 setMfaFactors(prev =>
                   prev.totp === newMfaFactors.totp && prev.passkeys === newMfaFactors.passkeys
@@ -554,7 +579,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   console.error('listener failed to bootstrap document:', bootstrapError);
                   console.error('Error message:', err?.message);
                   setRole(null);
-                  setUserSites([]);
+                  setLegacySites([]);
                   setLoading(false);
                 }
               }
@@ -562,13 +587,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (error) => {
               console.error('Error listening to user document:', error);
               setRole(null);
-              setUserSites([]);
+              setLegacySites([]);
               setLoading(false);
             }
           );
         } else {
           setRole(null);
-          setUserSites([]);
+          setLegacySites([]);
           setLoading(false);
         }
       } else {
@@ -577,7 +602,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         intentionalSignOutRef.current = false;
         destroySessionCookie();
         setRole(null);
-        setUserSites([]);
+        setLegacySites([]);
         setLoading(false);
         if (involuntary) {
           toast.error('Session Expired', {
@@ -1054,10 +1079,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Per-site membership — THE source of site access from here on. One
+  // collectionGroup listener replaces reading `users/{uid}.sites[]`.
+  const { roleMap, error: membershipError } = useSiteMemberships(user?.uid);
+
+  // A listener that is not running degrades every user to the legacy array. The
+  // union hides that today, so without this it stays silent right up until wave
+  // 6.1 strips the field and it becomes total.
+  useEffect(() => {
+    if (!user?.uid || !membershipError) return;
+    emitMembershipListenerError(user.uid, membershipError);
+  }, [user?.uid, membershipError]);
+
+  // `userSites` is now a PROJECTION, not a second source of truth. The legacy
+  // array is unioned in for exactly one release so a user whose backfill has not
+  // landed keeps working; wave 6.1 drops the union and the projection together.
+  const { sites: userSites, fallbacks } = useMemo(
+    () => unionMembership(roleMap, legacySites),
+    [roleMap, legacySites]
+  );
+
+  // Every site the legacy array grants and membership does not. This counter
+  // holding at zero is what gates wave 6.1 — not a human reading a dry-run.
+  //
+  // SUPERADMINS ARE EXCLUDED, and the counter is unusable without that. They hold
+  // no member rows by design — the backfill deliberately drops their non-owner
+  // `sites[]` entries because they reach every site by global role — so every
+  // stale entry a superadmin carries would report as drift forever and pin the
+  // gate above zero permanently. For them a missing membership is the intended
+  // state, not a gap. `useSites` never reads their `userSites` either; it takes
+  // the superadmin branch and lists every site.
+  useEffect(() => {
+    if (!user?.uid || role === 'superadmin' || fallbacks.length === 0) return;
+    emitMembershipFallback(user.uid, fallbacks);
+  }, [user?.uid, role, fallbacks]);
+
   const isSuperadmin = computeIsSuperadmin(role);
   const isSiteAdmin = useCallback(
-    (siteId: string) => computeIsSiteAdmin(role, userSites, siteId),
-    [role, userSites]
+    (siteId: string) => computeIsSiteAdmin(role, roleMap, siteId),
+    [role, roleMap]
   );
 
   const value = useMemo(() => ({

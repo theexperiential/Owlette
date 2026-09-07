@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { resolveSiteAccess } from '@/lib/sitePolicy.server';
 import {
   type ApiKeyEnvironment,
   type ApiKeyLookup,
@@ -407,30 +408,36 @@ export async function assertActiveUser(
   return userData;
 }
 
+/**
+ * Thin adapter over the decision core in `lib/sitePolicy.server.ts`.
+ *
+ * The decision itself moved to `resolveSiteAccess` in Wave 1 Task 1.2 so one
+ * implementation could serve both wrappers. This function keeps its signature
+ * and its throw behaviour exactly, because five routes call it directly
+ * (device-code authorize ×2, setup/generate-token, agent/generate-installer,
+ * keys/_shared) and much of the suite mocks it. Preserve both when touching
+ * this: the statuses and messages below are asserted across the suite, and
+ * `code: 'user_inactive'` is specifically what lets `authorizedSiteHandler`
+ * answer 403 instead of collapsing to 404.
+ */
 export async function assertUserHasSiteAccess(
   userId: string,
   siteId: string
 ): Promise<{ siteId: string; siteData: Record<string, unknown> | null }> {
-  const db = getAdminDb();
+  const outcome = await resolveSiteAccess(userId, siteId);
 
-  const siteDoc = await db.collection('sites').doc(siteId).get();
-  if (!siteDoc.exists) {
-    throw new ApiAuthError(404, 'Site not found');
+  if (!outcome.ok) {
+    switch (outcome.reason) {
+      case 'site_not_found':
+        throw new ApiAuthError(404, 'Site not found');
+      case 'user_inactive':
+        throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+          code: 'user_inactive',
+        });
+      case 'no_access':
+        throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
+    }
   }
 
-  const siteData = siteDoc.data() || null;
-  const isOwner = siteData?.owner === userId;
-
-  const userDoc = await db.collection('users').doc(userId).get();
-  const userData = userDoc.exists ? userDoc.data() ?? null : null;
-  assertUserDataActive(userData);
-  const isSuperadmin = userData?.role === 'superadmin';
-  const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
-  const isAssigned = assignedSites.includes(siteId);
-
-  if (!isSuperadmin && !isOwner && !isAssigned) {
-    throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
-  }
-
-  return { siteId, siteData };
+  return { siteId, siteData: outcome.facts.siteData };
 }

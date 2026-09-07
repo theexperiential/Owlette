@@ -286,10 +286,13 @@ export type {
 } from './resources/users';
 export type {
   SiteMemberRole,
+  AssignableSiteRole,
   SiteMember,
   AddMemberOptions,
   AddMemberResult,
+  SetMemberRoleResult,
   RemoveMemberResult,
+  TransferOwnershipResult,
 } from './resources/members';
 
 export const VERSION = SDK_VERSION;

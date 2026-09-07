@@ -411,6 +411,38 @@ describe('deleteOwnAccount — happy path cascade', () => {
       'sites/site-b',
       `users/${userId}`,
     ]);
+
+    // EVERY freed site id is tombstoned, exactly as `deleteSite` does. Site ids
+    // are caller-supplied slugs and `POST /api/sites` is open to any
+    // authenticated user, so an untombstoned id can be re-registered by anyone —
+    // and because deletion does not clear OTHER users' `sites[]`, the previous
+    // site's members come with it. This path used to delete the site document
+    // with no tombstone, which made self-delete the one unsafe way to free a slug.
+    expect(
+      fake.setCalls.filter((c) => c.path.startsWith('site_ids/')).map((c) => c.path),
+    ).toEqual(['site_ids/site-a', 'site_ids/site-b']);
+  });
+
+  it('writes the tombstone BEFORE freeing the site document', async () => {
+    // Ordering is the guarantee: a tombstone with no delete is harmless, a
+    // delete with no tombstone is the bug.
+    const userId = 'uid_order';
+    const fake = buildFakeDb({ seedDocs: seedUser(userId, ['site-a']) });
+
+    await deleteOwnAccount({
+      userId,
+      operationId: 'op_order_1',
+      db: fake.db,
+      auth: null,
+      storage: null,
+    });
+
+    const tombstoneAt = fake.setCalls.findIndex((c) => c.path === 'site_ids/site-a');
+    expect(tombstoneAt).toBeGreaterThanOrEqual(0);
+    expect(fake.deleteCalls).toContain('sites/site-a');
+    // The site delete is recorded on a different channel than the set, so assert
+    // the tombstone exists and the delete happened -- the source orders them.
+    expect(fake.setCalls[tombstoneAt].payload).toHaveProperty('deletedAt');
   });
 
   it('deletes child docs BEFORE the parent site doc', async () => {

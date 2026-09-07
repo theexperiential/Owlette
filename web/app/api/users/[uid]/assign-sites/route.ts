@@ -18,7 +18,11 @@ import {
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
-import { applyAuthDeprecations, readAndParseJsonBody } from '../../../_shared';
+import {
+  applyAuthDeprecations,
+  readAndParseJsonBody,
+  requireSiteScopesForBulkMembership,
+} from '../../../_shared';
 import { assignSiteToUser, MAX_SITES_PER_REQUEST } from '@/lib/actions/assignSiteToUser.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
@@ -68,6 +72,12 @@ export const POST = authorizedPlatformHandler<RouteParams>({
           );
         }
 
+        const scopeError = requireSiteScopesForBulkMembership(
+          ctx.auth,
+          siteIds as string[],
+        );
+        if (scopeError) return scopeError;
+
         const result = await assignSiteToUser(
           {
             auditActor: auditActor(ctx),
@@ -112,6 +122,22 @@ export const POST = authorizedPlatformHandler<RouteParams>({
             instance: `/api/users/${uid}/assign-sites`,
             code: 'unknown_site',
             unknownSites: result.unknownSites,
+          });
+        }
+
+        // A membership write was refused mid-batch. Reported rather than
+        // swallowed: sites BEFORE this one were written, so a caller that
+        // saw a bare 500 would not know how far the batch got.
+        if (result.kind === 'assign_failed') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'could not assign site membership',
+            status: 409,
+            detail: `membership write refused for site ${result.siteId} (${result.reason}); sites processed before it were applied`,
+            instance: `/api/users/${uid}/assign-sites`,
+            code: 'assign_failed',
+            siteId: result.siteId,
+            reason: result.reason,
           });
         }
 

@@ -17,6 +17,7 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedMember
 } from './helpers/firestore-mock';
 
 jest.mock('@sentry/nextjs', () => ({
@@ -132,7 +133,10 @@ beforeEach(() => {
   mockResolveAuth.mockResolvedValue(authedSession());
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
+  seedMember(SITE, 'user-1', 'owner');
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.del.mockResolvedValue(undefined);
@@ -144,8 +148,15 @@ beforeEach(() => {
 describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   const USER_DOC = { role: 'superadmin', sites: [SITE] };
 
+  /**
+   * The caller's `users/{uid}` read is PATH-ADDRESSED (`mocks.userDocs`), not
+   * queued. It used to be queued, which made every downstream
+   * `mockResolvedValueOnce` positional against the authorization path — and the
+   * authorization path now reads a membership row too, so any queue built that
+   * way shifts the moment it changes again.
+   */
   function queueUserDoc(): void {
-    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', USER_DOC));
+    mocks.userDocs.set('user-1', USER_DOC);
   }
 
   /**
@@ -763,8 +774,11 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 
   it('202 — member may capture_screenshot (routed to MACHINE_VIEW handler)', async () => {
+    // A plain MEMBER of the site. The standing is the member row; the global
+    // role beside it grants nothing on a site.
+    mocks.userDocs.set('user-1', { role: 'member', sites: [SITE] });
+    seedMember(SITE, 'user-1', 'member');
     mocks.get.mockReset();
-    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));
     mocks.get.mockResolvedValueOnce(docSnapshot('idem', null));
     mocks.get.mockResolvedValueOnce(docSnapshot(MACHINE, { online: true }));
     mocks.get.mockImplementation(() => {
@@ -787,9 +801,15 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
   });
 
   it('403 — member may NOT reboot_machine (MACHINE_EXEC_COMMAND still required)', async () => {
-    // Capability denial happens in the wrapper, so only the actor-load read is consumed.
+    // The caller must be a plain MEMBER here, not the owner: the beforeEach seeds
+    // an OWNER row for `user-1`, and owner carries MACHINE_EXEC_COMMAND, so
+    // leaving it would assert a denial production would not produce.
+    mocks.siteDocs.set(SITE, { owner: 'someone-else' });
+    seedMember(SITE, 'someone-else', 'owner');
+    mocks.userDocs.set('user-1', { role: 'member', sites: [SITE] });
+    seedMember(SITE, 'user-1', 'member');
+    // Capability denial happens in the wrapper, so no route read is consumed.
     mocks.get.mockReset();
-    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));
     mocks.get.mockImplementation(() => {
       throw new Error('unexpected extra firestore read on commands POST');
     });

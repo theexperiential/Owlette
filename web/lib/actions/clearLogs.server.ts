@@ -17,9 +17,9 @@ import type {
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 const FIRESTORE_BATCH_LIMIT = 500;
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_LEVELS = new Set(['debug', 'info', 'warning', 'error', 'critical']);
 
 export interface ClearLogsContext {

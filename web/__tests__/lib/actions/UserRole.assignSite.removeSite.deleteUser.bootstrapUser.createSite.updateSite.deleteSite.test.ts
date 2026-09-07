@@ -83,23 +83,38 @@ class FakeDb {
     const ops: Array<{
       ref: FakeDoc;
       patch: Record<string, unknown>;
-      mode: 'set' | 'update';
+      mode: 'set' | 'update' | 'create' | 'delete';
     }> = [];
     return {
       set: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'set' }),
       update: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'update' }),
+      // create() differs from set(): it FAILS on an existing document. Modelling
+      // that is what lets addMember's owner-overwrite refusal be tested at all.
+      create: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'create' }),
+      delete: (ref: FakeDoc) => ops.push({ ref, patch: {}, mode: 'delete' }),
       commit: async () => {
         for (const op of ops) {
-          if (op.mode !== 'update') continue;
-          const snap = await op.ref.get();
-          if (!snap.exists) {
-            throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+          if (op.mode === 'update') {
+            const snap = await op.ref.get();
+            if (!snap.exists) {
+              throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+            }
+          }
+          if (op.mode === 'create') {
+            const snap = await op.ref.get();
+            if (snap.exists) {
+              const err = new Error('Document already exists') as Error & { code: number };
+              err.code = 6;
+              throw err;
+            }
           }
         }
         for (const op of ops) {
-          if (op.mode === 'set') await op.ref.set(op.patch);
+          if (op.mode === 'set' || op.mode === 'create') await op.ref.set(op.patch);
+          else if (op.mode === 'delete') await op.ref.delete();
           else await op.ref.update(op.patch);
         }
       },
@@ -115,7 +130,9 @@ class FakeDb {
     return callback({
       get: (ref) => ref.get(),
       update: (ref, patch) => ref.update(patch),
-    });
+      set: (ref: FakeDoc, patch: Record<string, unknown>) => ref.set(patch),
+      delete: (ref: FakeDoc) => ref.delete(),
+    } as never);
   }
 
   seed(path: string, data: Record<string, unknown>): void {
@@ -294,7 +311,7 @@ const ctx = {
   auditActor: 'user:admin',
   // `deleteUser` needs the caller for the talon store's audit context; other
   // action cores ignore the extra field.
-  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
+  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, siteRoles: {} },
   endpoint: '/test',
   method: 'POST',
 };
@@ -407,6 +424,15 @@ describe('deleteUser', () => {
   function talonDb(): FakeDb {
     const db = new FakeDb();
     db.seed('users/bob', { role: 'admin', sites: ['site-a'] });
+    // Bob's authority to inherit the talons is his membership on site-a. The
+    // global `admin` above grants nothing on a site.
+    db.seed('sites/site-a/members/bob', {
+      uid: 'bob',
+      role: 'admin',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
     db.seed('sites/site-a/talons/t1', {
       name: 'nightly restart',
       enabled: true,
@@ -658,6 +684,17 @@ describe('site CRUD actions', () => {
     // by owner. The membership assertion is the point — an owner-only write
     // passes every other assertion here.
     expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
+
+    // ...and the NEW shape, in the SAME batch. This was written as a helper in
+    // wave 2 and never actually called, so site creation kept minting owners
+    // with no member document. That makes the wave 3 backfill target MOVE —
+    // every site created after it would need repairing again — and leaves
+    // wave 4's fallback counter unable to reach the zero wave 6 waits on.
+    expect(db.docs.get('sites/site-a/members/owner-1')).toMatchObject({
+      uid: 'owner-1',
+      role: 'owner',
+      status: 'active',
+    });
   });
 
   it('createSite preserves memberships the creator already had', async () => {

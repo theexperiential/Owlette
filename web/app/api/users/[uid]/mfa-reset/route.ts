@@ -97,8 +97,10 @@ export const POST = authorizedPlatformHandler<RouteParams>({
   targetKind: 'user',
   // Audit target = the reset uid, not the platform sentinel.
   targetIdParam: 'uid',
-  // `admin`, not the siblings' `write`: stripping anyone's second factor is
-  // materially more dangerous than changing a role.
+  // `admin`: stripping anyone's second factor is materially more dangerous than
+  // an ordinary role change. (This previously contrasted with "the siblings'
+  // `write`". /promote has since been raised to `admin` as well — it can mint a
+  // superadmin, which is not an ordinary role change.)
   apiKeyScope: { resource: 'user', permission: 'admin' },
 })(async (_request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
   try {

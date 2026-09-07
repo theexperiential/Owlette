@@ -6696,6 +6696,17 @@ paths:
         owned sites to the supplied `successorUid`. Refuses if the user
         owns sites and `successorUid` is not provided (409 `orphan_sites`).
 
+        Each transfer runs as one transaction and the delete FAILS CLOSED: if any
+        site cannot be handed over, the request answers 409 `transfer_failed` and
+        the account is left completely untouched — no key revoked, no soft-delete
+        stamped. Sites that moved before the failure are reported in
+        `transferredSites`; they are not rolled back and do not need to be, since
+        a re-issued delete re-queries owned sites and skips them. A retry needs a
+        NEW `Idempotency-Key`.
+
+        Refuses with 409 `last_superadmin` if this would leave the deployment
+        below its floor of one active superadmin.
+
         Talons the user authored are reported as `authoredTalonCount` on every
         successful delete — an unattended talon run resolves its AUTHOR's site
         access, so deleting the author stops it. They are only moved when
@@ -6769,7 +6780,7 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
-        '409': { description: Orphan sites (provide successorUid) }
+        '409': { description: Orphan sites (provide successorUid), transfer_failed, or last_superadmin }
 
   /api/users/{uid}/talons:
     parameters:
@@ -6839,8 +6850,13 @@ paths:
       tags: [Users]
       summary: promote a user to admin or superadmin
       description: |
-        Atomic role update via Firestore transaction. Requires `user=*:write`
+        Atomic role update via Firestore transaction. Requires `user=*:admin`
         scope or session/id-token from a superadmin user.
+
+        `user=*:admin`, not the `user=*:write` its demote sibling takes: this
+        route can grant `superadmin`, which confers every capability on every
+        site. A key narrowed to `write` must not be able to mint a principal
+        stronger than itself.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -7081,6 +7097,62 @@ paths:
         '403': { description: Forbidden (not site admin) }
         '404': { description: User or site not found }
 
+  /api/sites/{siteId}/transfer-ownership:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Site Members]
+      summary: transfer site ownership to another user
+      description: |
+        Moves ownership of a site to `successorUid` in a single Firestore
+        transaction, writing the new `sites/{siteId}/members/{uid}` role and the
+        legacy `sites/{siteId}.owner` field together.
+
+        **Only the current owner or a superadmin may transfer.** A site admin is
+        admitted by the route's capability gate and then refused by the
+        transaction with `403 not_owner`: administering a site and owning it are
+        different things, the same line `SITE_DELETE` draws. The ownership check
+        is made from the site document read INSIDE the transaction, so a transfer
+        racing another transfer is serialised rather than interleaved — the
+        loser re-reads, finds the owner changed, and is refused.
+
+        The successor need not already be a member; they are made one by the same
+        transaction. The outgoing owner is demoted to `admin` and KEEPS their
+        membership — handing a site over is not eviction. Transferring to the
+        current owner is `409 successor_already_owner` rather than a silent no-op.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from the site's
+        owner (or a superadmin).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [successorUid]
+              properties:
+                successorUid:
+                  type: string
+                  description: uid receiving ownership
+      responses:
+        '200': { description: Ownership transferred }
+        '400': { description: Validation failure, or successor is soft-deleted }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (caller is not the owner or a superadmin) }
+        '404': { description: Site or successor not found }
+        '409': { description: Successor already owns the site, or the site records no owner }
+
   /api/sites/{siteId}/members/{uid}:
     parameters:
       - name: siteId
@@ -7095,6 +7167,45 @@ paths:
         in: header
         required: false
         schema: { type: string }
+    patch:
+      tags: [Site Members]
+      summary: change a member's per-site role
+      description: |
+        Sets the member's role on THIS site only, leaving their global role
+        untouched. Before this endpoint existed there was no per-site role to
+        change — it was derived from the global role at read time, so making
+        someone an admin on one site meant promoting them globally, on every
+        site they belong to. That is the leak per-site roles close.
+
+        `owner` is not assignable here. Ownership moves only through
+        `POST /api/sites/{siteId}/transfer-ownership`, and the owner is refused
+        as a target as well, so an admin can neither promote themselves into
+        ownership (`400`) nor demote the owner out of it
+        (`409 cannot_change_owner_role`). Both are enforced inside the
+        transaction that performs the write.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an admin
+        of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, member] }
+      responses:
+        '200': { description: Role changed }
+        '400': { description: Validation failure (including role=owner) }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: User is not a member of this site }
+        '409': { description: Target is the site owner }
     delete:
       tags: [Site Members]
       summary: remove a member from a site
