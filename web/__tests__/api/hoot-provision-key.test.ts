@@ -120,7 +120,10 @@ function soleAudit() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockRequireSession.mockResolvedValue('user-1');
-  mockVerifyAccess.mockResolvedValue({ role: 'admin' });
+  // `siteRole` is what grants since the per-site-roles migration; the global
+  // `role` beside it confers nothing on a site. The route requires
+  // MACHINE_EXEC_COMMAND, which the `admin` membership carries.
+  mockVerifyAccess.mockResolvedValue({ role: 'admin', siteRole: 'admin' });
   mockPendingSet.mockResolvedValue(undefined);
   mockCompletedUpdate.mockResolvedValue(undefined);
   completedDoc = {};
@@ -176,6 +179,20 @@ describe('POST /api/hoot/provision-key — audit', () => {
     expect(mockPendingSet).not.toHaveBeenCalled();
     expect(emitMutation).not.toHaveBeenCalled();
   });
+
+  it('refuses a read-only MEMBER of the site, and queues nothing', async () => {
+    // The reason this route needed a capability at all. `commands/pending` is
+    // reserved by firestore.rules to the service account and the machine's own
+    // agent, so this route IS the boundary — and with only a membership check a
+    // read-only member could make any machine overwrite its stored LLM credential.
+    mockVerifyAccess.mockResolvedValue({ role: 'member', siteRole: 'member' });
+
+    const res = await POST(request());
+    expect(res.status).toBe(403);
+    expect(mockPendingSet).not.toHaveBeenCalled();
+    expect(emitMutation).not.toHaveBeenCalled();
+  });
+
 
   it('emits nothing when required fields are missing', async () => {
     const res = await POST(request({ apiKey: undefined }));

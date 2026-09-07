@@ -1,8 +1,9 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.10.0 - site access resolves from `sites/{siteId}/members/{uid}`; the legacy
-//                   `sites/{siteId}.owner` and `users/{uid}.sites[]` fields are no longer read
+// Version: 2.11.0 - webhook documents are site-admin read (they can still carry a legacy
+//                   in-document signing secret); 2.10.0 moved site access onto
+//                   `sites/{siteId}/members/{uid}`
 // Last Updated: 2026-09-06
 //
 // Security Model:
@@ -527,11 +528,23 @@ service cloud.firestore {
       // ----------------------------------------
 
       match /webhooks/{webhookId} {
-        // Webhook notification endpoints — url, events, counters and rotation
-        // METADATA only. The signing secret is NOT here; see webhook_secrets below.
-        // READ: any user with site access (superadmins fall through via canAccessSite)
-        // WRITE: trusted server APIs only
-        allow read: if canAccessSite(siteId);
+        // Webhook notification endpoints — url, events, counters and rotation.
+        //
+        // READ is SITE-ADMIN, not site access. The comment here used to say the
+        // signing secret was never in this document, and the code says otherwise:
+        // `webhookSender.server.ts` still falls back to an in-document `secret` /
+        // `signingSecret` for subscriptions predating the move to
+        // `webhook_secrets`, and dev still holds two such documents because that
+        // migration never ran. A plain member reading one gets the HMAC key and
+        // can forge deliveries the customer's receiver validates as authentic —
+        // and keeps that key after being removed from the site.
+        //
+        // Site-admin costs nothing here: webhooks are authored under
+        // WEBHOOK_MANAGE, which is site-admin, and the only client that reads
+        // them is the admin webhooks page. This closes the exposure whether or
+        // not the secret migration has run, which a data fix alone cannot.
+        // WRITE: trusted server APIs only.
+        allow read: if isSiteAdmin(siteId);
         allow write: if isServiceAccount();
       }
 

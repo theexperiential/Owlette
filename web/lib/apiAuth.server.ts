@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { resolveSiteAccess } from '@/lib/sitePolicy.server';
+import { type Actor, type Capability, hasCapability } from '@/lib/capabilities';
 import {
   type ApiKeyEnvironment,
   type ApiKeyLookup,
@@ -440,4 +441,35 @@ export async function assertUserHasSiteAccess(
   }
 
   return { siteId, siteData: outcome.facts.siteData };
+}
+
+/**
+ * Site access AND a capability, for routes outside the `authorizedSiteHandler`
+ * stack that still need a role check.
+ *
+ * `assertUserHasSiteAccess` alone stopped being sufficient when the per-site-roles
+ * migration made `member` read-only: every route gating on bare membership
+ * silently became a grant to a read-only tier. Reuses the same decision core and
+ * the same capability matrix as the wrappers, so there is one answer to
+ * "may this user do this here", not two.
+ */
+export async function assertUserHasSiteCapability(
+  userId: string,
+  siteId: string,
+  capability: Capability,
+): Promise<{ siteId: string; siteData: Record<string, unknown> | null }> {
+  const result = await assertUserHasSiteAccess(userId, siteId);
+  const outcome = await resolveSiteAccess(userId, siteId);
+  const actor: Actor = {
+    type: 'user',
+    userId,
+    role: outcome.facts.globalRole,
+    siteRoles: outcome.facts.membershipRole
+      ? { [siteId]: outcome.facts.membershipRole }
+      : {},
+  };
+  if (!hasCapability(actor, capability, siteId)) {
+    throw new ApiAuthError(403, 'Forbidden: capability not granted');
+  }
+  return result;
 }

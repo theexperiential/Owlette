@@ -52,6 +52,11 @@ jest.mock('@/lib/apiAuth.server', () => {
     requireSession: (...args: unknown[]) => mockRequireSession(...args),
     assertUserHasSiteAccess: (...args: unknown[]) =>
       mockAssertUserHasSiteAccess(...args),
+    // The route requires MACHINE_ENROLL now, not bare membership: authorising a
+    // pairing phrase mints an agent identity plus a never-expiring refresh
+    // token, and revoking one is site-admin.
+    assertUserHasSiteCapability: (...args: unknown[]) =>
+      mockAssertUserHasSiteAccess(...args),
     ApiAuthError: _ApiAuthError,
   };
 });
