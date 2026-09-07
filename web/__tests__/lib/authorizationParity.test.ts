@@ -17,18 +17,17 @@
  * and the siteId validation all run for real — mocking those would pin the
  * mock rather than the system, and they are exactly where the drift lives.
  *
- * The two divergences this must keep honest, both asserted below:
- *   1. DELETED USER   — path A answers 403 `user_inactive`; path B collapses
- *                       it into the generic 404 "site not found or no access".
- *   2. MALFORMED ID   — path B validates the siteId shape up front and answers
- *                       400; path A has no such check, so the lookup misses and
- *                       it answers 404.
+ * Both divergences this file was written to pin are now CLOSED by Wave 1 task
+ * 1.3, and the blocks below record what they were:
+ *   1. DELETED USER   — path A answered 403 `user_inactive`, path B collapsed it
+ *                       into 404. Both answer 403.
+ *   2. MALFORMED ID   — path B answered 400, path A had no shape check and
+ *                       answered 404 (or 503 for ids the SDK rejects outright).
+ *                       Both answer 400, and both authenticate first.
  *
- * When Wave 1 Task 1.3 unifies these (400 everywhere for malformed, 403
- * everywhere for inactive), the DIVERGENCE tests below are expected to fail —
- * that is the signal to update them to the new single contract, in the same
- * commit, with the old expectation recorded in the task log. Do not delete a
- * divergence test to make a refactor green.
+ * They were rewritten rather than deleted, which is the rule: a divergence test
+ * that stops holding is evidence the contract moved, and the new contract needs
+ * pinning in its place.
  */
 
 import type { NextRequest } from 'next/server';
@@ -352,48 +351,89 @@ describe('authorization parity — api-key scope', () => {
   });
 });
 
-describe('DIVERGENCE 1 — deleted user', () => {
+describe('CONVERGENCE 1 — an inactive caller is 403 on BOTH paths', () => {
+  // WAS A DIVERGENCE until Wave 1 task 1.3. Path A answered 403 user_inactive;
+  // path B collapsed it into the generic 404 "site not found or no access".
+  // Both now answer 403.
+  //
+  // The masking exists to stop a stranger enumerating sites. It has no job to do
+  // once the caller has authenticated and it is their OWN account that is gone —
+  // a 404 there sends them hunting for a missing site instead of a disabled
+  // login. Note this covers a MISSING user document as well as a soft-deleted
+  // one, so an api key whose owner was hard-deleted also moved 404 -> 403.
   beforeEach(() => {
     store.users.set(ALICE, { role: 'admin', sites: [SITE], deletedAt: Date.now() });
   });
 
-  it('path A (authorizedSiteHandler) answers 403 user_inactive', async () => {
-    const a = await runPathA(SITE);
-    expect(a.status).toBe(403);
-    expect(String(a.body.detail ?? a.body.title)).toMatch(/deleted or inactive|forbidden/i);
+  it('path A answers 403', async () => {
+    expect((await runPathA(SITE)).status).toBe(403);
   });
 
-  it('path B (_shared) collapses the same state into 404', async () => {
-    const b = await runPathB(SITE);
-    expect(b.status).toBe(404);
-    expect(String(b.body.detail)).toBe('site not found or no access');
+  it('path B answers 403 too', async () => {
+    expect((await runPathB(SITE)).status).toBe(403);
   });
 
-  it('the two paths disagree — this is the drift Wave 1 Task 1.3 removes', async () => {
+  it('the two paths now AGREE', async () => {
     const a = await runPathA(SITE);
     const b = await runPathB(SITE);
-    expect(a.status).not.toBe(b.status);
+    expect(a.status).toBe(b.status);
+  });
+
+  it('still masks a genuine no-access caller as 404 on both', async () => {
+    // The distinction that matters: inactive is disclosed (403), non-membership
+    // is not (404). Without this, "unify on 403" could quietly disclose site
+    // existence to anyone who asks.
+    store.users.set(ALICE, { role: 'member', sites: [] });
+    store.sites.set(SITE, { owner: 'someone_else' });
+    expect((await runPathA(SITE)).status).toBe(404);
+    expect((await runPathB(SITE)).status).toBe(404);
   });
 });
 
-describe('DIVERGENCE 2 — malformed siteId', () => {
+describe('CONVERGENCE 2 — a malformed siteId is 400 on BOTH paths', () => {
   const MALFORMED = 'not a valid site id!';
 
-  it('path B (_shared) validates the shape up front and answers 400', async () => {
+  // WAS A DIVERGENCE until Wave 1 task 1.3. Path B validated the shape and
+  // answered 400; path A had no check, so the raw value went to Firestore, the
+  // read simply MISSED, and the caller got 404 for input that was never a valid
+  // id. Worse, for ids the SDK rejects client-side (containing '/', or the
+  // reserved __.*__ form) the read THREW and path A answered 503 — three
+  // different answers for one class of bad input.
+  it('path A answers 400', async () => {
+    const a = await runPathA(MALFORMED);
+    expect(a.status).toBe(400);
+    expect(String(a.body.detail)).toBe('invalid siteId format');
+  });
+
+  it('path B answers 400', async () => {
     const b = await runPathB(MALFORMED);
     expect(b.status).toBe(400);
     expect(String(b.body.detail)).toBe('invalid siteId format');
   });
 
-  it('path A (authorizedSiteHandler) has no shape check, so it 404s on the miss', async () => {
-    const a = await runPathA(MALFORMED);
-    expect(a.status).toBe(404);
-  });
-
-  it('the two paths disagree — this is the drift Wave 1 Task 1.3 removes', async () => {
+  it('the two paths now AGREE', async () => {
     const a = await runPathA(MALFORMED);
     const b = await runPathB(MALFORMED);
-    expect(a.status).not.toBe(b.status);
+    expect(a.status).toBe(b.status);
+    expect(withoutRequestId(a.body)).toEqual(withoutRequestId(b.body));
+  });
+
+  it('an id the Firestore SDK rejects outright is ALSO 400, not 503', async () => {
+    // Path A used to hand this straight to the SDK, which throws client-side on
+    // a '/' in a document id; the wrapper caught it and answered 503 — a server
+    // error for input the caller supplied, and it short-circuited before any
+    // audit row was written.
+    expect((await runPathA('has/slash')).status).toBe(400);
+    expect((await runPathB('has/slash')).status).toBe(400);
+  });
+
+  it('UNAUTHENTICATED callers get 401 on both, not 400 — auth outranks shape', async () => {
+    // Path B validated BEFORE resolving auth, so a stranger could learn whether
+    // an id was well-formed without proving anything. Both now authenticate
+    // first and reveal nothing.
+    resolveAuthThrows = { status: 401, message: 'no session' };
+    expect((await runPathA(MALFORMED)).status).toBe(401);
+    expect((await runPathB(MALFORMED)).status).toBe(401);
   });
 });
 

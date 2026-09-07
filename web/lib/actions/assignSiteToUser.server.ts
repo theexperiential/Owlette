@@ -14,9 +14,9 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { addMember } from '@/lib/membership.server';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 export const MAX_SITES_PER_REQUEST = 100;
-const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface AssignSiteToUserInput {
   uid: string;
@@ -58,7 +58,7 @@ export async function assignSiteToUser(
     };
   }
   const malformed = input.siteIds.filter(
-    (s) => typeof s !== 'string' || !SITE_ID_REGEX.test(s as string),
+    (s) => typeof s !== 'string' || !SITE_ID_RE.test(s as string),
   );
   if (malformed.length > 0) {
     return { kind: 'invalid_format', malformed: malformed as string[] };

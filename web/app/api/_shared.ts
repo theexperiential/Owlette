@@ -34,12 +34,12 @@ import {
 } from '@/lib/capabilities';
 import { checkRoostVersion } from '@/lib/versionHeader';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 export const MAX_HASHES_PER_REQUEST = 1000;
 
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const RESOURCE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 // legacy helpers, for routes still on requireAdminOrIdToken
 
@@ -109,6 +109,18 @@ export async function requireSiteScope(
     return null;
   } catch (err) {
     if (err instanceof ApiAuthError) {
+      // An INACTIVE caller is 403, not the collapsed 404 (Wave 1 task 1.3).
+      // Masking exists to stop a stranger enumerating sites; it has no job to do
+      // when the caller has authenticated and it is their OWN account that is
+      // gone. Telling them 404 sends them hunting for a missing site instead of
+      // a disabled login. `authorizedSiteHandler` has always answered 403 here;
+      // both paths now agree.
+      //
+      // NOTE this fires for a MISSING user document as well as a soft-deleted
+      // one, so an api key whose owner was hard-deleted also moves 404 -> 403.
+      if (err.code === 'user_inactive') {
+        return problemForbidden(err.message);
+      }
       if (err.status === 404 || err.status === 403) {
         return problemNotFound('site not found or no access');
       }
@@ -382,6 +394,17 @@ async function assertSiteAccessOrProblem(
     return null;
   } catch (err) {
     if (err instanceof ApiAuthError) {
+      // An INACTIVE caller is 403, not the collapsed 404 (Wave 1 task 1.3).
+      // Masking exists to stop a stranger enumerating sites; it has no job to
+      // do once the caller has authenticated and it is their OWN account that
+      // is gone. A 404 sends them hunting for a missing site instead of a
+      // disabled login. `authorizedSiteHandler` has always answered 403 here.
+      //
+      // NOTE this fires for a MISSING user document as well as a soft-deleted
+      // one, so an api key whose owner was hard-deleted also moves 404 -> 403.
+      if (err.code === 'user_inactive') {
+        return problemForbidden(err.message);
+      }
       if (err.status === 404 || err.status === 403) {
         return problemNotFound('site not found or no access');
       }
@@ -396,6 +419,16 @@ export async function requireSiteAuthAndScope(
   siteId: string,
   permission: ApiKeyPermission,
 ): Promise<ScopedAuthResult> {
+  const versionCheck = checkRoostVersion(req);
+  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
+
+  const authResult = await resolveAuthOrProblem(req);
+  if (!authResult.ok) return authResult;
+
+  // AFTER auth (Wave 1 task 1.3). This ran first, so an unauthenticated caller
+  // could learn whether a site id was well-formed before proving anything;
+  // authenticating first refuses them at 401 and reveals nothing. It also makes
+  // both gates answer identically, which is the point of the task.
   if (!SITE_ID_RE.test(siteId)) {
     return {
       ok: false,
@@ -404,12 +437,6 @@ export async function requireSiteAuthAndScope(
       }),
     };
   }
-
-  const versionCheck = checkRoostVersion(req);
-  if (!versionCheck.ok) return { ok: false, response: versionCheck.response };
-
-  const authResult = await resolveAuthOrProblem(req);
-  if (!authResult.ok) return authResult;
 
   const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
   if (accessError) return { ok: false, response: accessError };

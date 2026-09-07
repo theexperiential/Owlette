@@ -18,6 +18,20 @@ import type { NextRequest } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import type { Role } from '@/lib/capabilities';
 
+/**
+ * The site-id ACCEPTANCE rule: could this string be an id we minted?
+ *
+ * Distinct from `validateSiteId` in lib/validators.ts, which is the CREATION
+ * rule (3-50 chars, lowercase-leading, reserved words). The two answer different
+ * questions, and using the creation rule at the gate would permanently lock a
+ * tenant out of any site whose id predates it — the repo's own fixtures contain
+ * ids like `s1` and `x` that the creation rule rejects.
+ *
+ * Lives here, beside the decision core, because every gate needs it and it was
+ * previously copy-pasted into seven modules.
+ */
+export const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
 export type MembershipRole = 'owner' | 'member' | null;
 
 /** Why a principal was refused. Callers map these to status codes. */

@@ -12,9 +12,9 @@ import { emitMutation } from '@/lib/auditLogClient';
 import { removeMember } from '@/lib/membership.server';
 import { cancelUserCommandsOnSites } from '@/lib/userDeleteCascade.server';
 import logger from '@/lib/logger';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 export const MAX_SITES_PER_REQUEST = 100;
-const SITE_ID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface RemoveSiteFromUserInput {
   uid: string;
@@ -59,7 +59,7 @@ export async function removeSiteFromUser(
     };
   }
   const malformed = input.siteIds.filter(
-    (s) => typeof s !== 'string' || !SITE_ID_REGEX.test(s as string),
+    (s) => typeof s !== 'string' || !SITE_ID_RE.test(s as string),
   );
   if (malformed.length > 0) {
     return { kind: 'invalid_format', malformed: malformed as string[] };

@@ -35,6 +35,7 @@ import {
 import { checkRoostVersion } from '@/lib/versionHeader';
 import {
   resolveSiteAccess,
+  SITE_ID_RE,
   type SiteAccessOutcome,
 } from '@/lib/sitePolicy.server';
 import {
@@ -45,6 +46,7 @@ import {
   problemScopeInsufficient,
   problemTokenExpired,
   problemUnauthorized,
+  problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
 import {
@@ -446,6 +448,23 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         options.siteIdParam,
         routeParamsPromise,
       );
+      // SHAPE, not just presence (Wave 1 task 1.3). Without this the raw value
+      // went straight to Firestore: a non-site-shaped id simply MISSED, so the
+      // caller got 404 "site not found or no access" for input that was never a
+      // valid id — and for ids the SDK rejects client-side (containing '/', or
+      // the reserved __.*__ form) the read THREW and the wrapper answered 503.
+      // Three different answers for one class of bad input. `_shared` has always
+      // answered 400; both paths now do.
+      //
+      // Placed after auth on purpose. `_shared` validates first, so an
+      // unauthenticated caller learns whether an id is well-formed before
+      // proving anything; this order refuses them at 401 instead, and `_shared`
+      // is moved to match.
+      if (resolvedSiteId && !SITE_ID_RE.test(resolvedSiteId)) {
+        return problemValidation('invalid siteId format', {
+          siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+        });
+      }
       if (!resolvedSiteId) {
         return problem({
           type: ProblemType.ValidationFailed,
