@@ -208,6 +208,8 @@ async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
     });
   }
   const rawRole = data?.role;
+  // `'user'` and every other value fall to the same tier as `'member'` — see
+  // normaliseRole in lib/sitePolicy.server.ts for why that matters.
   const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
   // No site is in scope on this path, so no per-site standing is resolved and
   // every site-scoped capability denies. Platform routes are the only callers.

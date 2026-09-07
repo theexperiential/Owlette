@@ -609,6 +609,8 @@ async function loadSuccessorActor(
   // Soft-deleted accounts keep their user doc, so `deletedAt` is the liveness test.
   if (data.deletedAt != null) return { ok: false, reason: 'soft_deleted' };
 
+  // `'user'` and anything unrecognised are the `member` tier — no global
+  // privilege. Standing on the site comes from the membership row below.
   const role = data.role === 'admin' || data.role === 'superadmin' ? data.role : 'member';
 
   const memberData = memberSnapshot.exists ? memberSnapshot.data() : undefined;

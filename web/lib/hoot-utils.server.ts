@@ -138,6 +138,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeActorRole(role: string | null | undefined): Role {
+  // Unknown values, `'user'` included, are the same tier as `'member'`: no
+  // global privilege. See normaliseRole in lib/sitePolicy.server.ts.
   return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'member';
 }
 

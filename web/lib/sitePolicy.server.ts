@@ -84,6 +84,15 @@ export interface AgentPrincipal {
   machineId: string;
 }
 
+/**
+ * Parse a stored global role.
+ *
+ * `'user'` is accepted alongside `'member'`: wave 5.2 rewrites every
+ * non-superadmin value to `'user'`, and a parser that rejected it would drop
+ * those accounts to a null/unknown role the moment the migration ran. Both
+ * spellings mean the same tier — no global privilege — so accepting both is what
+ * makes the rewrite a no-op for a live session rather than a mass demotion.
+ */
 function normaliseRole(raw: unknown): Role {
   return raw === 'superadmin' || raw === 'admin' ? raw : 'member';
 }
