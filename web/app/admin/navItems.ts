@@ -96,10 +96,20 @@ const NAV_ITEMS: AdminNavItem[] = [
   },
 ];
 
-/** Superadmins see the whole panel; admins only the site-scoped destinations. */
-export function visibleNavItems(role: UserRole | null): AdminNavItem[] {
+/**
+ * Superadmins see the whole panel; anyone who administers a site sees the
+ * site-scoped destinations.
+ *
+ * `administersAnySite` replaces the old `role === 'admin'` test: since wave 5.1
+ * the global role grants nothing on a site, so it no longer predicts whether
+ * these destinations will work for the user.
+ */
+export function visibleNavItems(
+  role: UserRole | null,
+  administersAnySite: boolean
+): AdminNavItem[] {
   if (role === 'superadmin') return NAV_ITEMS;
-  if (role === 'admin') return NAV_ITEMS.filter((item) => item.minRole === 'admin');
+  if (administersAnySite) return NAV_ITEMS.filter((item) => item.minRole === 'admin');
   return [];
 }
 

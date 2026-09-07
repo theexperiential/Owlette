@@ -25,7 +25,7 @@ const SIDEBAR_COMPACT_BELOW_W = 232;
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { role } = useAuth();
+  const { role, administersAnySite } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Explicit user control, not the old viewport-driven auto-collapse, so width is
@@ -69,7 +69,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // narrow-but-expanded drops descriptions so names keep their room (lg+ only)
   const compactNav = !collapsed && sidebarWidth < SIDEBAR_COMPACT_BELOW_W;
 
-  const navItems = visibleNavItems(role);
+  const navItems = visibleNavItems(role, administersAnySite);
   const requiredRole = requiredRoleForPath(pathname);
 
   // Lazy initializer, not an effect: the first render needs the right back-target
