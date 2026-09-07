@@ -114,8 +114,14 @@ export async function seedUser(user: TestUser): Promise<void> {
   });
 
   // One writer, not two: the user document above no longer carries membership.
+  //
+  // The GLOBAL role is mirrored onto each of the fixture's sites, because that is
+  // what it used to confer there — the `admin` fixture was a site admin on site-A,
+  // and 61 of 81 spec files depend on it staying one. Superadmins get no row,
+  // matching production: they reach every site by global role and hold none.
   for (const siteId of user.sites) {
-    await grantMembership(siteId, user.uid, 'member');
+    if (user.role === 'superadmin') continue;
+    await grantMembership(siteId, user.uid, user.role === 'admin' ? 'admin' : 'member');
   }
 }
 
@@ -124,16 +130,16 @@ export type SeedMemberRole = 'owner' | 'admin' | 'member';
 
 /**
  * THE seeding entry point for site membership. Every fixture that needs a user
- * on a site goes through here — nothing should write `users/{uid}.sites[]` or
- * `sites/{siteId}.owner` directly any more.
+ * on a site goes through here — nothing writes `users/{uid}.sites[]` or
+ * `sites/{siteId}.owner` directly.
  *
- * Today it writes exactly the two legacy fields it always did, so fixtures
- * behave identically. The point is the seam: when wave 3 starts backfilling
- * `sites/{siteId}/members/{uid}`, seeds gain it here, once, instead of in every
- * spec that happens to seed a user.
+ * `sites/{siteId}/members/{uid}` is what GRANTS access, as of wave 5.1: both the
+ * rules and the server matrix resolve from it, and neither reads the legacy
+ * fields any more. Those are still written because wave 6.1 has not stripped
+ * them yet and the client still unions them in — but they confer nothing, so a
+ * fixture seeded without a member row is simply denied.
  *
- * `owner` writes the site's owner pointer as well as the membership, because
- * that is what ownership means in the legacy shape.
+ * That the seam existed is why this is one edit instead of one per spec file.
  */
 export async function grantMembership(
   siteId: string,
@@ -148,6 +154,35 @@ export async function grantMembership(
   if (role === 'owner') {
     await db.collection('sites').doc(siteId).set({ owner: uid }, { merge: true });
   }
+  await seedMemberRow(siteId, uid, role);
+}
+
+/**
+ * Write ONLY `sites/{siteId}/members/{uid}` — no user document, no `sites[]`.
+ *
+ * Split out of `grantMembership` for two callers that must not mint a user doc:
+ * `seedSite`, whose TEST_SITES owners are deliberately not real users, and the
+ * api specs that seed a site inline. Since wave 5.1 this row is what GRANTS, so
+ * a site seeded without one is unreadable even by the uid its `owner` field
+ * names — which is exactly how the owner-delete spec started failing.
+ */
+export async function seedMemberRow(
+  siteId: string,
+  uid: string,
+  role: SeedMemberRole = 'member',
+): Promise<void> {
+  await getAdminDb()
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .set({
+      uid,
+      role,
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:e2e-seed',
+    });
 }
 
 export interface TestSite {
@@ -175,6 +210,41 @@ export async function seedSite(site: TestSite): Promise<void> {
     timezone: site.timezone ?? 'UTC',
     createdAt: new Date(),
   });
+  // Ownership is a member row since wave 5.1; the `owner` field above grants
+  // nothing. Written through `seedMemberRow` rather than `grantMembership` so a
+  // non-user owner like 'someone-else' still gets no phantom user document.
+  await seedMemberRow(site.id, site.owner, 'owner');
+}
+
+/**
+ * Undo a spec's temporary site grant. Call it from `afterAll` in any spec that
+ * seeds a site of its own onto a shared fixture.
+ *
+ * Leaving the grant behind makes site auto-selection prefer the spec's site over
+ * `site-A` for every LATER spec, whose own seeds then never render — the suite
+ * runs `workers: 1`, so this is ordinary sequential contamination, and it cost 9
+ * co-run specs on 2026-08-12.
+ *
+ * It matters more since wave 5.1. Before it, a leftover site was invisible
+ * anyway: the fixture held no member row, so the client listener was denied and
+ * the site never entered the switcher. Now that specs seed the row that grants,
+ * the leftover site is fully visible and the hazard is live again.
+ */
+export async function releaseFixtureSite(siteId: string, uid = 'admin-uid'): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .update({ sites: FieldValue.arrayRemove(siteId) })
+    .catch(() => undefined);
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .delete()
+    .catch(() => undefined);
+  await db.collection('sites').doc(siteId).delete().catch(() => undefined);
 }
 
 /** The canonical baseline: three users + two sites. Called by global-setup. */

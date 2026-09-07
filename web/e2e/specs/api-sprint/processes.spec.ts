@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
 import { mintApiKey, revokeApiKey, authHeaders, type MintedApiKey } from '../../helpers/apiKey';
 import { getAdminDb } from '../../helpers/emulator';
-import { seedMachine } from '../../helpers/seed';
+import { seedMachine, seedMemberRow, releaseFixtureSite } from '../../helpers/seed';
 
 const SUFFIX = crypto.randomBytes(4).toString('hex');
 const SITE_ID = `e2e-proc-${SUFFIX}`;
@@ -51,6 +51,9 @@ test.beforeAll(async () => {
     .collection('users')
     .doc('admin-uid')
     .update({ sites: [...new Set(['site-A', SITE_ID])] });
+  // Ownership is a member row since wave 5.1; the `owner` field above grants
+  // nothing, so without this the api key cannot reach its own site.
+  await seedMemberRow(SITE_ID, 'admin-uid', 'owner');
 
   await seedMachine(SITE_ID, MACHINE_ID);
 
@@ -65,6 +68,7 @@ test.afterAll(async () => {
   if (writeKey) await revokeApiKey(writeKey);
   await clearProcessConfig();
   await clearMachineCommands();
+  await releaseFixtureSite(SITE_ID);
 });
 
 test.beforeEach(async () => {

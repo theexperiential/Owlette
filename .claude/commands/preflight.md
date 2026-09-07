@@ -32,7 +32,7 @@ cd web && npm test
 ```
 
 ### Step 4: Firestore rules tests (conditional)
-Run these when the pending changes touch `firestore.rules` or `web/__tests__/rules/**` — they are the only regression gate on the security rules (97 tests: denials 46, wave-hardening 32, baseline 19). CI runs them too, as the `firestore rules tests` job in `.github/workflows/e2e.yml`.
+Run these when the pending changes touch `firestore.rules` or `web/__tests__/rules/**` — they are the only regression gate on the security rules (115 tests across four files: baseline, denials, wave-hardening, and membership — the last covering per-site roles and the collectionGroup read path). CI runs them too, as the `firestore rules tests` job in `.github/workflows/e2e.yml`.
 ```bash
 cd web && npm run test:rules
 ```
