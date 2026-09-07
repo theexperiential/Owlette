@@ -6,6 +6,8 @@ on:
       - 'web/**'
       - 'functions/**'
       - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'storage.rules'
       - 'firebase.json'
       - '.github/workflows/e2e.yml'
   push:
@@ -14,6 +16,8 @@ on:
       - 'web/**'
       - 'functions/**'
       - 'firestore.rules'
+      - 'firestore.indexes.json'
+      - 'storage.rules'
       - 'firebase.json'
       - '.github/workflows/e2e.yml'
 
@@ -199,3 +203,46 @@ jobs:
       - name: run firestore rules tests
         working-directory: web
         run: npm run test:rules
+
+  # Lint, types and the Jest unit suite. Until 2026-09-07 none of these ran in
+  # CI on any branch: `dev` and `main` auto-deploy, so 4397 unit tests and every
+  # type error were gated on nothing but a developer remembering to run them.
+  # Two lint errors reached `dev` in cf24beba precisely this way.
+  #
+  # Separate from `playwright` on purpose — no emulator, no browser, no next
+  # build, so it fails in ~2 minutes on the failures it can catch instead of
+  # waiting behind a full e2e run.
+  checks:
+    name: lint, types and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install web deps
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+
+      # `next build` runs its own lint pass, but nothing builds web on PRs.
+      - name: lint
+        working-directory: web
+        run: npm run lint
+
+      # tsc --noEmit against the checked-in tsconfig (strict: true).
+      - name: typecheck
+        working-directory: web
+        run: npm run typecheck
+
+      # The Jest suite. Not the rules tests (jest.rules.config.js, run by the
+      # `rules` job against an emulator) — this is the plain unit config.
+      - name: unit tests
+        working-directory: web
+        run: npm test -- --ci
