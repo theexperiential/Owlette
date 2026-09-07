@@ -15,7 +15,6 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
