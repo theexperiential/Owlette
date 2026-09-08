@@ -880,10 +880,32 @@ function makeKeyDb(store: Record<string, Record<string, unknown>>) {
       const data = store[path];
       return { exists: data !== undefined, data: () => data };
     },
-    collection: (child: string) => ({ doc: (id: string) => docRef(`${path}/${child}/${id}`) }),
+    collection: (child: string) => collectionRef(`${path}/${child}`),
+  });
+  // Real Firestore subcollections support `.where()`; this double did not, so a
+  // correct implementation looked broken. `resolveSiteKeyOwner` needs it to find
+  // the owner MEMBER ROW rather than the legacy `sites/{id}.owner` field.
+  const collectionRef = (prefix: string) => ({
+    doc: (id: string) => docRef(`${prefix}/${id}`),
+    where: (field: string, _op: string, value: unknown) => ({
+      limit: () => ({
+        get: async () => {
+          reads.push(`${prefix} where ${field}==${String(value)}`);
+          const docs = Object.entries(store)
+            .filter(
+              ([path, data]) =>
+                path.startsWith(`${prefix}/`) &&
+                path.slice(prefix.length + 1).indexOf('/') === -1 &&
+                (data as Record<string, unknown>)[field] === value,
+            )
+            .map(([path, data]) => ({ id: path.split('/').pop() as string, data: () => data }));
+          return { docs, empty: docs.length === 0 };
+        },
+      }),
+    }),
   });
   const db = {
-    collection: (name: string) => ({ doc: (id: string) => docRef(`${name}/${id}`) }),
+    collection: (name: string) => collectionRef(name),
   } as unknown as FirebaseFirestore.Firestore;
   return { db, reads };
 }
@@ -957,6 +979,44 @@ describe('resolveSiteKeyOwner', () => {
     ['a site that is gone', {}],
   ])('refuses %s', async (_label, store) => {
     const { db } = makeKeyDb(store as Record<string, Record<string, unknown>>);
+
+    await expect(resolveSiteKeyOwner(db, 's1')).rejects.toThrow(/has no owner/);
+  });
+
+  // Wave 6.1 deletes `sites/{siteId}.owner`. Without these, every unattended run
+  // would start throwing "has no owner" the moment that migration ran.
+  it('resolves from the owner member row with no legacy owner field present', async () => {
+    const { db } = makeKeyDb({
+      'sites/s1': {},
+      'sites/s1/members/owner-uid': { uid: 'owner-uid', role: 'owner', status: 'active' },
+    });
+
+    await expect(resolveSiteKeyOwner(db, 's1')).resolves.toBe('owner-uid');
+  });
+
+  it('prefers the member row over a stale legacy owner field', async () => {
+    const { db } = makeKeyDb({
+      'sites/s1': { owner: 'stale-uid' },
+      'sites/s1/members/real-owner': { uid: 'real-owner', role: 'owner', status: 'active' },
+    });
+
+    await expect(resolveSiteKeyOwner(db, 's1')).resolves.toBe('real-owner');
+  });
+
+  it('ignores a non-active owner row and falls back during the transition', async () => {
+    const { db } = makeKeyDb({
+      'sites/s1': { owner: 'legacy-uid' },
+      'sites/s1/members/old-owner': { uid: 'old-owner', role: 'owner', status: 'revoked' },
+    });
+
+    await expect(resolveSiteKeyOwner(db, 's1')).resolves.toBe('legacy-uid');
+  });
+
+  it('ignores an admin row — only the owner funds an unattended run', async () => {
+    const { db } = makeKeyDb({
+      'sites/s1': {},
+      'sites/s1/members/admin-uid': { uid: 'admin-uid', role: 'admin', status: 'active' },
+    });
 
     await expect(resolveSiteKeyOwner(db, 's1')).rejects.toThrow(/has no owner/);
   });

@@ -19,7 +19,7 @@ interface Site {
 }
 
 export default function AddMachinePage() {
-  const { user, loading: authLoading, isSuperadmin } = useAuth();
+  const { user, loading: authLoading, isSuperadmin, userSites } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [sites, setSites] = useState<Site[]>([]);
@@ -64,17 +64,13 @@ export default function AddMachinePage() {
       }
 
       try {
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-
-        if (!userDoc.exists()) {
-          setSites([]);
-          setLoading(false);
-          return;
-        }
-
-        const userData = userDoc.data();
-        const siteIds = isSuperadmin ? [] : (userData.sites || []);
+        // `userSites` from AuthContext, NOT `users/{uid}.sites[]` read directly.
+        // That field is legacy and wave 6.1 deletes it — reading it here would
+        // have shown "no sites available. create a site on the dashboard first."
+        // to every non-superadmin on the primary browser pairing flow, with no
+        // error to explain it. AuthContext resolves the same list from the member
+        // rows that actually grant access.
+        const siteIds = isSuperadmin ? [] : userSites;
         const fetchedSites: Site[] = [];
 
         if (isSuperadmin) {
@@ -122,7 +118,7 @@ export default function AddMachinePage() {
     }
 
     fetchSites();
-  }, [user, isSuperadmin]);
+  }, [user, isSuperadmin, userSites]);
 
   useEffect(() => {
     if (!authLoading && !user) {

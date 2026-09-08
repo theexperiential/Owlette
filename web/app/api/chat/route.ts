@@ -5,7 +5,7 @@
  * Filters on `siteId` against the caller's effective access set. Api-key
  * callers additionally intersect with the key's `chat=<siteId>:read` scopes, so
  * a key scoped to one site can't list others even when the user behind it can.
- * Session/id-token callers use `getUserSiteIds`.
+ * Session/id-token callers use `listUserSiteIds` (member rows).
  */
 
 import type { NextRequest } from 'next/server';
@@ -19,7 +19,7 @@ import {
   ApiAuthError,
   resolveAuth,
 } from '@/lib/apiAuth.server';
-import { getUserSiteIds } from '@/lib/apiHelpers.server';
+import { listUserSiteIds } from '@/lib/membership.server';
 import {
   listConversations,
   serializeConversationSummary,
@@ -125,7 +125,16 @@ async function resolveReadableSiteIds(
   userId: string,
   keyContext: Awaited<ReturnType<typeof resolveAuth>>['keyContext'],
 ): Promise<string[]> {
-  const membership = await getUserSiteIds(userId);
+  // Member ROWS, not `users/{uid}.sites[]`. That array is legacy and wave 6.1
+  // strips it; reading it here would have made this route return an empty 200
+  // — no error, no log — for every caller the moment the migration ran.
+  //
+  // The owned-sites read stays as a transitional union: on an environment where
+  // the membership backfill has not run yet, a site owner has no member row, and
+  // dropping it would lock them out of their own conversations. It is redundant
+  // once backfilled (owners get a row with role 'owner') and is safe to remove
+  // after prod is migrated.
+  const membership = await listUserSiteIds(userId);
   const ownedSites = await readOwnedSiteIds(userId);
   const membershipSet = new Set<string>([...membership, ...ownedSites]);
 

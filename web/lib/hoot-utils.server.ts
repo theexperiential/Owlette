@@ -270,6 +270,30 @@ export async function resolveSiteKeyOwner(
   db: FirebaseFirestore.Firestore,
   siteId: string
 ): Promise<string> {
+  // The owner MEMBER ROW is authoritative. `sites/{siteId}.owner` is legacy and
+  // wave 6.1 deletes it — reading only that would make every unattended run
+  // throw "site has no owner" the moment the migration ran.
+  const ownerRows = await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .where('role', '==', 'owner')
+    .limit(1)
+    .get();
+
+  const ownerRow = ownerRows.docs[0];
+  if (ownerRow) {
+    const data = ownerRow.data() ?? {};
+    if (data.status === 'active') {
+      return typeof data.uid === 'string' && data.uid.length > 0
+        ? data.uid
+        : ownerRow.id;
+    }
+  }
+
+  // Transitional fallback: an environment where the membership backfill has not
+  // run yet has an owner field but no owner row. Remove once prod is migrated —
+  // after 6.1 this branch can only ever return undefined.
   const siteDoc = await db.collection('sites').doc(siteId).get();
   const owner = siteDoc.data()?.owner;
   if (typeof owner !== 'string' || owner.length === 0) {

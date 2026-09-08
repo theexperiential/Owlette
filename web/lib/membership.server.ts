@@ -66,6 +66,37 @@ function memberRef(db: FirebaseFirestore.Firestore, siteId: string, uid: string)
  * Add a member to a site. Authorization and email→uid resolution are the CALLER's
  * job; this module trusts the uid and re-checks only the invariants above.
  */
+/**
+ * Every site id the user holds an ACTIVE member row for.
+ *
+ * The read counterpart to this module's writes, and the replacement for
+ * `getUserSiteIds` (which reads the legacy `users/{uid}.sites[]` array). Anything
+ * still scoping on that array silently scopes to NOTHING once wave 6.1 strips it
+ * — an empty 200, not an error — which is why the two hoot/chat callers had to
+ * move before the migration could run.
+ *
+ * `status` is filtered in memory rather than added as a second `where`: a
+ * composite (uid, status) collection-group index does not exist and this query
+ * is per-user, so the row count is small. The single-field `members.uid`
+ * COLLECTION_GROUP override in `firestore.indexes.json` is what makes this legal
+ * — automatic single-field indexing does NOT extend to collection-group scope,
+ * and the emulator will not tell you when it is missing.
+ */
+export async function listUserSiteIds(userId: string): Promise<string[]> {
+  const snap = await getAdminDb()
+    .collectionGroup('members')
+    .where('uid', '==', userId)
+    .get();
+
+  const siteIds = new Set<string>();
+  for (const doc of snap.docs) {
+    if ((doc.data() ?? {}).status !== 'active') continue;
+    const siteId = doc.ref.parent.parent?.id;
+    if (siteId) siteIds.add(siteId);
+  }
+  return [...siteIds];
+}
+
 export async function addMember(input: {
   siteId: string;
   uid: string;

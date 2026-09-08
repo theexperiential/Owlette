@@ -311,30 +311,67 @@ export const recordUsageEvent = onRequest(
 /**
  * Per-tenant cost data — verify the caller can access `siteId` first, or any HTTPS
  * caller could enumerate cost figures for sites they don't belong to. Allowed: a
- * user whose `users/{uid}.sites[]` contains siteId, or a superadmin. A single 401
- * covers both "no token" and "no access" so the endpoint can't be used to probe
- * which siteIds an attacker has access to.
+ * superadmin, or a user holding an ACTIVE `sites/{siteId}/members/{uid}` row. A
+ * single 401 covers both "no token" and "no access" so the endpoint can't be
+ * used to probe which siteIds an attacker has access to.
+ *
+ * Reads the member row, not `users/{uid}.sites[]`. That array is legacy and wave
+ * 6.1 deletes it; this endpoint is deployed and public, and it was the only
+ * authorization check standing in front of every site's cost figures. It would
+ * have failed closed rather than open, but it would still have locked every
+ * non-superadmin out of their own usage data the moment the migration ran.
+ *
+ * A direct document get, deliberately — no collection-group query, so no index
+ * dependency in a Cloud Function that has no way to report a missing one.
  */
+export interface SiteUsageAuthDeps {
+  verifyIdToken: (token: string) => Promise<{ uid: string }>;
+  getUser: (uid: string) => Promise<Record<string, unknown> | null>;
+  getMember: (siteId: string, uid: string) => Promise<Record<string, unknown> | null>;
+}
+
+/** Real Firebase implementations. Injected in tests, which is why they are a parameter. */
+function defaultSiteUsageAuthDeps(): SiteUsageAuthDeps {
+  return {
+    verifyIdToken: (token) => getAuth().verifyIdToken(token),
+    getUser: async (uid) => {
+      const snap = await getFirestore().collection('users').doc(uid).get();
+      return snap.exists ? (snap.data() ?? {}) : null;
+    },
+    getMember: async (siteId, uid) => {
+      const snap = await getFirestore()
+        .collection('sites')
+        .doc(siteId)
+        .collection('members')
+        .doc(uid)
+        .get();
+      return snap.exists ? (snap.data() ?? {}) : null;
+    },
+  };
+}
+
 export async function isAuthorizedForSiteUsage(
   authorizationHeader: string | undefined,
   siteId: string,
+  deps: SiteUsageAuthDeps = defaultSiteUsageAuthDeps(),
 ): Promise<boolean> {
   const token = (authorizationHeader ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) return false;
   let uid: string;
   try {
-    const decoded = await getAuth().verifyIdToken(token);
-    uid = decoded.uid;
+    ({ uid } = await deps.verifyIdToken(token));
   } catch {
     return false;
   }
   try {
-    const userSnap = await getFirestore().collection('users').doc(uid).get();
-    if (!userSnap.exists) return false;
-    const data = userSnap.data() ?? {};
-    if (data.role === 'superadmin') return true;
-    const sites = Array.isArray(data.sites) ? data.sites : [];
-    return sites.includes(siteId);
+    const user = await deps.getUser(uid);
+    if (!user) return false;
+    // A soft-deleted account keeps a valid token until it expires.
+    if (user.deletedAt) return false;
+    if (user.role === 'superadmin') return true;
+
+    const member = await deps.getMember(siteId, uid);
+    return member !== null && member.status === 'active';
   } catch {
     return false;
   }

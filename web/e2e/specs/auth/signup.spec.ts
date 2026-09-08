@@ -1,7 +1,8 @@
 /**
  * Auth — signup. Asserts the new user's Firestore doc under the three-role
- * model: role 'member' (NOT the retired 'user'), requiresMfaSetup true, sites
- * empty — and that signup redirects to /setup-2fa, not /dashboard.
+ * model: role 'member' (NOT the retired 'user'), requiresMfaSetup true, and NO
+ * legacy `sites[]` field — and that signup redirects to /setup-2fa, not
+ * /dashboard.
  */
 
 import { test, expect } from '@playwright/test';
@@ -55,5 +56,9 @@ test('new signup writes role: member and redirects to /setup-2fa', async ({ page
   const data = userDoc.data()!;
   expect(data.role).toBe('member');
   expect(data.requiresMfaSetup).toBe(true);
-  expect(data.sites).toEqual([]);
+  // The legacy `sites[]` field must NOT be seeded. Site access comes from
+  // `sites/{siteId}/members/{uid}`, and wave 6.1 deletes this field — seeding it
+  // here meant the very next signup re-created what the migration had removed,
+  // so its "field is gone" gate could never converge.
+  expect(data).not.toHaveProperty('sites');
 });

@@ -628,7 +628,6 @@ describe('bootstrapUser', () => {
     expect(db.docs.get('users/uid-1')).toMatchObject({
       email: 'user@example.com',
       role: 'member',
-      sites: [],
       mfaEnrolled: false,
       requiresMfaSetup: true,
       // Seeded at creation so a new account is never "legacy", i.e. never needs
@@ -639,6 +638,11 @@ describe('bootstrapUser', () => {
         timezone: 'America/Los_Angeles',
       },
     });
+    // The legacy `sites[]` field must NOT be seeded. toMatchObject ignores extra
+    // keys, so without this explicit check the assertion above would pass either
+    // way — and re-seeding it is precisely what stopped wave 6.1's "field is
+    // gone" gate from ever converging.
+    expect(db.docs.get('users/uid-1')).not.toHaveProperty('sites');
   });
 
   it('is idempotent when the user doc already exists', async () => {
