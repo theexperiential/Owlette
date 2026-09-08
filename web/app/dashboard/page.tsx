@@ -1532,8 +1532,10 @@ export default function DashboardPage() {
                     <Clock className="h-3.5 w-3.5 text-blue-400" />
                     <span className="text-xs font-medium text-blue-400">schedule configuration</span>
                   </div>
-                  {/* Kept in sync with ProcessDialog.tsx by convention — the clock
-                      only belongs to the site once it has opted in. */}
+                  {/* `scheduleClockLabel` is the single source for this string — the
+                      clock only belongs to the site once it has opted in. (This used
+                      to say "kept in sync with ProcessDialog.tsx by convention";
+                      that component was unused and was deleted 2026-09-08.) */}
                   <span className="text-[10px] text-muted-foreground">
                     {scheduleClockLabel(currentSite?.timezone, currentSite?.schedulesFollowSiteTime)}
                   </span>

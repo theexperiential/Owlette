@@ -19,7 +19,7 @@
  */
 
 import { formatTimezoneShortName } from '@/lib/timeUtils';
-import { isOutdated, SITE_TIME_MIN_AGENT_VERSION } from '@/lib/versionUtils';
+import { compareVersions, SITE_TIME_MIN_AGENT_VERSION } from '@/lib/versionUtils';
 
 /**
  * One-line clock label for a schedule editor surface that has no single machine
@@ -82,7 +82,18 @@ export function machineClockTooltip({
     // Advisory, never a block (plan decision D3): an older agent still
     // evaluates windows locally, and gating the fleet on one stale machine
     // would strand the whole site.
-    advisory: isOutdated(agentVersion, SITE_TIME_MIN_AGENT_VERSION)
+    //
+    // STRICTLY OLDER ONLY, matching SiteTimeConfirmBanner. This used to call
+    // `isOutdated`, which treats a missing version as outdated — so the banner
+    // said no machine needed updating while that machine's own panel said it
+    // did. Measured 2026-09-08: 17 of 34 prod machines carry no `agent_version`,
+    // and every one of them has NEVER sent a heartbeat. They are placeholder
+    // records, not stale installs, so advising on them is pure noise. Any
+    // machine actually running reports its version.
+    //
+    // `isOutdated` keeps its missing-means-outdated default for the installer
+    // update path (hooks/useOwletteUpdates.ts), where it is the right answer.
+    advisory: compareVersions(agentVersion, SITE_TIME_MIN_AGENT_VERSION) === -1
       ? `until this machine updates to agent ${SITE_TIME_MIN_AGENT_VERSION} or newer, its launch windows stay on the machine clock.`
       : undefined,
   };

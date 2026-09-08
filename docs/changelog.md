@@ -9,11 +9,11 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [Unreleased]
+## [3.3.1] - 2026-09-08
 
-> Version number assigned at release time. This batch removes a public API
-> surface and changes who may do what on a site, so the release that carries it
-> is a breaking one.
+> This release removes a public API surface and changes who may do what on a
+> site. Both are breaking changes; the version is a patch bump by release
+> decision, so read the two `breaking` sections below before upgrading.
 
 ### breaking — site roles are per site, and a global admin no longer grants access
 

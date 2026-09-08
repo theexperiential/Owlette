@@ -7,8 +7,8 @@
  *   MachineCardView / MachineListView before any site-time work, it is what the
  *   tutorial footage frames, and a site that never opted in must keep it
  *   byte-for-byte. If a change here goes red, the change is wrong — not the test.
- * - The dialog labels are NEW. "times in <site tz>" (SchedulePopover /
- *   ProcessDialog before this change) asserted site-time evaluation
+ * - The dialog labels are NEW. "times in <site tz>" (as the since-deleted
+ *   SchedulePopover / ProcessDialog said) asserted site-time evaluation
  *   unconditionally, which the agent only performs for an opted-in site; that
  *   string is deliberately retired, not preserved.
  */
@@ -107,9 +107,26 @@ describe('machineClockTooltip — flag on splits the two clocks', () => {
     ).toBeUndefined();
   });
 
+  // A machine with no reported version gets NO advisory, matching
+  // SiteTimeConfirmBanner. Every prod machine missing `agent_version` has never
+  // sent a heartbeat (17 of 34, measured 2026-09-08), so an advisory there names
+  // a machine that was never installed.
+  it.each([
+    ['not reported at all', undefined],
+    ['unparseable', 'not-a-version'],
+  ])('omits the advisory for an agent version %s', (_label, agentVersion) => {
+    expect(
+      machineClockTooltip({
+        machineTimezone: MACHINE_TZ,
+        siteTimezone: SITE_TZ,
+        schedulesFollowSiteTime: true,
+        agentVersion,
+      }).advisory,
+    ).toBeUndefined();
+  });
+
   it.each([
     ['older than the minimum', '3.2.2'],
-    ['not reported at all', undefined],
   ])('advises, never blocks, for an agent %s', (_label, agentVersion) => {
     expect(
       machineClockTooltip({
