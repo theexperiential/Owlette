@@ -65,6 +65,27 @@ whether an account's global role would make an `admin` request stick, which is
 no longer how any of this works.
 
 
+### fixed — agent: three faults that made the fleet quieter than it should have been
+
+**The roost kill switch had never actually stopped anything on an agent.** The agent read
+the flag through a method its Firestore client does not have, swallowed the resulting error,
+and cached the failure as "enabled" for the full TTL — so no request was ever made and the
+switch was never observed, while the changelog said it was checked before every sync. Agents
+now read `roostEnabled` from the server-mediated `/api/agent/site` projection, and a disabled
+site genuinely halts new roost work.
+
+**A stalled display enumeration could stall the heartbeat, and the machine would read
+offline.** Two watchdogs used a thread-pool context manager whose exit waits for the worker,
+so the timeout they advertised bounded nothing: the call blocked for the full duration of the
+very hang the watchdog existed to survive. One of them was the only bound on the heartbeat
+path. Both now abandon the stalled worker, as two sibling watchdogs in the same codebase
+already did.
+
+**A screenshot request could freeze process monitoring for the better part of a minute.** The
+Cortex/hoot IPC pump ran on the 5-second service loop, and a single `capture_screenshot`
+takes around 55 seconds end to end. It now runs off the loop, one at a time, with the same
+result contract.
+
 ### breaking — the legacy by-URL distribution path is removed
 
 roost is now the only way to get files onto a machine. The v1 "point the fleet at a hosted ZIP and let the agent download and extract it" path is gone in one clean cut — no deprecation window, no compatibility shim. An agent that receives a `distribute_project` command now logs and skips it.
