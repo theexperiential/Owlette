@@ -28,6 +28,8 @@
     "screenshots": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts\"",
     "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\"",
     "screenshots:desktop": "npx playwright test --config=playwright.desktop-screenshots.config.ts",
+    "screenshots:release": "node ../scripts/refresh-docs-screens.mjs",
+    "screenshots:check": "node ../scripts/refresh-docs-screens.mjs --check",
     "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
     "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\"",
     "videos:desktop": "npx playwright test --config=playwright.desktop-videos.config.ts",

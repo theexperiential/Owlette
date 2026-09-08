@@ -327,6 +327,7 @@ If omitted, the server computes the checksum.
 - [ ] Bump granularity is patch by default, or minor/major by explicit choice.
 - [ ] `/docs/changelog.md` has `## [X.Y.Z] - YYYY-MM-DD`.
 - [ ] `/web/content/docs/changelog.mdx` has the SAME entry — this is the one customers read.
+- [ ] Agent docs screenshots recaptured against THIS build: `node scripts/refresh-docs-screens.mjs`, and `node scripts/refresh-docs-screens.mjs --check` exits 0. NOT the bare `npm run screenshots:desktop` — that photographs whatever version is already installed.
 - [ ] Changelog is updated before `build_installer_full.bat`.
 - [ ] `node scripts/sync-versions.js X.Y.Z` has been run.
 - [ ] `/VERSION` is bumped.

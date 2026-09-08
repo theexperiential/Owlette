@@ -429,6 +429,14 @@ if errorlevel 1 (
     echo.
     echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
     echo.
+    echo REQUIRED NEXT STEP - refresh the agent docs screenshots:
+    echo.
+    echo     node scripts/refresh-docs-screens.mjs
+    echo.
+    echo It installs THIS build before capturing. Running the bare
+    echo "npm run screenshots:desktop" instead photographs whatever version is
+    echo already installed, which is how the docs went three versions stale.
+    echo.
 )
 
 pause
