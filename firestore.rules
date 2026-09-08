@@ -21,7 +21,8 @@ rules_version = '2';
 // - Scoped Permissions: Agents limited to their site_id + machine_id (from token claims)
 // - Admin Panel: User management, site assignment, installer version management
 // - Public Downloads: Anyone can download agent installers
-// - Site Access: Users can only access sites they're assigned to (admins see all)
+// - Site Access: membership only — an ACTIVE `sites/{siteId}/members/{uid}`
+//   row, or global superadmin. A global `admin` role grants NOTHING.
 // - Command System: Bidirectional communication with agents
 //
 // Custom Token Claims (for agents):
@@ -188,10 +189,12 @@ service cloud.firestore {
     // ============================================
 
     match /site_ids/{siteId} {
-      // Tombstones for deleted sites. Site ids are caller-supplied slugs and
-      // deleting a site does not clear `users/{uid}.sites[]`, so reusing a slug
-      // would hand the new site's data to the old site's members. createSite
-      // refuses any id with a tombstone.
+      // Tombstones for deleted sites. Site ids are caller-supplied slugs, and
+      // deleteSite clears `users/{uid}.sites[]` only for members whose user
+      // document still exists — a stale entry can outlive the delete on a
+      // hard-deleted or non-member account, so reusing a slug could still hand
+      // the new site's data to a leftover holder. createSite refuses any id
+      // with a tombstone.
       //
       // GET only, never LIST: the availability check is a single-document read
       // (hooks/useFirestore.ts). `allow read: if isAuthenticated()` would also
@@ -258,7 +261,11 @@ service cloud.firestore {
 
     match /sites/{siteId} {
       // Site document access
-      // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
+      // READ: site members and superadmins ONLY (canAccessSite). NOT any
+      //   authenticated user — the id-availability check during site creation
+      //   reads `site_ids/{siteId}` instead (see that block), precisely so this
+      //   collection is not enumerable fleet-wide. The comment here used to say
+      //   the opposite, which would have talked a reader into reopening it.
       // WRITE: trusted server APIs only
       allow read: if canAccessSite(siteId);
       allow create, update, delete: if isServiceAccount();
@@ -468,8 +475,9 @@ service cloud.firestore {
         // mutation goes through /api/roosts/** under the admin SDK, and
         // hooks/useRoosts.ts holds a read-only listener. So this is server-only
         // rather than isSiteAdmin(siteId) — a stronger rule at no cost, and it
-        // avoids the trap that isSiteAdmin requires a GLOBAL admin role, which a
-        // self-serve site owner does not have (see dev/active/per-site-roles/).
+        // avoids re-deriving site-admin here at all. (isSiteAdmin is per-site
+        // membership, owner|admin — a self-serve owner DOES satisfy it. The
+        // note here predated per-site roles and said the reverse.)
         allow create, update, delete: if isServiceAccount();
 
         // ------------------------------------------
@@ -659,9 +667,10 @@ service cloud.firestore {
       }
 
       match /talon_secrets/{secretId} {
-        // Webhook signing secrets are server-only by design — do not repeat
-        // the webhooks `signingSecret` client-read leak (see the webhooks
-        // block above, which exposes the secret to any site member).
+        // Webhook signing secrets are server-only by design. (The webhooks
+        // block above is isSiteAdmin-read and its secrets moved to
+        // `webhook_secrets` with read:false in rules 2.11.0 — this used to warn
+        // against repeating a leak that no longer exists.)
         allow read: if false;
         allow write: if false;
       }

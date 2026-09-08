@@ -61,7 +61,7 @@ This is currently the canonical release flow.
 
 Default bump granularity is patch unless a minor or major bump is explicit.
 
-2. Update `/docs/changelog.md`.
+2. Update `/docs/changelog.md` **and** `/web/content/docs/changelog.mdx` — both, same entry.
 
 Add the release section before running the installer build:
 
@@ -326,6 +326,7 @@ If omitted, the server computes the checksum.
 - [ ] Release version `X.Y.Z` is chosen.
 - [ ] Bump granularity is patch by default, or minor/major by explicit choice.
 - [ ] `/docs/changelog.md` has `## [X.Y.Z] - YYYY-MM-DD`.
+- [ ] `/web/content/docs/changelog.mdx` has the SAME entry — this is the one customers read.
 - [ ] Changelog is updated before `build_installer_full.bat`.
 - [ ] `node scripts/sync-versions.js X.Y.Z` has been run.
 - [ ] `/VERSION` is bumped.

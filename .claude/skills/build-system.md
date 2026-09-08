@@ -42,11 +42,13 @@ Version → `OWLETTE_VERSION` env var → Inno Setup reads it → installer file
 
 **IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
-**IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
+**IMPORTANT: the changelog MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
+
+**BOTH changelogs, always.** `docs/changelog.md` is internal; `web/content/docs/changelog.mdx` is the one customers actually read at `/docs/changelog`. They carry the same entries and drift the moment one is updated alone — which is what every checklist that named only the first has been causing.
 
 ```bash
 # 1. Update changelog, bump version, commit, push
-# Edit docs/changelog.md → add [X.Y.Z] section
+# Edit docs/changelog.md AND web/content/docs/changelog.mdx → add [X.Y.Z] section to both
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 

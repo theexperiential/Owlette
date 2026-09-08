@@ -41,7 +41,13 @@ dev/**/claude-*
 
 # Ad-hoc multi-agent review/dispatch scratch — per-agent findings, briefings,
 # prompts, raw stdout/patches, trigger payloads. Durable conclusions live in
-# commits and dev/findings-ledger.md; these one-off dispatches aren't committed.
+# COMMITS; these one-off dispatches aren't committed.
+#
+# dev/findings-ledger.md is deliberately local-only too (see below), matching
+# dev/active/ and dev/completed/. It holds accepted-risk security triage, which
+# is not something to publish into repo history. This comment used to name it as
+# the durable home for conclusions while the rule below ignored it — a
+# contradiction resolved 2026-09-07 in favour of keeping it out of git.
 dev/**/*-findings.md
 dev/**/agent*.md
 dev/**/BRIEFING.md

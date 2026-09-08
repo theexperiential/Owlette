@@ -8,7 +8,58 @@ description: "All notable changes to owlette are documented here. The format is 
 ## [Unreleased]
 
 > Version number assigned at release time. This batch removes a public API
-> surface, so the release that carries it is a breaking one.
+> surface and changes who may do what on a site, so the release that carries it
+> is a breaking one.
+
+### breaking — site roles are per site, and a global admin no longer grants access
+
+Who can do what on a site is now decided by that person's role **on that site**,
+not by their account-level role. The same person can own one site, administer a
+second and be a plain member of a third.
+
+Previously an account-level `admin` was treated as an administrator of every
+site it could reach. One role, granted once, applied everywhere — so adding
+someone to a second site silently handed them administrative rights there too.
+That is closed: an account-level `admin` role now grants **nothing** on a site
+by itself. Only a platform superadmin still reaches every site.
+
+**the three per-site roles**
+- **owner** — everything an admin can do, plus deleting the site and
+  transferring ownership. Every site has exactly one, and an owner cannot be
+  demoted in place; ownership moves by transfer.
+- **admin** — machine commands and configuration, deployments, roosts, talons,
+  webhooks, logs, and managing membership.
+- **member** — read-only: view machines, capture screenshots, open live view.
+
+**what changes for you**
+
+Adding a member as an `admin` now genuinely makes them an admin of that site.
+Before, the request was recorded and then quietly downgraded unless the account
+already held a global admin role — the dashboard, the API response and both SDKs
+all reported that downgrade even when a real site-admin grant had been written.
+Roles are also editable per site from the members page; the old advice to contact
+support to change a role no longer applies.
+
+**enrolling a machine now requires site-admin.** Generating an installer, minting
+a setup token, or authorizing a pairing code all issue a machine identity plus a
+non-expiring refresh token, and revoking one has always been an administrator's
+job — so issuing one can no longer be less. A plain **member** who currently runs
+installers will receive `403` after this release. Promote the people who deploy
+your machines to **admin** on the sites they deploy to.
+
+**for operators upgrading**
+
+Membership rows are created by a one-time backfill that must land together with
+the security rules and the collection-group index — in that order, index first.
+Until all three are live, per-site access cannot be resolved. If you self-host,
+run `scripts/migrations/backfill-per-site-membership.mjs` (it has a `--verify`
+mode and a rollback path) before promoting the web release.
+
+`roleHonored` in the add-member API response is now always `true` and is
+retained only so the response shape does not change. It previously reported
+whether an account's global role would make an `admin` request stick, which is
+no longer how any of this works.
+
 
 ### breaking — the legacy by-URL distribution path is removed
 

@@ -57,7 +57,7 @@ rules.
 
 ## step-by-step: a normal release
 
-1. Update `/docs/changelog.md`.
+1. Update `/docs/changelog.md` **and** `/web/content/docs/changelog.mdx` — both, same entry. The second is the published one.
 
    Add the release notes before bumping versions or building release artifacts.
    The changelog should describe user-visible changes, operational changes, and
@@ -88,7 +88,7 @@ rules.
    not assume that every new feature is a minor release.
 
    If this production release is coordinated with a later agent installer
-   release, the version bump and `/docs/changelog.md` update must happen before
+   release, the version bump and BOTH changelog updates must happen before
    the installer is built. The installer bakes the version into the EXE
    filename.
 
