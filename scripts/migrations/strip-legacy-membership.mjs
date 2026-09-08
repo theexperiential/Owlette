@@ -203,8 +203,13 @@ async function survey() {
     if (lost.length) orphanedUsers.push({ uid: doc.id, email: data.email ?? null, lost });
   }
 
+  // Every user doc that exists, so an owner pointing at a deleted account can be
+  // told apart from a live person who would lose their site.
+  const usersById = new Map(usersSnap.docs.map((d) => [d.id, d.data() ?? {}]));
+
   const siteTargets = [];
   const ownerlessSites = [];
+  const orphanedSites = [];
   for (const doc of sitesSnap.docs) {
     const data = doc.data() ?? {};
     if (!Object.prototype.hasOwnProperty.call(data, 'owner')) continue;
@@ -213,10 +218,24 @@ async function survey() {
     const ownerUid = typeof data.owner === 'string' ? data.owner : null;
     if (!ownerUid) continue;
     const held = membership.get(ownerUid) ?? new Set();
-    if (!held.has(doc.id)) ownerlessSites.push({ siteId: doc.id, owner: ownerUid });
+    if (held.has(doc.id)) continue;
+
+    const ownerDoc = usersById.get(ownerUid);
+    if (!ownerDoc) {
+      // The owner's user document is gone, so nobody can reach this site today
+      // and nobody can lose it. Reported for cleanup, not as a blocker.
+      orphanedSites.push({ siteId: doc.id, owner: ownerUid, name: data.name ?? null });
+      continue;
+    }
+    if (ownerDoc.role === 'superadmin') {
+      // Superadmins deliberately hold no member rows — they reach every site by
+      // global role — so an owner field with no row is expected here.
+      continue;
+    }
+    ownerlessSites.push({ siteId: doc.id, owner: ownerUid, email: ownerDoc.email ?? null });
   }
 
-  return { userTargets, siteTargets, orphanedUsers, ownerlessSites };
+  return { userTargets, siteTargets, orphanedUsers, ownerlessSites, orphanedSites };
 }
 
 function report(s) {
@@ -228,9 +247,17 @@ function report(s) {
   for (const u of s.orphanedUsers) {
     console.log(`    ${u.uid} (${u.email ?? 'no email'}) loses: ${u.lost.join(', ')}`);
   }
-  console.log(`  BLOCKER - owners with no member row:    ${s.ownerlessSites.length}`);
+  console.log(`  BLOCKER - live owners with no member row: ${s.ownerlessSites.length}`);
   for (const o of s.ownerlessSites) {
-    console.log(`    site ${o.siteId} owner ${o.owner} holds no active member row`);
+    console.log(`    site ${o.siteId} owner ${o.owner} (${o.email ?? 'no email'}) holds no active member row`);
+  }
+  console.log('');
+  console.log(`  note - sites owned by a DELETED account:  ${s.orphanedSites.length}`);
+  for (const o of s.orphanedSites) {
+    console.log(`    site ${o.siteId} ${JSON.stringify(o.name)} owner ${o.owner} no longer exists`);
+  }
+  if (s.orphanedSites.length) {
+    console.log('    (already unreachable — not a blocker, but worth deleting)');
   }
   console.log('');
 }
