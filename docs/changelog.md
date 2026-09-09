@@ -9,7 +9,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [3.3.2] - 2026-09-08
+## [3.3.2] - 2026-09-09
 
 ### fixed — a failed display enumeration is no longer reported as monitors being removed
 
@@ -29,6 +29,29 @@ This only affects alerts caused by a failed enumeration. A check that succeeds
 but returns an incomplete monitor list is a separate case and still alerts; if
 you are seeing these, the agent log records `build_display_profile: enumeration
 failed` at the moment of each affected alert when this fix applies.
+
+### changed — the service host is rebuilt with version metadata, after Defender began quarantining it
+
+On 2026-09-08 Windows Defender's machine-learning classifier (definition set
+1.459.111.0) started quarantining `owlette-host.exe` — the Windows service
+that supervises the agent — as `Trojan:Win32/Bearfoos.B!ml`. It was a false
+positive on the file's shape, not its behaviour: a small, size-optimised,
+stripped, statically linked executable with no version information is also
+what a malware dropper looks like. When Defender opened the file it removed
+both the file and the `OwletteService` registration. The agent's Python
+process survived as an orphan and kept reporting the machine healthy, so the
+dashboard did not notice.
+
+Every installer from 3.2.3 to 3.3.1 ships that binary. 3.3.2 rebuilds it with
+a proper Windows version resource (company, product, description, file
+version) and an ordinary release profile; current definitions scan the result
+clean, including under real-time protection. The static CRT link introduced in
+3.2.3 is kept — it is what lets the service start on a freshly imaged machine.
+
+If a machine on 3.2.3–3.3.1 shows `OwletteService` missing while the dashboard
+still shows it online, this is why. Install 3.3.2 over it; the installer
+replaces the host and re-registers the service. No Defender exclusion is
+needed for owlette, and the installer does not add one.
 
 ## [3.3.1] - 2026-09-08
 
