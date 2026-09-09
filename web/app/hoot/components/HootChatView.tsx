@@ -10,7 +10,7 @@ import { useHootSidebarPrefs } from '@/hooks/useHootSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
-import { Plus, MessageSquare, Trash2, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw, Clock } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw, Clock, Share2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { doc, getDoc } from 'firebase/firestore';
@@ -20,6 +20,7 @@ import { ChatInput } from './ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
+import { ShareChatDialog } from './ShareChatDialog';
 import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
@@ -100,6 +101,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const [errorDismissed, setErrorDismissed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [categorizingAll, setCategorizingAll] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   // Sidebar expand/collapse state persists per-device to Firestore.
   const { sidebarOpen, setSidebarOpen, collapsedGroups, setCollapsedGroups } = useHootSidebarPrefs();
   // Below `md` the list moves into a left-slide sheet. Transient on purpose —
@@ -405,6 +407,20 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const activeCategoryLabel = activeConvo && !isUntitledChat(activeConvo.title)
     ? (activeConvo.category || 'General')
     : null;
+
+  // A share freezes this conversation as it stands, so it needs one that exists,
+  // has something in it, and has nothing in flight — a snapshot taken mid-turn
+  // would publish a half-written reply and a tool call with no outcome.
+  // Autonomous chats are out entirely: they have no owner, and the share routes
+  // authorize the chat's owner and nobody else.
+  const canShare = Boolean(
+    currentSiteId &&
+    activeConvo &&
+    activeConvo.source !== 'autonomous' &&
+    chat.messages.length > 0 &&
+    !chat.isLoading &&
+    !chat.turnRunning
+  );
 
   const categorizeAll = async () => {
     if (categorizingAll || uncategorizedIds.length === 0) return;
@@ -797,6 +813,23 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
             )}
 
             <div className="ml-auto flex items-center gap-2">
+              {canShare && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="share conversation"
+                      onClick={() => setShareOpen(true)}
+                    >
+                      <Share2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>share</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {currentSiteId && isSiteAdmin(currentSiteId) && (
                 <HootApprovalToggle siteId={currentSiteId} />
               )}
@@ -916,6 +949,15 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
       </div>
 
       {/* Dialogs */}
+      <ShareChatDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        chatId={chat.chatId}
+        siteId={currentSiteId}
+        title={activeConvo?.title ?? ''}
+        targetLabel={activeConvo?.machineName ?? null}
+        messages={chat.messages}
+      />
       <AccountSettingsDialog
         open={accountSettingsOpen}
         onOpenChange={(open) => { setAccountSettingsOpen(open); if (!open) setSettingsInitialSection('profile'); }}
