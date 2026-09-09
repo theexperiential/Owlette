@@ -5,6 +5,12 @@ import {
   type CollectionReference,
   type DocumentData,
 } from 'firebase-admin/firestore';
+import type { ChatShareDoc } from '@/lib/hoot/shareStore.server';
+import {
+  SHARE_TOKEN_PATTERN,
+  type SharedMessage,
+  type ShareSnapshot,
+} from '@/lib/hoot/shareTypes';
 import { getAdminDb } from './emulator';
 import { seedMachine, seedUser, type TestUser } from './seed';
 
@@ -232,6 +238,109 @@ export async function seedHootFixture(opts: {
     createdAt: Timestamp.fromDate(new Date(now.getTime() - 240_000)),
     updatedAt: Timestamp.fromDate(new Date(now.getTime() - 180_000)),
   });
+}
+
+/**
+ * Collection name mirrors `CHAT_SHARES_COLLECTION` in `lib/hoot/shareStore.server.ts`.
+ * Copied rather than imported as a value: that module pulls in `lib/firebase-admin`,
+ * which calls `initializeApp()` at import time and would race `helpers/emulator.ts`
+ * for the default Admin app. The `ChatShareDoc` TYPE import above is erased at
+ * compile time, so it costs nothing at runtime while still pinning the shape.
+ */
+const CHAT_SHARES_COLLECTION = 'chat_shares';
+
+const DAY_MS = 86_400_000;
+
+const DEFAULT_SHARE_MESSAGES: SharedMessage[] = [
+  { id: 'seeded-user-1', role: 'user', parts: [{ type: 'text', text: 'Why did deployment fail?' }] },
+  {
+    id: 'seeded-assistant-1',
+    role: 'assistant',
+    parts: [
+      { type: 'text', text: 'The installer exited with a retryable warning.' },
+      { type: 'tool', toolName: 'checkLogs', outcome: 'completed' },
+    ],
+  },
+];
+
+export interface SeedChatShareOptions {
+  /** `shr_` + 24 url-safe chars — see `SHARE_TOKEN_PATTERN`. Caller-supplied so the spec can address it. */
+  token: string;
+  chatId: string;
+  createdBy: string;
+  siteId?: string;
+  /**
+   * `null` never expires; a Date in the past seeds an already-expired link.
+   * Defaults to 30 days out — the same default the dialog offers.
+   */
+  expiresAt?: Date | null;
+  revokedAt?: Date | null;
+  title?: string;
+  targetLabel?: string | null;
+  messages?: SharedMessage[];
+  createdAt?: Date;
+}
+
+/**
+ * Write a `chat_shares/{token}` document directly, bypassing the create route.
+ *
+ * The collection has no client rules by design — every read and write goes
+ * through the server — so an expiry case can only be set up with the Admin SDK.
+ * `set()` rather than `create()`: re-seeding the same token in a `beforeEach`
+ * must be idempotent.
+ */
+export async function seedChatShare(opts: SeedChatShareOptions): Promise<string> {
+  // `getPublicChatShare` rejects a non-matching token before it touches Firestore,
+  // so a typo here would seed a document nothing could ever serve — and the spec
+  // would read that as the page being broken.
+  if (!SHARE_TOKEN_PATTERN.test(opts.token)) {
+    throw new Error(`seedChatShare: "${opts.token}" does not match SHARE_TOKEN_PATTERN`);
+  }
+
+  const messages = opts.messages ?? DEFAULT_SHARE_MESSAGES;
+  const title = opts.title ?? 'Deployment triage';
+  const targetLabel = opts.targetLabel === undefined ? null : opts.targetLabel;
+  const createdAt = opts.createdAt ?? new Date(Date.now() - 60_000);
+  const expiresAt =
+    opts.expiresAt === undefined ? new Date(Date.now() + 30 * DAY_MS) : opts.expiresAt;
+
+  const snapshot: ShareSnapshot = {
+    version: 1,
+    title,
+    targetLabel,
+    messages,
+    omitted: { images: 0, systemMessages: 0 },
+    collapsedToolCalls: messages.reduce(
+      (total, message) => total + message.parts.filter((part) => part.type === 'tool').length,
+      0,
+    ),
+  };
+
+  const doc: ChatShareDoc = {
+    token: opts.token,
+    chatId: opts.chatId,
+    siteId: opts.siteId ?? 'site-A',
+    createdBy: opts.createdBy,
+    createdAt: Timestamp.fromDate(createdAt),
+    expiresAt: expiresAt === null ? null : Timestamp.fromDate(expiresAt),
+    revokedAt: opts.revokedAt ? Timestamp.fromDate(opts.revokedAt) : null,
+    title,
+    targetLabel,
+    messageCount: messages.length,
+    snapshot,
+  };
+
+  await getAdminDb().collection(CHAT_SHARES_COLLECTION).doc(opts.token).set(doc);
+  return opts.token;
+}
+
+/** Delete every share a chat owns — expired and revoked ones included. */
+export async function clearChatShares(chatId: string): Promise<void> {
+  const snap = await getAdminDb()
+    .collection(CHAT_SHARES_COLLECTION)
+    .where('chatId', '==', chatId)
+    .get();
+  await Promise.all(snap.docs.map((docSnap) => docSnap.ref.delete()));
 }
 
 export async function seedCliDeviceCode(
