@@ -109,6 +109,11 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+/** The revoke button's accessible name carries date and time (same-day links must differ). */
+function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString();
+}
+
 type Part = UIMessage['parts'][number];
 
 function msg(id: string, role: UIMessage['role'], parts: unknown[]): UIMessage {
@@ -356,7 +361,7 @@ describe('ShareChatDialog', () => {
       const { user } = renderDialog();
 
       const revokeNewer = await screen.findByRole('button', {
-        name: `revoke link created ${formatDate(NEWER.createdAt)}`,
+        name: `revoke link created ${formatDateTime(NEWER.createdAt)}`,
       });
       await user.click(revokeNewer);
 
@@ -364,13 +369,13 @@ describe('ShareChatDialog', () => {
       await waitFor(() =>
         expect(
           screen.queryByRole('button', {
-            name: `revoke link created ${formatDate(NEWER.createdAt)}`,
+            name: `revoke link created ${formatDateTime(NEWER.createdAt)}`,
           }),
         ).toBeNull(),
       );
       expect(
         screen.getByRole('button', {
-          name: `revoke link created ${formatDate(OLDER.createdAt)}`,
+          name: `revoke link created ${formatDateTime(OLDER.createdAt)}`,
         }),
       ).toBeInTheDocument();
       expect(toast.success).toHaveBeenCalledWith('link revoked');
@@ -384,7 +389,7 @@ describe('ShareChatDialog', () => {
 
       await user.click(
         await screen.findByRole('button', {
-          name: `revoke link created ${formatDate(NEWER.createdAt)}`,
+          name: `revoke link created ${formatDateTime(NEWER.createdAt)}`,
         }),
       );
 
@@ -402,7 +407,7 @@ describe('ShareChatDialog', () => {
       const { user } = renderDialog();
 
       const revokeButton = await screen.findByRole('button', {
-        name: `revoke link created ${formatDate(OLDER.createdAt)}`,
+        name: `revoke link created ${formatDateTime(OLDER.createdAt)}`,
       });
       await user.click(revokeButton);
 

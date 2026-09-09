@@ -54,6 +54,15 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
+/**
+ * Accessible name for a revoke button. Date AND time: two links created on the
+ * same day are routine, and identical accessible names make them
+ * indistinguishable to a screen reader and ambiguous to a role query.
+ */
+function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString();
+}
+
 function messageCountLabel(count: number): string {
   return `${count} message${count === 1 ? '' : 's'}`;
 }
@@ -149,7 +158,9 @@ export function ShareChatDialog({
             <ul className="space-y-1 text-xs text-muted-foreground">
               <li>your messages and hoot&apos;s replies, as text</li>
               <li>the title &quot;{snapshot.title}&quot;</li>
-              {targetLabel !== null && <li>the machine name &quot;{targetLabel}&quot;</li>}
+              {snapshot.targetLabel !== null && (
+                <li>the machine name &quot;{snapshot.targetLabel}&quot;</li>
+              )}
               <li>
                 tool calls as one line each — name and outcome (
                 {snapshot.collapsedToolCalls} collapsed)
@@ -242,7 +253,7 @@ export function ShareChatDialog({
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label={`revoke link created ${createdOn}`}
+                      aria-label={`revoke link created ${formatDateTime(share.createdAt)}`}
                       disabled={revokingToken === share.token}
                       onClick={() => void handleRevoke(share.token)}
                     >
