@@ -5398,6 +5398,46 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.debug("Display topology returned non-dict payload, skipping")
                 return
 
+            # A FAILED enumeration is not a topology. build_display_profile
+            # returns `monitors: []` + `enumerationFailed: True` when CCD could
+            # not be read, and display_signature() hashes only the monitor list —
+            # so that placeholder is byte-identical to "every display genuinely
+            # went away". Without this gate the code below diffs the last good
+            # profile against [] and emits one CRITICAL `display_monitor_removed`
+            # per monitor, naming panels that are still plugged in, and the
+            # routing table sends those immediately rather than digesting them.
+            #
+            # It also CACHED the placeholder, so the next successful enumeration
+            # diffed against [] and emitted `display_monitor_added` for every
+            # monitor — a phantom remove/add flap per failure.
+            #
+            # The other three consumers of this flag already refuse the
+            # placeholder (firebase_client.py:1248 and :1426 skip the uploads to
+            # avoid clobbering good Firestore data; the auto-restore check below
+            # skips too). The alerting path was the one that did not, which is
+            # why the dashboard kept showing the monitors present while the email
+            # said they had been removed.
+            if profile.get('enumerationFailed') is True:
+                logging.warning(
+                    "Display enumeration failed; skipping topology comparison "
+                    "(no events emitted, cache left intact)"
+                )
+                # Still hand the failure to the drift tracker before returning.
+                # Its own gate does NOT merely return — it RESETS
+                # `_drift_pending_tick_count` and `_drift_pending_key`, so a
+                # failed enumeration is what breaks the auto-restore debounce
+                # streak. Returning past it would let a streak survive across
+                # failures on a machine whose enumeration is flaky, and fire an
+                # unattended apply_topology — a physical display re-apply — that
+                # the reset had been suppressing. That is the opposite of what
+                # this gate is for: those are the very machines already having
+                # display trouble.
+                try:
+                    self._maybe_auto_restore_assigned_drift(profile)
+                except Exception as e:
+                    logging.debug(f"auto-restore drift reset failed: {e}")
+                return
+
             # Merge NVAPI Mosaic / GSync data (best-effort — None on non-NVIDIA).
             try:
                 mosaic = nvapi_display.detect_mosaic()
@@ -5736,6 +5776,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             'signatureHash': new_profile.get('signatureHash') or '',
             'monitorCount': len(new_monitors),
             'assignedLayoutId': '',
+            # Forwarded so the claim stays falsifiable: without it, "the agent
+            # looked and the monitor was gone" and "the agent could not look at
+            # all" arrive downstream as the same critical alert, and no consumer
+            # can tell them apart. The caller now gates on this flag, so it
+            # should always be False here — it is carried for defence in depth.
+            'enumerationFailed': bool(new_profile.get('enumerationFailed', False)),
         }
 
         # Inside the post-apply window, stamp `suppressAlert` plus the causing
