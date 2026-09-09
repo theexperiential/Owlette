@@ -5,6 +5,27 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.3.2] - 2026-09-08
+
+### fixed — a failed display enumeration is no longer reported as monitors being removed
+
+When the agent could not read the display configuration at all, it reported that
+as every monitor having been disconnected: one CRITICAL alert per panel, emailed
+immediately, naming displays that were still plugged in. The dashboard kept
+showing those monitors present the whole time, because the upload path already
+refused the bad reading while the alert path did not.
+
+It also remembered the empty reading, so the next successful check announced
+every monitor as newly *added* — a disconnect/reconnect flap for each failure.
+
+The agent now treats "I could not look" as its own case: no alert, no state
+change, and the reading is discarded rather than remembered.
+
+This only affects alerts caused by a failed enumeration. A check that succeeds
+but returns an incomplete monitor list is a separate case and still alerts; if
+you are seeing these, the agent log records `build_display_profile: enumeration
+failed` at the moment of each affected alert when this fix applies.
+
 ## [3.3.1] - 2026-09-08
 
 > This release removes a public API surface and changes who may do what on a
