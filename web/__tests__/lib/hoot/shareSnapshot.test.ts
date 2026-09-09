@@ -113,6 +113,15 @@ describe('buildShareSnapshot', () => {
     expect(snapshot.messages[1].parts).toHaveLength(2);
   });
 
+  it('lowercases the site-wide sentinel and passes real machine names through', () => {
+    const siteWide = buildShareSnapshot({ title: 't', targetLabel: 'All Machines', messages: conversation });
+    expect(siteWide.targetLabel).toBe('all machines');
+    const machine = buildShareSnapshot({ title: 't', targetLabel: 'STUDIO-01', messages: conversation });
+    expect(machine.targetLabel).toBe('STUDIO-01');
+    const none = buildShareSnapshot({ title: 't', targetLabel: null, messages: conversation });
+    expect(none.targetLabel).toBeNull();
+  });
+
   it('falls back to the untitled placeholder for a blank title', () => {
     const blank = buildShareSnapshot({ title: '   ', targetLabel: null, messages: conversation });
     expect(blank.title.length).toBeGreaterThan(0);

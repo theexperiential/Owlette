@@ -17,7 +17,7 @@
 
 import { ImageResponse } from 'next/og';
 import { getPublicChatShare } from '@/lib/hoot/shareStore.server';
-import type { ChatShareView } from '@/lib/hoot/shareTypes';
+import { SITE_WIDE_TARGET_LABEL, type ChatShareView } from '@/lib/hoot/shareTypes';
 import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
@@ -44,9 +44,6 @@ const ACCENT = 'rgb(34, 211, 238)';
 const ACCENT_EDGE = 'rgba(34, 211, 238, 0.35)';
 
 const UNAVAILABLE_TITLE = "this shared conversation isn't available";
-
-/** Matches page.tsx: a site-wide chat stores no machine name. */
-const SITE_WIDE_TARGET_LABEL = 'all machines';
 
 async function loadShare(token: string): Promise<ChatShareView | null> {
   try {

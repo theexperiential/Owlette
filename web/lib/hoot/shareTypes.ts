@@ -53,6 +53,16 @@ export function isShareExpiry(value: unknown): value is ShareExpiry {
 /** Firestore caps a document at 1 MiB; this leaves room for the metadata fields. */
 export const MAX_SHARE_SNAPSHOT_BYTES = 900_000;
 
+/**
+ * A site-wide chat is persisted with `machineName: 'All Machines'` (see
+ * turnRunner.server.ts and useHoot.ts). The snapshot builder maps that sentinel
+ * to the lowercase label so neither the dialog nor the public page shows title
+ * case beside lowercase copy; the page also uses it when a chat carries no
+ * machine name at all. Real machine names are identifiers and pass through as-is.
+ */
+export const SITE_WIDE_MACHINE_NAME = 'All Machines';
+export const SITE_WIDE_TARGET_LABEL = 'all machines';
+
 /** How a collapsed tool call ended. The snapshot never carries inputs or outputs. */
 export type SharedToolOutcome = 'completed' | 'failed' | 'denied' | 'incomplete';
 

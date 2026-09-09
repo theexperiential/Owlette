@@ -29,7 +29,11 @@ import { cache } from 'react';
 import { SharedConversation } from '@/components/hoot/SharedConversation';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { getPublicChatShare } from '@/lib/hoot/shareStore.server';
-import type { ChatShareView, SharedMessage } from '@/lib/hoot/shareTypes';
+import {
+  SITE_WIDE_TARGET_LABEL,
+  type ChatShareView,
+  type SharedMessage,
+} from '@/lib/hoot/shareTypes';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,12 +47,9 @@ const loadShare = cache((token: string) => getPublicChatShare(token));
 
 const OWLETTE_URL = 'https://owlette.app';
 
-/**
- * A site-wide chat carries no machine name — `loadShareableChat` stores null —
- * and shareTypes documents that target as "All Machines". The page supplies the
- * label so a reader is never shown a share with no scope at all.
- */
-const SITE_WIDE_TARGET_LABEL = 'all machines';
+// A site-wide chat's label is normalized by the snapshot builder; the fallback
+// to SITE_WIDE_TARGET_LABEL below only covers a chat that carries no machine
+// name at all, so a reader is never shown a share with no scope.
 
 const NOT_AVAILABLE_TITLE = 'shared conversation not available';
 const NOT_AVAILABLE_DESCRIPTION =

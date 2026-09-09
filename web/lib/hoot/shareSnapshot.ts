@@ -14,7 +14,14 @@
 
 import type { UIMessage } from 'ai';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
-import type { SharedMessage, SharedPart, SharedToolOutcome, ShareSnapshot } from './shareTypes';
+import {
+  SITE_WIDE_MACHINE_NAME,
+  SITE_WIDE_TARGET_LABEL,
+  type SharedMessage,
+  type SharedPart,
+  type SharedToolOutcome,
+  type ShareSnapshot,
+} from './shareTypes';
 
 type UIMessagePart = UIMessage['parts'][number];
 
@@ -104,11 +111,13 @@ export function buildShareSnapshot(input: BuildShareSnapshotInput): ShareSnapsho
   }
 
   const title = input.title.trim() || UNTITLED_CHAT_TITLE;
+  const targetLabel =
+    input.targetLabel === SITE_WIDE_MACHINE_NAME ? SITE_WIDE_TARGET_LABEL : input.targetLabel;
 
   return {
     version: 1,
     title,
-    targetLabel: input.targetLabel,
+    targetLabel,
     messages,
     omitted: { images, systemMessages },
     collapsedToolCalls,
