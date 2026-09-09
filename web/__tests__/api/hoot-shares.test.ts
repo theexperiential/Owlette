@@ -449,7 +449,7 @@ describe('POST /api/hoot/chats/{chatId}/shares — create', () => {
         attributes: {
           endpoint: `/api/hoot/chats/${CHAT}/shares`,
           method: 'POST',
-          action: 'share',
+          verb: 'share',
           expiresAt: expect.any(Number),
           messageCount: 2,
         },
@@ -521,7 +521,7 @@ describe('DELETE /api/hoot/chats/{chatId}/shares/{token}', () => {
       attributes: {
         endpoint: `/api/hoot/chats/${CHAT}/shares/{token}`,
         method: 'DELETE',
-        action: 'unshare',
+        verb: 'unshare',
       },
     });
     expect(JSON.stringify(emitted())).not.toContain(token);

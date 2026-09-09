@@ -122,7 +122,7 @@ async function handleCreateShare(
       attributes: {
         endpoint: request.nextUrl.pathname,
         method: 'POST',
-        action: 'share',
+        verb: 'share',
         expiresAt: share.expiresAt,
         messageCount: share.messageCount,
       },

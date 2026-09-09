@@ -61,7 +61,7 @@ async function handleRevokeShare(
         // Redacted on purpose: `request.nextUrl.pathname` ends with the token.
         endpoint: `/api/hoot/chats/${chatId}/shares/{token}`,
         method: 'DELETE',
-        action: 'unshare',
+        verb: 'unshare',
       },
     });
 
