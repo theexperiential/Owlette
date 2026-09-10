@@ -24,7 +24,7 @@ rules.
   setup for smoke scripts that need an API key.
 - A real site id and API key for the R2 round-trip smoke test.
 - npm install behavior must match production:
-  - Railway uses Nixpacks pinned to `nodejs_20` and `npm-10_x`
+  - Railway uses Nixpacks pinned to `nodejs_22` and `npm-10_x`
   - install command is `npm ci --legacy-peer-deps`
 - Firebase deploy permissions for functions, Firestore, and storage.
 - Access to Instatus if status-page component checks fail.
@@ -125,7 +125,7 @@ rules.
 
    - `web/railway.toml`
    - `web/nixpacks.toml`
-   - Nixpacks pinned to `nodejs_20` and `npm-10_x`
+   - Nixpacks pinned to `nodejs_22` and `npm-10_x`
    - `npm ci --legacy-peer-deps`
 
    A "multiple lockfiles" warning when running tools at the repo root is
