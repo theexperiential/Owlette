@@ -5,6 +5,7 @@ import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 
 /**
  * GET /api/cron/process-alerts — drains pending_process_alerts into batched per-site digest
@@ -145,7 +146,7 @@ export async function GET(request: NextRequest) {
     }
 
     const resendClient = getResend();
-    const baseUrl = request.nextUrl.origin;
+    const baseUrl = publicOrigin(request);
     let emailsSent = 0;
 
     for (const [siteId, siteAlerts] of alertsBySite) {

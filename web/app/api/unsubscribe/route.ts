@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 
 /**
  * GET /api/unsubscribe?token=...
@@ -76,7 +77,7 @@ export async function GET(request: NextRequest) {
     );
 
     // Redirect to a confirmation page
-    const baseUrl = request.nextUrl.origin;
+    const baseUrl = publicOrigin(request);
     return NextResponse.redirect(`${baseUrl}/unsubscribe?success=true`);
   } catch (error) {
     return apiError(error, 'unsubscribe');

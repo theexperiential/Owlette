@@ -10,6 +10,7 @@ import {
 } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 import { EXPIRATION_WARNING_MS, toEpochMillis } from '@/lib/apiKeyTypes';
 
 /**
@@ -173,7 +174,7 @@ export async function GET(request: NextRequest) {
   }
 
   const resendClient = getResend();
-  const baseUrl = request.nextUrl.origin;
+  const baseUrl = publicOrigin(request);
   let emailsSent = 0;
 
   for (const [ownerUid, notices] of byOwner) {
