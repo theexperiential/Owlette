@@ -67,7 +67,7 @@ export function MachineStatusPill({
   // Idle: plain online/offline pill.
   if (!isActive) {
     return (
-      <Badge className={`text-xs select-none ${online ? 'bg-green-600' : 'bg-red-600'}`}>
+      <Badge className={`text-xs select-none ${online ? 'bg-green-600' : 'bg-red-600 text-white'}`}>
         {online ? 'online' : 'offline'}
       </Badge>
     );
@@ -84,7 +84,7 @@ export function MachineStatusPill({
     return (
       <Badge
         role="img"
-        className="text-xs select-none bg-red-600 animate-pulse px-1.5"
+        className="text-xs select-none bg-red-600 text-white animate-pulse px-1.5"
         title={actionLabel}
         aria-label={actionLabel}
       >
@@ -97,7 +97,7 @@ export function MachineStatusPill({
     return (
       <Badge
         role="img"
-        className="text-xs select-none bg-red-600 px-1.5"
+        className="text-xs select-none bg-red-600 text-white px-1.5"
         title="cancelling"
         aria-label="cancelling"
       >
@@ -113,7 +113,7 @@ export function MachineStatusPill({
     return (
       <Badge
         role="img"
-        className="text-xs select-none bg-red-600 animate-pulse px-1 tabular-nums"
+        className="text-xs select-none bg-red-600 text-white animate-pulse px-1 tabular-nums"
         title={actionLabel}
         aria-label={`${actionLabel}, ${formatMMSS(remaining)} remaining`}
       >
@@ -136,7 +136,7 @@ export function MachineStatusPill({
   return (
     <Badge
       asChild
-      className="text-xs select-none bg-red-600 hover:bg-red-700 animate-pulse cursor-pointer p-0 tabular-nums"
+      className="text-xs select-none bg-red-600 hover:bg-red-700 text-white animate-pulse cursor-pointer p-0 tabular-nums"
     >
       <button
         type="button"
