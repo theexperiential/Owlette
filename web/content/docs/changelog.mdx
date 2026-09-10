@@ -5,6 +5,24 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [Unreleased]
+
+### added — share a hoot conversation as a public page
+
+A hoot conversation you started can now be published as a read-only page at
+`/share/{token}`, readable by anyone holding the link without signing in. The
+share dialog renders that finished page before anything is created, so what you
+preview is exactly what a reader gets.
+
+What goes out is a snapshot, frozen at the moment the link is created: your
+messages and hoot's replies as text, plus each tool call collapsed to its name
+and outcome. Tool inputs and outputs — hostnames, paths, log lines, command
+output — are never published, and messages sent afterwards never join a link
+that already exists. Links expire after 30 days by default, with 7 days, 90
+days, and never-until-revoked also on offer; every link a conversation has is
+listed in the same dialog and can be revoked there, and the page is marked
+`noindex`. Autonomous conversations have no author and cannot be shared.
+
 ## [3.3.2] - 2026-09-09
 
 ### fixed — a failed display enumeration is no longer reported as monitors being removed

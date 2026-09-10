@@ -114,6 +114,42 @@ The setting is stored per site at `sites/{siteId}/settings/cortex.requireTier3Ap
 
 ---
 
+## sharing a conversation
+
+A conversation you started can be published as a read-only web page. The **share conversation** control in the chat header opens a dialog that previews the finished page, then creates a link to it at `/share/{token}`.
+
+A share is a **snapshot**, not a live view. It is frozen at the moment the link is created, so messages you send afterwards never appear in a link that already exists — to publish more of a conversation, create a new link.
+
+### what a reader sees
+
+Published:
+
+- your messages and hoot's replies, as text
+- the conversation title, and the machine the chat targeted (or *all machines* for a site-wide chat)
+- each tool call, collapsed to the tool's name and how it ended — *completed*, *failed*, *denied*, or *not completed*
+
+Never published:
+
+- what a tool was asked and what it answered — hostnames, paths, log lines, command output, file contents
+- image attachments and screenshots
+- system messages, the model's reasoning, and every other internal part of a turn
+
+<Callout type="warning" title="the preview is the page">
+  hoot's replies are published exactly as written, so a machine name, a file path, or a log line the model quoted **in its answer** goes out with the share. The dialog renders the finished page before anything is created — read it, then create the link.
+</Callout>
+
+### links, expiry, and revoking
+
+Anyone holding the link can read the page — there is no sign-in. Treat the link itself as the secret: it is unguessable and is never listed anywhere, but nothing beyond the link gates the page. The page is marked `noindex`, so search engines do not list it.
+
+A link expires **30 days** after it is created by default. The dialog also offers **7 days**, **90 days**, and **never (until revoked)**.
+
+Every link you have created for a conversation is listed in the same dialog under **active links**, each with a **revoke** control. Revoking takes effect immediately and cannot be undone: the page starts reporting that the conversation is not available, and sharing again means creating a new link. An expired link behaves identically, and a reader cannot tell a revoked link from an expired one or from a link that never existed.
+
+**Autonomous conversations cannot be shared.** A share is published by the person who started the conversation, and an autonomous investigation has no author — the **share conversation** control does not appear on those chats.
+
+---
+
 ## tool tiers
 
 Tier 1 tools read machine or site state, such as system info, logs, process lists, disk usage, GPU state, agent health, and site deployment presets.
