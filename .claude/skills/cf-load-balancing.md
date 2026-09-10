@@ -6,26 +6,37 @@
 
 ## What this is
 
-`owlette.app` runs behind a Cloudflare load balancer that fails over between two
-origins on different clouds, so a provider-level outage (e.g. Railway losing GCP
-egress) doesn't take the app down:
+Terraform (IaC) in `infra/cloudflare/` for a Cloudflare load balancer that fails
+`owlette.app` over between two origins on different clouds, so a provider-level outage
+(e.g. Railway losing GCP egress) doesn't take the app down:
 
 - **Railway** (`owlette-prod` service) — primary
-- **Vercel** (`owlette` project) — standby, kept fresh via git-connect
+- **Vercel** (`owlette` project) — standby; builds production from `main` only (its
+  Ignored Build Step cancels every other deployment)
 
-Managed as Terraform (IaC) in `infra/cloudflare/`. Companion systems:
-[[env-management]] (env var parity across both origins) and the `/api/health`
-readiness probe both origins are checked against.
+**Status: not live.** As of 2026-09-10 no load balancer, pool, or monitor exists —
+`owlette.app` is a plain proxied CNAME to Railway, and the May 2026 apply was destroyed
+the same day. Verify with a GET on `zones/{zone_id}/load_balancers` before assuming
+otherwise.
+
+Companion systems: [[env-management]] (env var parity across both origins) and the
+`/api/health` readiness probe both origins are checked against.
 
 ---
 
 ## Topology (infra/cloudflare/main.tf)
 
-1. **monitor** — `GET /api/health` every 60s, expects `200`, sends `Host: owlette.app`.
-   `/api/health` returns 200 only when the origin can reach Firestore, so an origin
-   that's up but cut off from its backend is correctly marked unhealthy.
-2. **two pools** — `owlette-railway-primary`, `owlette-vercel-standby`; each rewrites
-   the Host header to `owlette.app` so the origin routes + serves TLS correctly.
+1. **monitor** — `GET /api/health` every 60s, expects `200`. `/api/health` returns 200
+   only when the origin can reach Firestore, so an origin that's up but cut off from
+   its backend is correctly marked unhealthy.
+2. **two pools** — `owlette-railway-primary`, `owlette-vercel-standby`. Each origin sends
+   its own Host header, which Cloudflare also uses for that origin's health checks (an
+   endpoint override beats the monitor's):
+   - Railway: `Host: owlette.app`.
+   - Vercel: `Host: vercel-origin.owlette.app` — a DNS-only A record → `76.76.21.21`,
+     added to the Vercel project, which issues and renews its certificate. Vercel
+     can't hold a cert for `owlette.app` itself: its HTTP-01 renewals would land on
+     Railway.
 3. **load balancer** on `owlette.app` — `steering_policy = "off"` = cascade: send all
    traffic to the first healthy pool in `default_pool_ids` (Railway), fall back to
    Vercel only when Railway's monitor fails.
@@ -46,6 +57,11 @@ terraform apply      # creates monitor + pools + LB
 `terraform` is on PATH via winget; if a shell has stale PATH, prepend
 `/c/Users/<user>/AppData/Local/Microsoft/WinGet/Links`.
 
+Applying moves `owlette.app` behind the load balancer immediately. Prove failover on a
+throwaway hostname first (e.g. a temporary LB on `lbtest.owlette.app` whose Railway
+monitor path is deliberately broken, expecting `/api/health` to answer `origin: vercel`),
+then delete it.
+
 ### Required inputs (terraform.tfvars)
 
 - `account_id`, `zone_id` — Cloudflare dashboard → owlette.app → **Overview** →
@@ -57,8 +73,7 @@ terraform apply      # creates monitor + pools + LB
   CNAMEs to in Cloudflare DNS (the target Railway issued for the custom domain).
   Find it: Cloudflare DNS record for owlette.app, or Railway → owlette-prod →
   Settings → Networking. Hostname only, no scheme.
-- `vercel_origin` — the Vercel project's production alias, `owlette-eight.vercel.app`
-  (`vercel` deploy "Aliased" line / dashboard). Hostname only, no scheme.
+- `vercel_origin` — `vercel-origin.owlette.app`. Hostname only, no scheme.
 
 ### Token scope
 
@@ -70,10 +85,8 @@ and **Zone › Load Balancers › Edit** (for the owlette.app zone). Pass via en
 ## Critical Rules
 
 ### Do
-- **Enable the Load Balancing add-on** on the Cloudflare account first — the API
-  rejects LB creation without it (a billing toggle, dashboard-only).
-- **Add owlette.app as a domain on the Vercel project** so the standby accepts the
-  rewritten `Host: owlette.app` (verifiable without moving DNS). Railway already has it.
+- **Keep `vercel-origin.owlette.app` DNS-only** (grey cloud). Proxying it breaks Vercel's
+  HTTP-01 certificate renewals.
 - **Keep state safe.** Local `*.tfstate` is gitignored. For shared/durable state,
   move to the R2-backed S3 backend stubbed in `versions.tf`.
 - **Commit `.terraform.lock.hcl`** (pins provider versions); it's intentionally not ignored.
@@ -82,6 +95,10 @@ and **Zone › Load Balancers › Edit** (for the owlette.app zone). Pass via en
 - **Never put `CLOUDFLARE_API_TOKEN` or real `terraform.tfvars` in git.**
 - **Don't point `railway_origin` at `owlette.app`** — it must be the underlying Railway
   origin, or the LB loops back on itself.
+- **Don't build absolute URLs from the Host header in web code.** Behind the LB the
+  Vercel origin sees `Host: vercel-origin.owlette.app`. Use `publicOrigin(request)`
+  (`web/lib/publicOrigin.server.ts`). Same-origin redirects from `proxy.ts` are fine —
+  Next sends them as relative `Location` headers.
 - **Don't bump the cloudflare provider to v5** without migrating — the module targets
   the v4 schema (`default_pool_ids`/`fallback_pool_id`, `header {}` blocks). v5 renamed
   these. The `~> 4.52` pin in `versions.tf` is deliberate.
@@ -93,5 +110,5 @@ and **Zone › Load Balancers › Edit** (for the owlette.app zone). Pass via en
 ## Prereqs
 
 - Terraform >= 1.5 (`winget install Hashicorp.Terraform`).
-- Load Balancing add-on enabled on the Cloudflare account.
+- Load Balancing add-on — enabled on the Cloudflare account.
 - owlette.app DNS already on Cloudflare (it is).
