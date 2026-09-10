@@ -297,7 +297,7 @@ async function beginTurn(params: StartTurnParams, opts?: { supersede?: boolean }
 
 const finishChunk = {
   type: 'finish' as const,
-  finishReason: 'stop' as const,
+  finishReason: { unified: 'stop' as const, raw: undefined },
   usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
 };
 
@@ -518,7 +518,7 @@ describe('supersede mid-tool → commandId recovery', () => {
                         toolName: 'get_system_info',
                         input: '{}',
                       },
-                      { ...finishChunk, finishReason: 'tool-calls' as const },
+                      { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                     ]
                   : textChunks('turn A final summary'),
             }),
@@ -674,7 +674,7 @@ describe('tier-3 approval round-trip through the runner', () => {
               toolName: 'execute_script',
               input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
             },
-            { ...finishChunk, finishReason: 'tool-calls' as const },
+            { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
           ],
         }),
       }),
@@ -929,7 +929,7 @@ describe('scheduled follow-up turns never auto-execute tier 3', () => {
                 toolName: 'execute_script',
                 input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
               },
-              { ...finishChunk, finishReason: 'tool-calls' as const },
+              { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
             ],
           }),
         };
@@ -1066,7 +1066,7 @@ describe('heartbeat keeps the stream doc fresh during a long tool poll', () => {
                         toolName: 'get_system_info',
                         input: '{}',
                       },
-                      { ...finishChunk, finishReason: 'tool-calls' as const },
+                      { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                     ]
                   : textChunks('cpu is fine'),
             }),

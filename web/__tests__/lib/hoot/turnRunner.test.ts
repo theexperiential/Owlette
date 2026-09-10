@@ -131,7 +131,7 @@ function baseParams(overrides: Partial<StartTurnParams> = {}): StartTurnParams {
 
 const finishChunk = {
   type: 'finish' as const,
-  finishReason: 'stop' as const,
+  finishReason: { unified: 'stop' as const, raw: undefined },
   usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
 };
 
@@ -396,7 +396,7 @@ describe('startTurn — tool command recording', () => {
                       toolName: 'get_metrics',
                       input: '{}',
                     },
-                    { ...finishChunk, finishReason: 'tool-calls' as const },
+                    { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                   ]
                 : textChunks('cpu is at 12%'),
           }),
@@ -655,7 +655,7 @@ describe('startTurn — heartbeat abort decision', () => {
                       toolName: 'get_metrics',
                       input: '{}',
                     },
-                    { ...finishChunk, finishReason: 'tool-calls' as const },
+                    { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                   ]
                 : textChunks('done'),
           }),
