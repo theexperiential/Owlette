@@ -27,6 +27,24 @@ days, and never-until-revoked also on offer; every link a conversation has is
 listed in the same dialog and can be revoked there, and the page is marked
 `noindex`. Autonomous conversations have no author and cannot be shared.
 
+### fixed — offline machines and status badges are readable
+
+In the list view, an offline or restarting machine's metrics were faded to 40%
+opacity, which dropped its device names and readings below the 4.5:1 contrast
+minimum for text. They are now dimmed to 80%. The red offline, restart, and
+failed-process badges use white text instead of near-black, a process on an
+offline machine reads as grey on grey instead of dark on dark, and hoot's
+sidebar group headers use the full muted text color.
+
+### security — dependency updates
+
+- `@simplewebauthn/server` 13.3.3: passkey registration checks that attestation
+  certificates chain to a trust anchor.
+- `ai` 6.0.280 with matching `@ai-sdk/*` providers: fixes uncontrolled resource
+  consumption in `@ai-sdk/provider-utils`.
+- `vitest` 4.1.11 in the desktop app's test toolchain: fixes a path traversal in
+  `@vitest/mocker` (development only; nothing ships in the app).
+
 ## [3.3.2] - 2026-09-09
 
 ### fixed — a failed display enumeration is no longer reported as monitors being removed
