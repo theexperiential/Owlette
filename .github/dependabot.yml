@@ -1,11 +1,16 @@
 version: 2
 
+# Version updates target `dev`, where all work lands before promotion to `main`.
+# `target-branch` does not apply to security updates: GitHub always raises those
+# against the default branch (`main`), so a security PR lands on `dev` by hand.
+
 updates:
   # GitHub Actions across all workflows (.github/workflows/*), grouped into one
   # weekly PR. Dependabot bumps version tags today; once actions are pinned to
   # SHAs it bumps the SHA and its trailing "# vX" comment together.
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
@@ -18,15 +23,16 @@ updates:
       prefix: ci
 
   # Node dependencies. Each of these has its own package-lock.json: the repo
-  # root, the CLI, the Cloudflare Functions, the published Node SDK, and the web
-  # app. Minor/patch bumps are grouped; majors open their own PR.
+  # root (an npm workspace that also owns cli/ and sdks/node/), the desktop
+  # shell's frontend, the Cloud Functions, and the web app. Minor/patch bumps
+  # are grouped; majors open their own PR.
   - package-ecosystem: npm
     directories:
       - /
-      - /cli
+      - /desktop
       - /functions
-      - /sdks/node
       - /web
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
@@ -39,15 +45,33 @@ updates:
     commit-message:
       prefix: deps
 
-  # Python dependencies: the agent, docs toolchain, the published Python SDK,
-  # and the integration / agent-runner test harnesses.
+  # Rust crates: the owlette-host service wrapper and the Tauri desktop app.
+  - package-ecosystem: cargo
+    directories:
+      - /agent/host
+      - /desktop/src-tauri
+    target-branch: dev
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: deps
+
+  # Python dependencies: the agent, the published Python SDK, and the
+  # integration / agent-runner test harnesses.
   - package-ecosystem: pip
     directories:
       - /agent
-      - /docs
       - /sdks/python
       - /test/integration
       - /test/infra/agent-runner
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
