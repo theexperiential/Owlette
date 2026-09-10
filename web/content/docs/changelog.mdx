@@ -41,6 +41,14 @@ sidebar group headers use the full muted text color.
 - `vitest` 4.1.11 in the desktop app's test toolchain: fixes a path traversal in
   `@vitest/mocker` (development only; nothing ships in the app).
 
+### fixed — email and pairing links always point at the configured site address
+
+Alert, digest, and API-key-expiry emails, the unsubscribe confirmation, and the
+agent and CLI pairing links built their URLs from the host of the request that
+produced them. They now use the configured site address (`NEXT_PUBLIC_BASE_URL`),
+so a request served through another hostname — such as the failover origin — still
+sends people to owlette.app.
+
 ## [3.3.2] - 2026-09-09
 
 ### fixed — a failed display enumeration is no longer reported as monitors being removed
