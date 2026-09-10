@@ -231,6 +231,17 @@ jobs:
         working-directory: web
         run: npm ci --legacy-peer-deps
 
+      # Vercel Functions run with require(esm) disabled, so a CommonJS dependency
+      # that require()s an ESM-only package crashes every route there while
+      # Railway (Node 22, require(esm) on) serves fine. Load the firebase-admin
+      # entrypoints the way Vercel does.
+      - name: firebase-admin loads without require(esm)
+        working-directory: web
+        run: |
+          node --no-experimental-require-module --input-type=module -e "
+            for (const m of ['firebase-admin/app', 'firebase-admin/auth', 'firebase-admin/firestore', 'firebase-admin/storage', 'firebase-admin/app-check']) await import(m);
+          "
+
       # `next build` runs its own lint pass, but nothing builds web on PRs.
       - name: lint
         working-directory: web

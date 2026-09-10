@@ -120,6 +120,9 @@
     "typescript": "^5"
   },
   "overrides": {
+    "firebase-admin": {
+      "jwks-rsa": "3.2.0"
+    },
     "protobufjs": "^7.5.5",
     "websocket-driver": "^0.7.5"
   }
