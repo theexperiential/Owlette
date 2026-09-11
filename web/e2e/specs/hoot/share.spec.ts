@@ -126,6 +126,28 @@ test.describe('hoot share — dialog and public page', () => {
     await expect(preview.getByTestId('shared-conversation')).not.toContainText(TOOL_ARG_VALUE);
   });
 
+  test('create link copies the permalink and says so', async ({ page }) => {
+    // Chromium requires these for navigator.clipboard.
+    await page
+      .context()
+      .grantPermissions(['clipboard-read', 'clipboard-write'], { origin: E2E_BASE_URL });
+
+    const dialog = await openShareDialog(page);
+    const link = await createShareLink(dialog);
+
+    // The notice only appears once the write has resolved, so waiting on it
+    // orders the read below after the write. It clears itself after a few
+    // seconds — check it straight after the create.
+    await expect(
+      dialog.getByRole('status').filter({ hasText: 'copied to clipboard' }),
+    ).toBeVisible();
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboardText).toBe(link);
+
+    // The new row can be copied from too, under a name that says which link it is.
+    await expect(dialog.getByRole('button', { name: /^copy link created/i })).toBeVisible();
+  });
+
   test('the created link reads publicly, is noindexed, and has an opengraph image', async ({
     page,
     browser,

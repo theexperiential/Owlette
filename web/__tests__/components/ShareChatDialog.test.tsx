@@ -12,10 +12,16 @@
  * ("read the preview before you share") is worthless.
  *
  * The hook is mocked: request shapes are `__tests__/hooks/useChatShares.test.ts`.
+ *
+ * Clipboard: `userEvent.setup()` installs user-event's clipboard stub on
+ * `navigator` (jsdom has none) and swaps in a fresh one after every test, so
+ * `navigator.clipboard.readText()` reads back what the dialog wrote. jsdom has
+ * no `ClipboardItem` either — the tests that need one add it, and afterEach
+ * takes it away again.
  */
 
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { UIMessage } from 'ai';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -109,9 +115,67 @@ function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-/** The revoke button's accessible name carries date and time (same-day links must differ). */
+/** A row's visible created stamp: date and time to the minute, lowercased. */
+function formatCreated(ms: number): string {
+  return new Date(ms)
+    .toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+    .toLowerCase();
+}
+
+/** A row's button names carry date and time to the second (same-minute links must differ). */
 function formatDateTime(ms: number): string {
   return new Date(ms).toLocaleString();
+}
+
+/** jsdom's Blob predates `Blob.text()`. */
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+/** jsdom ships none today; kept so afterEach restores whatever was really there. */
+const ORIGINAL_CLIPBOARD_ITEM = Object.getOwnPropertyDescriptor(window, 'ClipboardItem');
+
+interface RecordedClipboardItem {
+  data: Record<string, Promise<Blob>>;
+}
+
+/**
+ * The smallest `ClipboardItem` the dialog can build. It keeps what it was given
+ * and never reads it — which is what a browser that refuses the write up front
+ * does, and the case that could leave a rejected item unhandled. Returns every
+ * item constructed, in order.
+ */
+function stubClipboardItem(): RecordedClipboardItem[] {
+  const built: RecordedClipboardItem[] = [];
+  class RecordingClipboardItem implements RecordedClipboardItem {
+    constructor(public data: Record<string, Promise<Blob>>) {
+      built.push(this);
+    }
+  }
+  Object.defineProperty(window, 'ClipboardItem', {
+    value: RecordingClipboardItem,
+    configurable: true,
+    writable: true,
+  });
+  return built;
+}
+
+/** The notice beside the link box. Always in the tree, so it is a live region before it speaks. */
+async function expectCopiedNotice() {
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveTextContent('copied to clipboard'),
+  );
 }
 
 type Part = UIMessage['parts'][number];
@@ -138,14 +202,14 @@ const MESSAGES: UIMessage[] = [
   ]),
 ];
 
-function renderDialog(overrides: Partial<React.ComponentProps<typeof ShareChatDialog>> = {}) {
-  const onOpenChange = jest.fn();
-  const user = userEvent.setup();
-  const view = render(
+type DialogProps = React.ComponentProps<typeof ShareChatDialog>;
+
+function dialogTree(overrides: Partial<DialogProps> = {}) {
+  return (
     <TooltipProvider>
       <ShareChatDialog
         open
-        onOpenChange={onOpenChange}
+        onOpenChange={jest.fn()}
         chatId={CHAT_ID}
         siteId={SITE_ID}
         title="deployment triage"
@@ -153,8 +217,14 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof ShareChatDi
         messages={MESSAGES}
         {...overrides}
       />
-    </TooltipProvider>,
+    </TooltipProvider>
   );
+}
+
+function renderDialog(overrides: Partial<DialogProps> = {}) {
+  const onOpenChange = jest.fn();
+  const user = userEvent.setup();
+  const view = render(dialogTree({ onOpenChange, ...overrides }));
   return { user, onOpenChange, ...view };
 }
 
@@ -178,16 +248,31 @@ describe('ShareChatDialog', () => {
     });
   });
 
-  it('names the chat and its machine, and counts what is dropped', async () => {
-    renderDialog();
+  afterEach(() => {
+    if (ORIGINAL_CLIPBOARD_ITEM) {
+      Object.defineProperty(window, 'ClipboardItem', ORIGINAL_CLIPBOARD_ITEM);
+    } else {
+      Reflect.deleteProperty(window, 'ClipboardItem');
+    }
+    // Spies only — jest 29 leaves the module-level jest.fn() mocks alone.
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  it('names the chat and its machine, and counts what is dropped — once opened', async () => {
+    const { user } = renderDialog();
 
     await screen.findByRole('dialog');
     expect(screen.getByText('share this conversation')).toBeInTheDocument();
     expect(
       screen.getByText(
-        "anyone with the link can read it. it's a snapshot — later messages are not included.",
+        /anyone with the link can read it\. it's a snapshot — later messages are not included\./,
       ),
     ).toBeInTheDocument();
+
+    // The inventories are reference material, folded away until asked for.
+    expect(screen.queryByText("your messages and hoot's replies, as text")).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'more' }));
 
     expect(screen.getByText("your messages and hoot's replies, as text")).toBeInTheDocument();
     expect(screen.getByText('the title "deployment triage"')).toBeInTheDocument();
@@ -200,12 +285,66 @@ describe('ShareChatDialog', () => {
     expect(screen.getByText('tool inputs and outputs')).toBeInTheDocument();
     expect(screen.getByText('system messages')).toBeInTheDocument();
 
-    // The warning is the whole reason the preview is there.
+    // The warning is the whole reason the preview is there — and it is never
+    // folded away with the inventories.
     expect(
       screen.getByText(
         "hoot's replies can quote machine details — hostnames, file paths, log lines. read the preview before you share.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it('folds the inventories away again, and says which way it goes', async () => {
+    const { user } = renderDialog();
+
+    const more = await screen.findByRole('button', { name: 'more' });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(more);
+    const less = screen.getByRole('button', { name: 'less' });
+    expect(less).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('tool inputs and outputs')).toBeInTheDocument();
+
+    await user.click(less);
+    await waitFor(() => expect(screen.queryByText('tool inputs and outputs')).toBeNull());
+    expect(screen.getByRole('button', { name: 'more' })).toBeInTheDocument();
+  });
+
+  it('reopens folded, whatever the last visit left open', async () => {
+    const { user, rerender } = renderDialog();
+
+    await user.click(await screen.findByRole('button', { name: 'more' }));
+    expect(screen.getByText('tool inputs and outputs')).toBeInTheDocument();
+
+    rerender(
+      <TooltipProvider>
+        <ShareChatDialog
+          open={false}
+          onOpenChange={jest.fn()}
+          chatId={CHAT_ID}
+          siteId={SITE_ID}
+          title="deployment triage"
+          targetLabel="STUDIO-01"
+          messages={MESSAGES}
+        />
+      </TooltipProvider>,
+    );
+    rerender(
+      <TooltipProvider>
+        <ShareChatDialog
+          open
+          onOpenChange={jest.fn()}
+          chatId={CHAT_ID}
+          siteId={SITE_ID}
+          title="deployment triage"
+          targetLabel="STUDIO-01"
+          messages={MESSAGES}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'more' })).toBeInTheDocument();
+    expect(screen.queryByText('tool inputs and outputs')).toBeNull();
   });
 
   it('omits the machine-name line for a chat with no target', async () => {
@@ -232,23 +371,21 @@ describe('ShareChatDialog', () => {
     expect(document.body).not.toHaveTextContent(TOOL_INPUT_SECRET);
   });
 
+  it('lets a keyboard reader focus the preview', async () => {
+    renderDialog();
+
+    // The preview is the dialog's only scroll region and holds nothing
+    // focusable, so without a tab stop of its own a keyboard-only reader cannot
+    // scroll it at all (axe: scrollable-region-focusable).
+    const preview = await screen.findByRole('region', { name: 'share preview' });
+    expect(preview).toHaveAttribute('tabindex', '0');
+  });
+
   it('loads the active links when it opens, and not while it is closed', async () => {
     const { rerender } = renderDialog({ open: false });
     expect(mockList).not.toHaveBeenCalled();
 
-    rerender(
-      <TooltipProvider>
-        <ShareChatDialog
-          open
-          onOpenChange={jest.fn()}
-          chatId={CHAT_ID}
-          siteId={SITE_ID}
-          title="deployment triage"
-          targetLabel="STUDIO-01"
-          messages={MESSAGES}
-        />
-      </TooltipProvider>,
-    );
+    rerender(dialogTree());
 
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
     expect(mockUseChatSharesArgs[0]).toEqual([CHAT_ID, SITE_ID]);
@@ -300,7 +437,12 @@ describe('ShareChatDialog', () => {
       expect(openLink).toHaveAttribute('target', '_blank');
       expect(openLink).toHaveAttribute('rel', 'noopener noreferrer');
 
-      expect(toast.success).toHaveBeenCalledWith('link created');
+      // The box keeps its own copy button beside the auto-copy.
+      expect(screen.getByRole('button', { name: 'copy to clipboard' })).toBeInTheDocument();
+
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith('link created and copied to clipboard'),
+      );
     });
 
     it('shows no link and no toast when the create fails', async () => {
@@ -333,6 +475,149 @@ describe('ShareChatDialog', () => {
     });
   });
 
+  describe('copying the new link', () => {
+    it('copies it with writeText where ClipboardItem is missing, and says so', async () => {
+      // The precondition that makes this the fallback path.
+      expect(window.ClipboardItem).toBeUndefined();
+      const { user } = renderDialog();
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+
+      await expectCopiedNotice();
+      expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+      expect(await navigator.clipboard.readText()).toBe(
+        shareUrl(window.location.origin, NEWER.token),
+      );
+      expect(toast.success).toHaveBeenCalledWith('link created and copied to clipboard');
+    });
+
+    it('starts the write inside the click, before the link exists', async () => {
+      const items = stubClipboardItem();
+      let resolveCreate: (share: ChatShareSummary | null) => void = () => undefined;
+      mockCreate.mockImplementation(
+        () =>
+          new Promise<ChatShareSummary | null>((resolve) => {
+            resolveCreate = resolve;
+          }),
+      );
+      const { user } = renderDialog();
+      const write = jest.spyOn(navigator.clipboard, 'write');
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+
+      // The server has not answered, and the write has already begun — the only
+      // way it keeps the click's user activation in Safari.
+      expect(screen.queryByRole('textbox', { name: 'share link' })).toBeNull();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(items).toHaveLength(1);
+      expect(write.mock.calls[0][0]).toEqual([items[0]]);
+
+      await act(async () => resolveCreate(NEWER));
+
+      const blob = await items[0].data['text/plain'];
+      expect(blob.type).toBe('text/plain');
+      expect(await readBlobText(blob)).toBe(shareUrl(window.location.origin, NEWER.token));
+      await expectCopiedNotice();
+      expect(toast.success).toHaveBeenCalledWith('link created and copied to clipboard');
+    });
+
+    it('claims nothing when the clipboard refuses both ways', async () => {
+      stubClipboardItem();
+      const { user } = renderDialog();
+      const refused = new DOMException('clipboard refused', 'NotAllowedError');
+      const write = jest.spyOn(navigator.clipboard, 'write').mockRejectedValue(refused);
+      const writeText = jest.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(refused);
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+
+      const url = shareUrl(window.location.origin, NEWER.token);
+      expect(await screen.findByRole('textbox', { name: 'share link' })).toHaveValue(url);
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('link created'));
+      expect(write).toHaveBeenCalledTimes(1);
+      // The fallback was tried, with the link, once the link existed.
+      expect(writeText).toHaveBeenCalledWith(url);
+      expect(screen.queryByText('copied to clipboard')).toBeNull();
+      expect(toast.success).not.toHaveBeenCalledWith('link created and copied to clipboard');
+    });
+
+    it('writes nothing, and leaks no rejection, when the create fails', async () => {
+      // The pending item is left unread — a browser refusing the write up
+      // front — so its rejection, once create() comes back empty, is the
+      // dialog's to handle. jest fails the running test on an unhandled
+      // rejection, so settling the queue below is the assertion.
+      stubClipboardItem();
+      mockCreate.mockResolvedValue(null);
+      mockShareState.error = 'nothing to share';
+      const { user } = renderDialog();
+      jest
+        .spyOn(navigator.clipboard, 'write')
+        .mockRejectedValue(new DOMException('clipboard refused', 'NotAllowedError'));
+      const writeText = jest.spyOn(navigator.clipboard, 'writeText');
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(writeText).not.toHaveBeenCalled();
+      expect(await navigator.clipboard.readText()).toBe('');
+      expect(screen.queryByRole('textbox', { name: 'share link' })).toBeNull();
+      expect(screen.queryByText('copied to clipboard')).toBeNull();
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('lets the notice go after a few seconds, and keeps the link', async () => {
+      jest.useFakeTimers({ advanceTimers: true });
+      const { user } = renderDialog();
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+      await expectCopiedNotice();
+
+      act(() => {
+        jest.advanceTimersByTime(1000);
+      });
+      expect(screen.getByRole('status')).toHaveTextContent('copied to clipboard');
+
+      act(() => {
+        jest.advanceTimersByTime(3000);
+      });
+      expect(screen.queryByText('copied to clipboard')).toBeNull();
+      expect(screen.getByRole('textbox', { name: 'share link' })).toBeInTheDocument();
+    });
+
+    it('drops the notice with the link when that link is revoked', async () => {
+      const { user } = renderDialog();
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+      await expectCopiedNotice();
+
+      await user.click(
+        screen.getByRole('button', {
+          name: `revoke link created ${formatDateTime(NEWER.createdAt)}`,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(screen.queryByRole('textbox', { name: 'share link' })).toBeNull(),
+      );
+      expect(screen.queryByText('copied to clipboard')).toBeNull();
+    });
+
+    it('drops the notice when the dialog is reopened', async () => {
+      const { user, rerender } = renderDialog();
+
+      await user.click(await screen.findByRole('button', { name: 'create link' }));
+      await expectCopiedNotice();
+
+      rerender(dialogTree({ open: false }));
+      rerender(dialogTree());
+
+      await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+      expect(screen.queryByRole('textbox', { name: 'share link' })).toBeNull();
+      expect(screen.queryByText('copied to clipboard')).toBeNull();
+    });
+  });
+
   describe('active links', () => {
     it('says so when there are none', async () => {
       renderDialog();
@@ -346,14 +631,39 @@ describe('ShareChatDialog', () => {
       renderDialog();
 
       await screen.findByRole('dialog');
+      // The created stamp carries the time as well as the date; expiry stays a date.
+      expect(formatCreated(NEWER.createdAt)).toMatch(/\d:\d{2}/);
       expect(
-        screen.getByText(`created ${formatDate(NEWER.createdAt)} · never expires · 2 messages`),
+        screen.getByText(`created ${formatCreated(NEWER.createdAt)} · never expires · 2 messages`),
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          `created ${formatDate(OLDER.createdAt)} · expires ${formatDate(OLDER_EXPIRES_AT)} · 1 message`,
+          `created ${formatCreated(OLDER.createdAt)} · expires ${formatDate(OLDER_EXPIRES_AT)} · 1 message`,
         ),
       ).toBeInTheDocument();
+    });
+
+    it("gives every row a copy button, named for its link, that copies that row's URL", async () => {
+      mockShareState.shares = [NEWER, OLDER];
+      const { user } = renderDialog();
+
+      const copyNewer = await screen.findByRole('button', {
+        name: `copy link created ${formatDateTime(NEWER.createdAt).toLowerCase()}`,
+      });
+      const copyOlder = screen.getByRole('button', {
+        name: `copy link created ${formatDateTime(OLDER.createdAt).toLowerCase()}`,
+      });
+      expect(copyNewer).not.toBe(copyOlder);
+
+      await user.click(copyOlder);
+      expect(await navigator.clipboard.readText()).toBe(
+        shareUrl(window.location.origin, OLDER.token),
+      );
+
+      await user.click(copyNewer);
+      expect(await navigator.clipboard.readText()).toBe(
+        shareUrl(window.location.origin, NEWER.token),
+      );
     });
 
     it('revokes one row and leaves the other standing', async () => {
