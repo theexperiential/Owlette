@@ -13,6 +13,7 @@
  */
 
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { withAdvisor } from '@/lib/hoot/advisor';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
@@ -417,7 +418,8 @@ async function runServerSideLLM(
     model,
     system: buildSystemPrompt(machineName || machineId, false, processes),
     messages,
-    tools: executableTools,
+    // Plus the Opus 5 advisor, capped per reply, when this model may consult it.
+    ...withAdvisor(llmConfig, executableTools),
     stopWhen: stepCountIs(10),
   });
 
@@ -473,7 +475,8 @@ async function runSiteWideMode(
     model,
     system: buildSystemPrompt('', true),
     messages,
-    tools: executableTools,
+    // Plus the Opus 5 advisor, capped per reply, when this model may consult it.
+    ...withAdvisor(llmConfig, executableTools),
     stopWhen: stepCountIs(10),
   });
 

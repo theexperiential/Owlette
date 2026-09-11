@@ -11,6 +11,7 @@
  *   - every other tool still dispatches as a generic mcp tool call
  *   - talon authoring / enable-toggle tools are excluded entirely (an unattended run
  *     must not author automations)
+ *   - the Opus 5 advisor is offered with its per-reply cap, or not at all
  */
 
 import { NextRequest } from 'next/server';
@@ -181,28 +182,38 @@ function request(): NextRequest {
   });
 }
 
+interface GenerateTextArgs {
+  tools: Record<string, ExecutableTool>;
+  prepareStep?: unknown;
+}
+
 /**
- * Drive the route far enough for the background investigation to hand its
- * tool set to `generateText`, then return that set.
+ * Drive the route far enough for the background investigation to call
+ * `generateText`, then return what it was called with.
  */
-async function buildTools(): Promise<Record<string, ExecutableTool>> {
-  let resolveTools: (tools: Record<string, ExecutableTool>) => void = () => {};
-  const toolsPromise = new Promise<Record<string, ExecutableTool>>((resolve) => {
-    resolveTools = resolve;
+async function captureGenerateText(): Promise<GenerateTextArgs> {
+  let resolveArgs: (args: GenerateTextArgs) => void = () => {};
+  const argsPromise = new Promise<GenerateTextArgs>((resolve) => {
+    resolveArgs = resolve;
   });
 
-  mockGenerateText.mockImplementation(async ({ tools }: { tools: Record<string, ExecutableTool> }) => {
-    resolveTools(tools);
+  mockGenerateText.mockImplementation(async (args: GenerateTextArgs) => {
+    resolveArgs(args);
     return { text: 'OUTCOME: investigated', steps: [], response: { messages: [] } };
   });
 
   const res = await POST(request());
   expect(await res.json()).toMatchObject({ accepted: true });
 
-  const tools = await toolsPromise;
+  const args = await argsPromise;
   // Let the fire-and-forget investigation finish its writes before asserting.
   await new Promise((resolve) => setImmediate(resolve));
-  return tools;
+  return args;
+}
+
+/** The tool set the investigation hands to `generateText`. */
+async function buildTools(): Promise<Record<string, ExecutableTool>> {
+  return (await captureGenerateText()).tools;
 }
 
 beforeEach(() => {
@@ -228,6 +239,24 @@ afterEach(() => {
 });
 
 /* tests */
+
+describe('autonomous advisor', () => {
+  it('offers the default Claude model the Opus 5 advisor, capped per reply', async () => {
+    mockResolveLlmConfig.mockResolvedValue({ provider: 'anthropic', apiKey: 'k' });
+
+    const { tools, prepareStep } = await captureGenerateText();
+
+    expect(tools).toHaveProperty('advisor');
+    expect(prepareStep).toEqual(expect.any(Function));
+  });
+
+  it('offers a model outside the pairing table neither the advisor nor a cap', async () => {
+    const { tools, prepareStep } = await captureGenerateText();
+
+    expect(tools).not.toHaveProperty('advisor');
+    expect(prepareStep).toBeUndefined();
+  });
+});
 
 describe('autonomous tool dispatch routing', () => {
   it('executes get_site_logs server-side instead of relaying it to the agent', async () => {

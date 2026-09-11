@@ -2,11 +2,14 @@
 /**
  * @jest-environment jsdom
  *
- * ChatWindow — scoped to "edit & resend" on a user message: the pencil opens a
- * box holding the message, the caret waits after the text, Enter, Shift+Enter
- * and Escape keep their meanings, and the box grows with its text. jsdom lays
- * nothing out, so the growth runs against modelled metrics, and that the box's
- * column spans the whole row is not asserted at all.
+ * ChatWindow — "edit & resend" on a user message: the pencil opens a box holding
+ * the message, the caret waits after the text, Enter, Shift+Enter and Escape keep
+ * their meanings, and the box grows with its text. jsdom lays nothing out, so the
+ * growth runs against modelled metrics, and that the box's column spans the whole
+ * row is not asserted at all.
+ *
+ * Also how a Claude 5 reply renders: "thinking..." while it holds only thinking, a
+ * notice when it finishes empty, and a note (not a tool card) for an advisor call.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -235,5 +238,116 @@ describe('ChatWindow edit & resend', () => {
       renderChat({ onEditMessage: undefined });
       expect(screen.queryByRole('button', { name: 'edit message' })).toBeNull();
     });
+  });
+});
+
+describe('ChatWindow — a Claude 5 reply', () => {
+  const ASK = msg('u1', 'user', [{ type: 'text', text: 'why is the render node slow?' }]);
+  // Sonnet 5 and Opus 5 omit thinking text by default: the part holds only a signature.
+  const THINKING = { type: 'reasoning', text: '', state: 'done' };
+  const ANSWER = { type: 'text', text: 'the gpu is pinned at 100%.' };
+
+  it('keeps "thinking..." up while the reply holds only thinking', () => {
+    renderChat({ isLoading: true, messages: [ASK, msg('a1', 'assistant', [{ type: 'step-start' }, THINKING])] });
+
+    expect(screen.getByText('thinking...')).toBeInTheDocument();
+    expect(screen.queryByText(/no reply came back/)).toBeNull();
+  });
+
+  it('drops "thinking..." once the reply has text', () => {
+    renderChat({ isLoading: true, messages: [ASK, msg('a1', 'assistant', [THINKING, ANSWER])] });
+
+    expect(screen.queryByText('thinking...')).toBeNull();
+    expect(screen.getByText(ANSWER.text)).toBeInTheDocument();
+  });
+
+  it('says so when a finished reply came back empty', () => {
+    renderChat({ messages: [ASK, msg('a1', 'assistant', [{ type: 'step-start' }, THINKING])] });
+
+    expect(screen.getByText(/no reply came back/)).toBeInTheDocument();
+    expect(screen.queryByText('thinking...')).toBeNull();
+  });
+
+  it('keeps "thinking..." up after a reload while the turn is still live', () => {
+    // A reloaded tab isn't streaming; the stream doc says the turn runs on.
+    renderChat({ turnRunning: true, messages: [ASK, msg('a1', 'assistant', [THINKING])] });
+
+    expect(screen.getByText('thinking...')).toBeInTheDocument();
+    expect(screen.queryByText(/no reply came back/)).toBeNull();
+  });
+
+  it('leaves an interrupted empty reply to the interrupted notice', () => {
+    // As useHoot reports a dead runner: the stream doc still says running, gone stale.
+    renderChat({ turnRunning: true, turnStale: true, messages: [ASK, msg('a1', 'assistant', [THINKING])] });
+
+    expect(screen.getByText(/this turn was interrupted/)).toBeInTheDocument();
+    expect(screen.queryByText('thinking...')).toBeNull();
+    expect(screen.queryByText(/no reply came back/)).toBeNull();
+  });
+
+  it('leaves a failed turn to the error banner', () => {
+    // The provider call failed after the reply began, leaving an empty assistant message.
+    renderChat({ turnErrored: true, messages: [ASK, msg('a1', 'assistant', [{ type: 'step-start' }])] });
+
+    expect(screen.queryByText(/no reply came back/)).toBeNull();
+    expect(screen.queryByText('thinking...')).toBeNull();
+  });
+
+  it('notes an advisor consultation instead of drawing a tool card', () => {
+    const advisor = {
+      type: 'tool-advisor',
+      toolCallId: 'adv1',
+      state: 'output-available',
+      input: {},
+      output: { type: 'advisor_redacted_result', encryptedContent: 'opaque' },
+      providerExecuted: true,
+    };
+    renderChat({ messages: [ASK, msg('a1', 'assistant', [advisor, ANSWER])] });
+
+    expect(screen.getByText('consulted Claude Opus 5')).toBeInTheDocument();
+    expect(screen.queryByText(/advisor/i)).toBeNull();
+  });
+
+  it('notes a consultation that failed', () => {
+    const advisor = {
+      type: 'tool-advisor',
+      toolCallId: 'adv1',
+      state: 'output-error',
+      input: {},
+      errorText: JSON.stringify({ type: 'advisor_tool_result_error', errorCode: 'overloaded' }),
+      providerExecuted: true,
+    };
+    renderChat({ messages: [ASK, msg('a1', 'assistant', [advisor, ANSWER])] });
+
+    expect(screen.getByText("couldn't consult Claude Opus 5")).toBeInTheDocument();
+  });
+
+  it('marks a consultation cut off before its result', () => {
+    // A stop or a provider error ended the turn while Opus 5 was still being consulted.
+    const advisor = {
+      type: 'tool-advisor',
+      toolCallId: 'adv1',
+      state: 'input-available',
+      input: {},
+      providerExecuted: true,
+    };
+    renderChat({ messages: [ASK, msg('a1', 'assistant', [advisor])] });
+
+    expect(screen.getByText("couldn't consult Claude Opus 5")).toBeInTheDocument();
+    expect(screen.queryByText(/consulting/)).toBeNull();
+  });
+
+  it('shows a consultation in progress in place of "thinking..."', () => {
+    const advisor = {
+      type: 'tool-advisor',
+      toolCallId: 'adv1',
+      state: 'input-available',
+      input: {},
+      providerExecuted: true,
+    };
+    renderChat({ isLoading: true, messages: [ASK, msg('a1', 'assistant', [advisor])] });
+
+    expect(screen.getByText('consulting Claude Opus 5...')).toBeInTheDocument();
+    expect(screen.queryByText('thinking...')).toBeNull();
   });
 });

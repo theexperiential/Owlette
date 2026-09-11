@@ -930,6 +930,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               cancelPendingCommandIds={cancelPendingCommandIds}
               turnStale={chat.turnStale}
               turnRunning={chat.turnRunning}
+              turnErrored={Boolean(chat.error)}
             />
           )}
 

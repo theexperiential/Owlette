@@ -7,8 +7,9 @@
  * snapshots + final persist + categorize for new chats, no title/categorize overwrite for
  * existing ones, site-wide persist shape + fan-out, transient data-heartbeat chunks,
  * the toolCommand recovery index (Task 2.1 toolCallbacks), history repair from
- * `commands/completed`, error paths (finishTurn('error'), no persist), and superseded
- * turns skipping the final persist.
+ * `commands/completed`, error paths (finishTurn('error'), no persist), superseded
+ * turns skipping the final persist, and the Claude 5 advisor tool reaching (or kept
+ * from) the model.
  */
 
 import {
@@ -777,5 +778,154 @@ describe('startTurn — superseded turn', () => {
     // …but the superseding turn owns the chat doc now.
     expect(store[CHAT_PATH]).toBeUndefined();
     expect(categorizeNewChat).not.toHaveBeenCalled();
+  });
+});
+
+describe('startTurn — Claude 5 advisor', () => {
+  const ADVISOR_PART = {
+    type: 'tool-advisor',
+    toolCallId: 'srvtoolu_adv1',
+    state: 'output-available',
+    input: {},
+    output: { type: 'advisor_redacted_result', encryptedContent: 'opaque-advice' },
+    providerExecuted: true,
+  };
+
+  const historyWithAdvice = () => [
+    userMsg('u0', 'why is the render node slow?'),
+    assistantMsg('a0', [ADVISOR_PART, { type: 'text', text: 'the gpu is pinned.' }]),
+    userMsg('u1', 'check the cpu'),
+  ];
+
+  it('offers the default Claude model the Opus 5 advisor alongside the machine tools', async () => {
+    await collectChunks(startTurn(fakeDb, baseParams()));
+    await flushAsync();
+
+    expect(mockModel.doStreamCalls[0].tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'anthropic.advisor_20260301', name: 'advisor' }),
+        expect.objectContaining({ name: 'get_metrics' }),
+      ]),
+    );
+  });
+
+  it('replays earlier advice to a model that has the advisor', async () => {
+    await collectChunks(startTurn(fakeDb, baseParams({ messages: historyWithAdvice() })));
+    await flushAsync();
+
+    expect(JSON.stringify(mockModel.doStreamCalls[0].prompt)).toContain('opaque-advice');
+  });
+
+  it('keeps advisor history and the tool away from a model without the advisor', async () => {
+    (hootUtils.resolveLlmConfig as jest.Mock).mockResolvedValue({ provider: 'openai', apiKey: 'k' });
+
+    await collectChunks(startTurn(fakeDb, baseParams({ messages: historyWithAdvice() })));
+    await flushAsync();
+
+    const call = mockModel.doStreamCalls[0];
+    expect(call.tools?.map((t) => t.name)).toEqual(['get_metrics']);
+    const prompt = JSON.stringify(call.prompt);
+    expect(prompt).not.toContain('advisor');
+    expect(prompt).toContain('the gpu is pinned.');
+    // The stored history keeps the advice for a later switch back to Claude.
+    const persisted = JSON.stringify(store[CHAT_PATH].messages);
+    expect(persisted).toContain('opaque-advice');
+  });
+
+  it('leaves a failed consultation out of the next request, and keeps the advice', async () => {
+    const failed = {
+      type: 'tool-advisor',
+      toolCallId: 'srvtoolu_failed0',
+      state: 'output-error',
+      input: {},
+      errorText: JSON.stringify({ type: 'advisor_tool_result_error', errorCode: 'overloaded' }),
+      providerExecuted: true,
+    };
+
+    await collectChunks(
+      startTurn(
+        fakeDb,
+        baseParams({
+          messages: [
+            userMsg('u0', 'why is the render node slow?'),
+            assistantMsg('a0', [failed, ADVISOR_PART, { type: 'text', text: 'the gpu is pinned.' }]),
+            userMsg('u1', 'check the cpu'),
+          ],
+        }),
+      ),
+    );
+    await flushAsync();
+
+    const prompt = JSON.stringify(mockModel.doStreamCalls[0].prompt);
+    expect(prompt).not.toContain('srvtoolu_failed0');
+    expect(prompt).toContain('opaque-advice');
+  });
+
+  it('counts the consultations a resumed reply already made', async () => {
+    // A tier-3 approval resume continues the stored assistant message.
+    const secondConsult = { ...ADVISOR_PART, toolCallId: 'srvtoolu_adv2' };
+
+    await collectChunks(
+      startTurn(
+        fakeDb,
+        baseParams({
+          messages: [
+            userMsg('u0', 'why is the render node slow?'),
+            assistantMsg('a0', [ADVISOR_PART, secondConsult, { type: 'text', text: 'checking.' }]),
+          ],
+        }),
+      ),
+    );
+    await flushAsync();
+
+    const call = mockModel.doStreamCalls[0];
+    expect(call.tools?.map((t) => t.name)).toEqual(['get_metrics']);
+    expect(JSON.stringify(call.prompt)).not.toContain('opaque-advice');
+  });
+
+  it('stops offering the advisor once a turn has consulted it twice', async () => {
+    const consultThenCallTool = (n: number) => [
+      {
+        type: 'tool-call' as const,
+        toolCallId: `srvtoolu_a${n}`,
+        toolName: 'advisor',
+        input: '{}',
+        providerExecuted: true,
+      },
+      {
+        type: 'tool-result' as const,
+        toolCallId: `srvtoolu_a${n}`,
+        toolName: 'advisor',
+        result: { type: 'advisor_redacted_result', encryptedContent: `advice-${n}` },
+      },
+      { type: 'tool-call' as const, toolCallId: `call_${n}`, toolName: 'get_metrics', input: '{}' },
+      { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
+    ];
+    let call = 0;
+    mockModel = new MockLanguageModelV3({
+      doStream: async () => {
+        call += 1;
+        return {
+          stream: simulateReadableStream({
+            chunks: call <= 2 ? consultThenCallTool(call) : textChunks('cpu is at 12%'),
+          }),
+        };
+      },
+    });
+
+    await collectChunks(startTurn(fakeDb, baseParams()));
+    await flushAsync();
+
+    expect(mockModel.doStreamCalls.map((c) => c.tools?.map((t) => t.name))).toEqual([
+      ['get_metrics', 'advisor'],
+      ['get_metrics', 'advisor'],
+      ['get_metrics'],
+    ]);
+    // The third call carries none of this turn's advice: the API rejects it without the tool.
+    expect(JSON.stringify(mockModel.doStreamCalls[2].prompt)).not.toContain('advice-');
+    // The chat still records both consultations.
+    const persisted = JSON.stringify(store[CHAT_PATH].messages);
+    expect(persisted).toContain('advice-1');
+    expect(persisted).toContain('advice-2');
   });
 });

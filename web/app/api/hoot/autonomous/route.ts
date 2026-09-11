@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateText, stepCountIs, tool, jsonSchema } from 'ai';
+import { withAdvisor } from '@/lib/hoot/advisor';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -379,7 +380,8 @@ async function runAutonomousInvestigation(
       model,
       system: systemPrompt,
       messages: [{ role: 'user', content: eventContext }],
-      tools,
+      // Plus the Opus 5 advisor, capped per reply, when this model may consult it.
+      ...withAdvisor(llmConfig, tools),
       stopWhen: stepCountIs(MAX_STEPS),
     });
 

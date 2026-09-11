@@ -64,6 +64,8 @@ import {
   type LostResultResolution,
 } from '@/lib/hoot/repairMessages';
 import { claimApproval } from '@/lib/hoot/approvalLedger.server';
+import { advisorCallsIn, modelHistoryFor, withAdvisor } from '@/lib/hoot/advisor';
+import { ADVISOR_TOOL_NAME } from '@/lib/llmModels';
 import {
   finishTurn,
   recordToolCommand,
@@ -485,6 +487,18 @@ export function startTurn(
         },
       );
 
+      // The Opus 5 advisor joins the agent tools when this model may consult it, capped
+      // per reply; a reply resumed after a tier-3 approval keeps counting what it already
+      // consulted. History that holds advisor results must not reach a request without
+      // the tool — the API rejects it — so it is stripped when this turn can't offer one;
+      // failed consultations are always left out (see modelHistoryFor).
+      const { tools: turnTools, prepareStep } = withAdvisor(
+        llmConfig,
+        tools,
+        advisorCallsIn(repairedMessages[repairedMessages.length - 1]),
+      );
+      const modelHistory = modelHistoryFor(repairedMessages, ADVISOR_TOOL_NAME in turnTools);
+
       const result = streamText({
         model: createModel(llmConfig),
         system: isSiteMode
@@ -492,10 +506,18 @@ export function startTurn(
           : buildSystemPrompt(params.machineName || params.machineId, false, processes),
         // Pass `tools` so per-tool toModelOutput hooks (e.g. capture_screenshot
         // → image-url) also project PRIOR-turn outputs into model content.
-        messages: await convertToModelMessages(repairedMessages, { tools }),
-        tools,
+        messages: await convertToModelMessages(modelHistory, { tools: turnTools }),
+        tools: turnTools,
+        prepareStep,
         stopWhen: stepCountIs(10),
         abortSignal: abortController.signal,
+        onFinish: ({ finishReason }) => {
+          // A safety-classifier refusal ends the turn with no answer. The chat shows a
+          // notice for the empty reply; the log records why.
+          if (finishReason === 'content-filter') {
+            console.warn(`[hoot] the model declined the turn in chat ${sanitizeForLog(chatId)} (content-filter)`);
+          }
+        },
       });
 
       // Model/tool-loop errors arrive as error CHUNKS, not rejections.

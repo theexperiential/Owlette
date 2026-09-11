@@ -7,6 +7,20 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ## [Unreleased]
 
+### changed — hoot runs on Claude Sonnet 5, and can consult Claude Opus 5
+
+Hoot now defaults to Claude Sonnet 5 for accounts that haven't picked a model, and
+the model picker in settings starts a new key on it; an account that already saved
+a model keeps it until you pick another. Sonnet 5 thinks before it answers, and
+"thinking..." stays up until the reply starts. On a problem it judges hard, it can
+consult Claude Opus 5 partway through an answer — Anthropic's advisor tool, at most
+twice per reply — and the chat notes each consultation. They bill at Opus rates on
+your own Anthropic key. Claude Haiku 4.5, Sonnet 4.6 and Opus 4.6–4.8 can consult
+it too; Opus 5, the Fable models, older Claude models and OpenAI models don't.
+
+A reply that comes back empty — for instance when the model declines the request —
+now says so instead of leaving a blank reply.
+
 ### added — a resizable conversation list, and a simpler share dialog
 
 Hoot's conversation list can be dragged wider from its right edge — 200px to

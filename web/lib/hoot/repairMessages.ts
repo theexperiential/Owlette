@@ -150,7 +150,7 @@ function applyRepairs(
     if (message.role !== 'assistant' || index > lastUserIndex) return message;
 
     let changed = false;
-    const parts = message.parts.map((part) => {
+    const parts = message.parts.map((part): UIMessagePart | null => {
       if (!isToolPart(part)) return part;
 
       // Terminal states already carry a result/error. Anything else is dangling and
@@ -169,6 +169,11 @@ function applyRepairs(
       changed = true;
       repairedToolCallIds.push(part.toolCallId);
 
+      // A provider-executed call (Anthropic's advisor) ran on the provider's side:
+      // there is no agent result to recover, and a synthetic error can't stand in for
+      // the provider's own result block. Drop the call.
+      if (isProviderExecuted(part)) return null;
+
       // `approval-requested` was never dispatched (the tool never ran), so
       // there is nothing to recover — synthesize the superseded-approval error.
       if (part.state === 'approval-requested') {
@@ -183,7 +188,7 @@ function applyRepairs(
         return toOutputPart(part, resolution.output);
       }
       return toErrorPart(part, resolution?.errorText ?? LOST_RESULT_ERROR);
-    });
+    }).filter((part): part is UIMessagePart => part !== null);
 
     return changed ? { ...message, parts } : message;
   });
@@ -191,11 +196,17 @@ function applyRepairs(
   return { messages: repaired, repairedToolCallIds };
 }
 
+/** A tool call the provider ran itself (Anthropic's advisor); hoot never dispatched it. */
+function isProviderExecuted(part: UIMessagePart): boolean {
+  return (part as { providerExecuted?: boolean }).providerExecuted === true;
+}
+
 /**
  * Tool call ids of resolver-eligible dangling parts on superseded assistant turns, in
  * history order: any non-terminal state EXCEPT `approval-requested` (never
- * dispatched). Mirrors `applyRepairs`, including `approval-responded`, so a tier-3
- * tool approved and superseded mid-execution still recovers its real result.
+ * dispatched), skipping provider-executed calls (no agent result exists for them).
+ * Mirrors `applyRepairs`, including `approval-responded`, so a tier-3 tool approved
+ * and superseded mid-execution still recovers its real result.
  */
 function collectResolverEligibleIds(messages: UIMessage[]): string[] {
   const ids: string[] = [];
@@ -206,6 +217,7 @@ function collectResolverEligibleIds(messages: UIMessage[]): string[] {
     for (const part of message.parts) {
       if (
         isToolPart(part) &&
+        !isProviderExecuted(part) &&
         part.state !== 'output-available' &&
         part.state !== 'output-error' &&
         part.state !== 'approval-requested' &&

@@ -16,6 +16,27 @@ import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { ADVISOR_MODEL_NAME, ADVISOR_TOOL_NAME } from '@/lib/llmModels';
+
+type MessagePart = UIMessage['parts'][number];
+
+function isToolPart(part: MessagePart): boolean {
+  return part.type.startsWith('tool-') || part.type === 'dynamic-tool';
+}
+
+/**
+ * Whether a message has anything to render. Claude Sonnet 5 and Opus 5 think before
+ * they answer, so an assistant message can hold nothing but an empty-text thinking
+ * part for a while.
+ */
+function hasVisibleContent(message: UIMessage): boolean {
+  return message.parts.some(
+    (part) =>
+      (part.type === 'text' && part.text.trim().length > 0) ||
+      part.type === 'file' ||
+      isToolPart(part),
+  );
+}
 
 function pickYouTranslation(messageId: string) {
   let hash = 0;
@@ -49,9 +70,11 @@ interface ChatWindowProps {
    * the buttons there is the OWL-47 double-execution window.
    */
   turnRunning?: boolean;
+  /** The last turn failed. The error banner explains it, so its empty reply is not shown. */
+  turnErrored?: boolean;
 }
 
-export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale, turnRunning }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale, turnRunning, turnErrored }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -175,6 +198,11 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     );
   }
 
+  const lastMessage = messages[messages.length - 1];
+  // A reply is in flight while this tab streams it — or, after a reload, while the
+  // stream doc says its turn is live and not stale.
+  const inFlight = isLoading || (Boolean(turnRunning) && !turnStale);
+
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
       {/* Scroll to top button */}
@@ -218,9 +246,16 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </div>
       )}
 
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isUser = message.role === 'user';
         const isEditing = isUser && editingId === message.id;
+        const emptyReply = !isUser && !hasVisibleContent(message);
+        // The newest reply with nothing to show yet is the model thinking: the
+        // indicator below stands in for it — or, once the turn is stale or has failed,
+        // the interrupted notice or the error banner does.
+        if (emptyReply && index === messages.length - 1 && (inFlight || turnStale || turnErrored)) {
+          return null;
+        }
         return (
         <div key={message.id} className="max-w-3xl mx-auto">
           <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
@@ -398,6 +433,24 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 const approvalId = toolPart.approval?.id;
                 const running = !hasResult && !awaitingApproval && !denied;
 
+                // hoot consulting a stronger model mid-answer. The advice is
+                // encrypted and nothing ran on a machine, so a note, not a card. A
+                // consultation is only under way while its reply is in flight; one a
+                // stop or an error cut off never gets its result.
+                if (toolName === ADVISOR_TOOL_NAME) {
+                  const consulting = running && inFlight && index === messages.length - 1;
+                  return (
+                    <p key={i} className="flex items-center gap-2 my-2 text-xs text-muted-foreground">
+                      {consulting && <SynapticIndicator />}
+                      {consulting
+                        ? `consulting ${ADVISOR_MODEL_NAME}...`
+                        : running || state === 'output-error'
+                          ? `couldn't consult ${ADVISOR_MODEL_NAME}`
+                          : `consulted ${ADVISOR_MODEL_NAME}`}
+                    </p>
+                  );
+                }
+
                 // Cancel only for a running tool that actually dispatched agent
                 // commands (toolCallId present in toolCommands with ≥1 machine).
                 // It fans out to every machine the call targeted, hence keyed by
@@ -426,6 +479,11 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
 
               return null;
               })}
+              {emptyReply && (
+                <p className="text-xs text-muted-foreground border-l-2 border-border pl-3">
+                  no reply came back. if you didn&apos;t stop this turn, the model may have declined the request — try rephrasing it.
+                </p>
+              )}
               </div>
               )}
             </div>
@@ -452,8 +510,8 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </div>
       )}
 
-      {/* Loading indicator */}
-      {isLoading && messages[messages.length - 1]?.role === 'user' && (
+      {/* Loading indicator — up until the reply has something to show */}
+      {inFlight && lastMessage && (lastMessage.role === 'user' || !hasVisibleContent(lastMessage)) && (
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
             <div className="flex-shrink-0">

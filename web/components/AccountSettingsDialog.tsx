@@ -20,29 +20,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { HootIcon } from '@/components/icons/HootIcon';
 import { ApiKeysManager } from '@/components/ApiKeysManager';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { AVAILABLE_MODELS, preselectedModel } from '@/lib/llmModels';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
-
-const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
-  anthropic: [
-    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
-    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
-    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
-    { id: 'claude-sonnet-4-0', name: 'Claude Sonnet 4' },
-    { id: 'claude-opus-4-0', name: 'Claude Opus 4' },
-  ],
-  openai: [
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
-    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano' },
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-    { id: 'o3', name: 'o3' },
-    { id: 'o4-mini', name: 'o4 Mini' },
-  ],
-};
 
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
@@ -817,7 +797,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       <Label htmlFor="llmModel" className="text-white">model</Label>
                       {(() => {
                         const models = llmModels.length > 0 ? llmModels : AVAILABLE_MODELS[llmProvider];
-                        const defaultModel = models[0]?.id || '';
+                        const defaultModel = preselectedModel(llmProvider, models);
                         return (
                           <Select
                             value={llmModel || defaultModel}
@@ -894,7 +874,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               body: JSON.stringify({
                                 provider: llmProvider,
                                 apiKey: llmApiKey,
-                                model: llmModel || (llmModels.length > 0 ? llmModels[0].id : AVAILABLE_MODELS[llmProvider][0].id),
+                                model: llmModel || preselectedModel(llmProvider, llmModels.length > 0 ? llmModels : AVAILABLE_MODELS[llmProvider]),
                               }),
                             });
                             if (res.ok) {

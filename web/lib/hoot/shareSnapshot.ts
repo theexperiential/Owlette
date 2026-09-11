@@ -7,13 +7,15 @@
  *
  * What survives: user and assistant text, and tool calls collapsed to a name and
  * an outcome. What never does: tool inputs and outputs (hostnames, paths, log
- * lines, screenshots live there), attachments, system messages, reasoning and
- * step/source/data parts. Assistant TEXT can still quote machine details — that
- * is why the dialog shows the preview before anything is created.
+ * lines, screenshots live there), attachments, system messages, reasoning,
+ * advisor consultations and step/source/data parts. Assistant TEXT can still quote
+ * machine details — that is why the dialog shows the preview before anything is
+ * created.
  */
 
 import type { UIMessage } from 'ai';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
+import { ADVISOR_TOOL_NAME } from '@/lib/llmModels';
 import {
   SITE_WIDE_MACHINE_NAME,
   SITE_WIDE_TARGET_LABEL,
@@ -100,6 +102,9 @@ export function buildShareSnapshot(input: BuildShareSnapshotInput): ShareSnapsho
         continue;
       }
       if (isToolPart(part)) {
+        // The advisor is hoot consulting a stronger model, not work done on a machine,
+        // and its advice is encrypted — a reader never sees it.
+        if (toolNameOf(part) === ADVISOR_TOOL_NAME) continue;
         collapsedToolCalls += 1;
         parts.push({ type: 'tool', toolName: toolNameOf(part), outcome: toolOutcomeOf(part) });
         continue;
