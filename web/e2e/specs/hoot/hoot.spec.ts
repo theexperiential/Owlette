@@ -65,6 +65,75 @@ test.describe('hoot conversations and controls', () => {
     await expect(page.getByText(/machine is offline/i)).toBeVisible();
   });
 
+  test('resizes the conversation sidebar and remembers the width and the collapsed state', async ({ page }) => {
+    await page.goto('/hoot');
+
+    const panel = page.getByTestId('hoot-conversation-panel');
+    const handle = page.getByRole('separator', { name: /resize conversation list/i });
+    const toggle = page.getByRole('button', { name: /hoot sidebar$/ });
+    const hideSidebar = page.getByRole('button', { name: 'hide hoot sidebar' });
+    const showSidebar = page.getByRole('button', { name: 'show hoot sidebar' });
+
+    // Both prefs live on one per-user doc that outlives the page, so normalise
+    // rather than assume the default — a retry would otherwise inherit the
+    // previous attempt's state. Probing first would race the hydrating read
+    // (which lands after the markup, carrying whatever the last attempt stored);
+    // toggling first settles it, because a pref the user has set wins over that
+    // read for the rest of the session.
+    await toggle.click();
+    await expect(async () => {
+      if (await showSidebar.isVisible()) await toggle.click();
+      await expect(handle).toBeVisible({ timeout: 1_000 });
+    }).toPass({ timeout: 10_000 });
+    await handle.dblclick();
+    await expect(panel).toHaveCSS('width', '300px');
+
+    // Drag the right edge 120px wider.
+    const grip = await handle.boundingBox();
+    if (!grip) throw new Error('resize handle has no bounding box');
+
+    const startX = Math.round(grip.x + grip.width / 2);
+
+    // Grab from the gutter beside the panel, never from inside it: on the panel's
+    // inner edge the strip would cover the conversation list's scrollbar and take
+    // the thumb's clicks.
+    const panelBox = await panel.boundingBox();
+    if (!panelBox) throw new Error('conversation panel has no bounding box');
+    expect(startX).toBeGreaterThan(panelBox.x + panelBox.width);
+
+    const y = Math.round(grip.y + grip.height / 2);
+    await page.mouse.move(startX, y);
+    await page.mouse.down();
+    await page.mouse.move(startX + 120, y, { steps: 8 });
+    await page.mouse.up();
+
+    await expect(panel).toHaveCSS('width', '420px');
+    await expect(handle).toHaveAttribute('aria-valuenow', '420');
+
+    // The pref write is debounced 400ms past the drag; reload once it has landed.
+    await page.waitForTimeout(1_000);
+    await page.reload();
+    await expect(panel).toHaveCSS('width', '420px');
+
+    // Collapsed state rides the same doc and survives a reload too — with no
+    // edge to grab while the column is folded away.
+    await hideSidebar.click();
+    await expect(panel).toHaveCSS('width', '0px');
+    await expect(handle).toHaveCount(0);
+
+    await page.waitForTimeout(1_000);
+    await page.reload();
+    await expect(panel).toHaveCSS('width', '0px');
+    await expect(handle).toHaveCount(0);
+
+    // Leave the shared prefs doc as we found it for the specs that follow.
+    await showSidebar.click();
+    await expect(handle).toBeVisible();
+    await handle.dblclick();
+    await expect(panel).toHaveCSS('width', '300px');
+    await page.waitForTimeout(1_000);
+  });
+
   test('shows send error state when the Hoot API rejects a message', async ({ page }) => {
     await page.route('**/api/hoot', async (route) => {
       await route.fulfill({

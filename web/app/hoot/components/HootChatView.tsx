@@ -6,7 +6,12 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useOwletteChat, type ChatConversation } from '@/hooks/useHoot';
-import { useHootSidebarPrefs } from '@/hooks/useHootSidebarPrefs';
+import {
+  useHootSidebarPrefs,
+  HOOT_SIDEBAR_DEFAULT_WIDTH,
+  HOOT_SIDEBAR_MAX_WIDTH,
+  HOOT_SIDEBAR_MIN_WIDTH,
+} from '@/hooks/useHootSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
@@ -21,11 +26,21 @@ import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
 import { ShareChatDialog } from './ShareChatDialog';
+import { ConversationResizeHandle } from './ConversationResizeHandle';
 import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { HootIcon } from '@/components/icons/HootIcon';
+
+/** Arrow-key nudge for the sidebar resize handle; Shift multiplies it there. */
+const SIDEBAR_RESIZE_STEP = 16;
+/**
+ * Custom property carrying the conversation panel's width. A variable rather
+ * than a plain inline width because a drag writes it straight to the DOM node —
+ * see `handleResize`.
+ */
+const PANEL_WIDTH_VAR = '--hoot-panel-w';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -102,8 +117,45 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [categorizingAll, setCategorizingAll] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  // Sidebar expand/collapse state persists per-device to Firestore.
-  const { sidebarOpen, setSidebarOpen, collapsedGroups, setCollapsedGroups } = useHootSidebarPrefs();
+  // Sidebar expand/collapse state and width persist per-device to Firestore.
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+    collapsedGroups,
+    setCollapsedGroups,
+    sidebarWidth,
+    setSidebarWidth,
+    hydrated: prefsHydrated,
+  } = useHootSidebarPrefs();
+  const panelRef = useRef<HTMLElement>(null);
+  // A resize in flight touches the DOM node only and re-renders nothing: this
+  // component owns the chat transcript, which re-parses every message's markdown
+  // when it renders, so a pointermove routed through React state would have the
+  // column trailing the pointer on any real conversation. The width goes on as a
+  // custom property, and the transition comes off in the same breath or a 300ms
+  // ease would do the trailing instead.
+  const handleResize = useCallback((next: number) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    panel.style.transitionProperty = 'none';
+    panel.style.setProperty(PANEL_WIDTH_VAR, `${next}px`);
+  }, []);
+  // Commit hands the width back to React (and to Firestore) and restores the
+  // transition, so collapse/expand still animates.
+  const handleResizeCommit = useCallback((next: number) => {
+    panelRef.current?.style.removeProperty('transition-property');
+    setSidebarWidth(next);
+  }, [setSidebarWidth]);
+  // Hydration corrects the width (and the collapsed state) a few hundred ms in.
+  // With the transition already live that correction plays as a slide on every
+  // visit, so it's enabled a frame later — by which time the corrected width has
+  // painted.
+  const [animatePanel, setAnimatePanel] = useState(false);
+  useEffect(() => {
+    if (!prefsHydrated) return;
+    const raf = requestAnimationFrame(() => setAnimatePanel(true));
+    return () => cancelAnimationFrame(raf);
+  }, [prefsHydrated]);
   // Below `md` the list moves into a left-slide sheet. Transient on purpose —
   // unlike `sidebarOpen` it is NOT persisted; a sheet that reopened itself every
   // visit would bury the chat behind an overlay.
@@ -470,10 +522,14 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
   const showConversationNotFound = Boolean(initialChatId && chat.chatLoadError === 'not_found');
 
-  // The desktop aside animates `w-64` ↔ `w-0`, so children carry a fixed width to
-  // stop content reflowing mid-collapse. In the sheet the shell owns the width and
-  // a fixed 256px child would leave a gap.
-  const conversationPanelWidth = isDesktop ? 'w-64 min-w-64' : 'w-full min-w-0';
+  // The desktop aside animates its width ↔ `0`, so children carry that width as a
+  // fixed size to stop content reflowing mid-collapse — from the same variable
+  // the aside uses, so a drag moves them with it. In the sheet the shell owns the
+  // width and a fixed child would leave a gap.
+  const conversationPanelClass = isDesktop ? '' : 'w-full min-w-0';
+  const conversationPanelStyle = isDesktop
+    ? { width: `var(${PANEL_WIDTH_VAR})`, minWidth: `var(${PANEL_WIDTH_VAR})` }
+    : undefined;
 
   if (authLoading || sitesLoading) {
     return (
@@ -533,10 +589,27 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
         <ConversationPanelShell
           isDesktop={isDesktop}
           sidebarOpen={sidebarOpen}
+          width={sidebarWidth}
+          animate={animatePanel}
+          panelRef={panelRef}
           mobileOpen={mobileConversationsOpen}
           onMobileOpenChange={setMobileConversationsOpen}
+          resizeHandle={
+            <ConversationResizeHandle
+              width={sidebarWidth}
+              min={HOOT_SIDEBAR_MIN_WIDTH}
+              max={HOOT_SIDEBAR_MAX_WIDTH}
+              step={SIDEBAR_RESIZE_STEP}
+              defaultWidth={HOOT_SIDEBAR_DEFAULT_WIDTH}
+              onResize={handleResize}
+              onCommit={handleResizeCommit}
+            />
+          }
         >
-          <div className={`${conversationPanelWidth} h-12 px-2 border-b border-border flex items-center gap-1`}>
+          <div
+            className={`${conversationPanelClass} h-12 px-2 border-b border-border flex items-center gap-1`}
+            style={conversationPanelStyle}
+          >
             {searchOpen ? (
               /* Search mode: compact new chat + expanded input */
               <>
@@ -579,9 +652,9 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                   onClick={() => handleNewChat()}
                   variant="ghost"
                   size="sm"
-                  className="flex-1 min-w-0 h-8 text-foreground"
+                  className="flex-1 min-w-0 h-8 justify-start text-foreground"
                 >
-                  <Plus className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <Plus className="h-4 w-4 flex-shrink-0" />
                   <span className="truncate">new hoot</span>
                 </Button>
                 {!chat.searchQuery && chat.conversations.length > 0 && (
@@ -630,7 +703,8 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
           <div
             ref={sidebarScrollRef}
-            className={`${conversationPanelWidth} flex-1 overflow-y-auto ${isDesktop ? 'border-r border-border' : ''}`}
+            className={`${conversationPanelClass} flex-1 overflow-y-auto ${isDesktop ? 'border-r border-border' : ''}`}
+            style={conversationPanelStyle}
           >
             {chat.conversations.length === 0 ? (
               <div className="p-4 text-center text-xs text-muted-foreground">
@@ -985,20 +1059,45 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 function ConversationPanelShell({
   isDesktop,
   sidebarOpen,
+  width,
+  animate,
+  panelRef,
   mobileOpen,
   onMobileOpenChange,
+  resizeHandle,
   children,
 }: {
   isDesktop: boolean;
   sidebarOpen: boolean;
+  width: number;
+  /** Held off until the stored prefs land; a drag kills it on the node itself. */
+  animate: boolean;
+  panelRef: React.Ref<HTMLElement>;
   mobileOpen: boolean;
   onMobileOpenChange: (open: boolean) => void;
+  resizeHandle: React.ReactNode;
   children: React.ReactNode;
 }) {
   if (isDesktop) {
     return (
-      <aside className={`bg-card flex-col hidden md:flex overflow-hidden transition-all duration-300 ease-in-out rounded-lg border border-border ${sidebarOpen ? 'w-64' : 'w-0 border-0'}`}>
-        {children}
+      // `relative` anchors the resize handle beside the right edge.
+      <aside
+        ref={panelRef}
+        data-testid="hoot-conversation-panel"
+        style={{
+          [PANEL_WIDTH_VAR]: `${width}px`,
+          width: sidebarOpen ? `var(${PANEL_WIDTH_VAR})` : 0,
+        } as React.CSSProperties}
+        className={`relative bg-card flex-col hidden md:flex rounded-lg border border-border ${animate ? 'transition-all duration-300 ease-in-out' : 'transition-none'} ${sidebarOpen ? '' : 'border-0'}`}
+      >
+        {/* Collapsed there is no edge to grab, and nothing to resize. */}
+        {sidebarOpen && resizeHandle}
+        {/* The clip lives on this wrapper rather than the <aside>: children carry
+            a fixed width so they can't reflow mid-collapse, and the handle has to
+            be able to sit outside the panel, clear of the list's scrollbar. */}
+        <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-lg">
+          {children}
+        </div>
       </aside>
     );
   }
@@ -1154,7 +1253,7 @@ function ConversationItem({
   return (
     <div
       data-active-conversation={isActive ? 'true' : undefined}
-      className={`group flex items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors ${
+      className={`group relative flex items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors ${
         isActive ? 'bg-accent' : ''
       }`}
     >
@@ -1175,7 +1274,15 @@ function ConversationItem({
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <p className="text-sm text-foreground truncate">{conversation.title}</p>
+            {/* Only the open conversation gets full-strength text: a column of
+                pure-white titles gives the eye nothing to land on. */}
+            <p
+              className={`text-sm truncate transition-colors ${
+                isActive ? 'text-foreground' : 'text-foreground/70 group-hover:text-foreground/90'
+              }`}
+            >
+              {conversation.title}
+            </p>
             {conversation.source === 'autonomous' && (
               <span className="text-[10px] px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan font-medium flex-shrink-0">
                 auto
@@ -1188,12 +1295,32 @@ function ConversationItem({
           </p>
         </div>
       </button>
-      {/* Reveal-on-hover above `md` only. Touch devices never fire hover, so
-          below the breakpoint (where these rows live in the mobile sheet) the
-          rename/delete controls would be permanently invisible — still clickable,
-          which is worse than hidden. The `md:` pair restores the desktop
-          behaviour exactly. */}
-      <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 flex items-center transition-all">
+      {/* Above `md` these ride OVER the row's right edge rather than sitting in
+          flow: in flow they reserved ~48px of every row even at opacity 0, and
+          that width came out of the title, which is the one thing worth reading
+          here. On hover — or keyboard focus, which never fires hover — they fade
+          in behind a frosted scrim, so the title dissolves under them instead of
+          being truncated early. `pointer-events-none` while hidden keeps the
+          invisible strip from eating clicks meant for the row.
+
+          `focus-within` on THIS element, never `group-focus-within`: the row's
+          own open-conversation button keeps focus after a click, so keying off
+          the group left the icons stuck on the selected row after the pointer
+          had gone. Here it answers only to the two buttons it contains.
+
+          Below `md` they stay in flow and always visible: touch devices never
+          fire hover, so an overlay there would cover the title permanently and
+          these controls would be invisible but still tappable. */}
+      <div className="flex items-center gap-1.5 transition-opacity duration-150 md:absolute md:inset-y-0 md:right-0 md:pl-12 md:pr-2 md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:focus-within:opacity-100 md:focus-within:pointer-events-auto">
+        {/* Blur only — no tint. A backdrop-filter applies evenly across its
+            element and stops dead at the edge, so this layer exists to be
+            MASKED: the mask fades the blur itself into the title instead of
+            ending it in a seam. Legibility comes from the chips on the buttons,
+            not from darkening the text underneath. */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 hidden backdrop-blur-[3px] [-webkit-mask-image:linear-gradient(to_left,black_45%,transparent)] [mask-image:linear-gradient(to_left,black_45%,transparent)] md:block"
+        />
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -1201,7 +1328,9 @@ function ConversationItem({
             setEditing(true);
           }}
           aria-label={`rename ${conversation.title}`}
-          className="p-1 rounded hover:bg-accent transition-colors cursor-pointer"
+          /* Opaque chip: the blur softens the title behind these but doesn't
+             dim it, so each glyph needs a solid ground of its own to read against. */
+          className="relative p-1 rounded bg-card hover:bg-accent transition-colors cursor-pointer"
         >
           <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground transition-colors" />
         </button>
@@ -1211,7 +1340,7 @@ function ConversationItem({
             setConfirming(true);
           }}
           aria-label={`delete ${conversation.title}`}
-          className="p-1 rounded hover:bg-red-900/40 transition-colors cursor-pointer"
+          className="relative p-1 rounded bg-card hover:bg-red-900/60 transition-colors cursor-pointer"
         >
           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-red-400 transition-colors" />
         </button>
