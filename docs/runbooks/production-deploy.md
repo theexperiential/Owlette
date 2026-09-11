@@ -22,6 +22,10 @@ rules.
   into the release commit.
 - `OWLETTE_API_KEY` available in `.claude/.env.local` or equivalent local shell
   setup for smoke scripts that need an API key.
+- The live dev smoke suite's local credentials for step 5: the dev service
+  account `agent/config/firebase-creds-dev.json`, `web/.env.local` pointing at
+  `owlette-dev-3838a`, and, for its first run, `SMOKE_LLM_API_KEY` in
+  `.claude/.env.local`. See [web/e2e-live/README.md](../../web/e2e-live/README.md).
 - A real site id and API key for the R2 round-trip smoke test.
 - npm install behavior must match production:
   - Railway uses Nixpacks pinned to `nodejs_22` and `npm-10_x`
@@ -134,7 +138,41 @@ rules.
 
 5. Verify dev.
 
-   Load the dev web app manually and check the main flows touched by the
+   **The live dev smoke suite must be green on the exact commit being promoted
+   before step 6.** Run it from a `dev` checkout pulled to that commit, so the
+   specs match the build (the runner refuses a checkout at any other commit):
+
+   ```sh
+   cd web && npm run smoke:dev
+   ```
+
+   It waits for `https://dev.owlette.app/api/health` to report `origin/dev`
+   HEAD (up to 10 minutes, so it can start while Railway is still building),
+   then drives a real browser against dev: a hoot turn with a tool call, cancel
+   mid-turn, a denied tier-3 call, a public share link, passkey registration
+   and sign-in, and per-site member management. It runs on your workstation,
+   not in CI, so nothing but this runbook enforces it. Credentials, what each
+   check asserts, and cleanup: [web/e2e-live/README.md](../../web/e2e-live/README.md).
+
+   The run counts only when all of these hold:
+
+   - it exits 0, and its summary's `commit` line reads
+     `<sha> (origin/dev; dev served it when the specs started)`
+   - that SHA is still `origin/dev` when you merge in step 6 — fetch first
+     (`git fetch origin dev && git rev-parse origin/dev`), because the runner's
+     own fetch set that ref; if `dev` has moved, run it again on the new commit
+   - it ran without `--any-commit` (which skips the commit check) and without
+     forwarded Playwright arguments that filter the specs (`-- --grep …`)
+   - the summary has no `WARNING` line (a deploy landed mid-run, or dev's commit
+     could not be re-read after the specs; Playwright arguments were forwarded;
+     or the suite's files had uncommitted changes)
+
+   A red run blocks the promotion: fix forward on `dev` and run it again on the
+   new commit rather than merging around it. Record the result with the smoke
+   results in step 11, including any check marked `FLAKY` (it passed only on
+   its retry).
+
+   Then load the dev web app manually and check the main flows touched by the
    release. At minimum, confirm login, dashboard load, and any changed workflow.
 
    Run the status-page readiness smoke check against dev if the dev environment

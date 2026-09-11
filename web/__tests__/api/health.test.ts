@@ -16,25 +16,29 @@ jest.mock('@/lib/firebase-admin', () => ({
 import { GET } from '@/app/api/health/route';
 
 describe('GET /api/health', () => {
-  const originalEnv = {
-    RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN,
-    VERCEL: process.env.VERCEL,
-    VERCEL_REGION: process.env.VERCEL_REGION,
-  };
+  const ENV_KEYS = [
+    'RAILWAY_PUBLIC_DOMAIN',
+    'RAILWAY_GIT_COMMIT_SHA',
+    'VERCEL',
+    'VERCEL_REGION',
+    'VERCEL_GIT_COMMIT_SHA',
+  ] as const;
+  const originalEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetAdminDb.mockReturnValue(mockDb);
     mockGet.mockResolvedValue({ exists: true });
-    delete process.env.RAILWAY_PUBLIC_DOMAIN;
-    delete process.env.VERCEL;
-    delete process.env.VERCEL_REGION;
+    for (const key of ENV_KEYS) delete process.env[key];
   });
 
   afterAll(() => {
-    process.env.RAILWAY_PUBLIC_DOMAIN = originalEnv.RAILWAY_PUBLIC_DOMAIN;
-    process.env.VERCEL = originalEnv.VERCEL;
-    process.env.VERCEL_REGION = originalEnv.VERCEL_REGION;
+    // Assigning undefined to process.env stores the string "undefined" — delete instead.
+    for (const key of ENV_KEYS) {
+      const value = originalEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   it('returns 200 and ok:true when firestore is reachable', async () => {
@@ -118,5 +122,42 @@ describe('GET /api/health', () => {
     const body = await res.json();
 
     expect(body.origin).toBe('unknown');
+  });
+
+  it('reports the deployed commit from RAILWAY_GIT_COMMIT_SHA on railway', async () => {
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'owlette.up.railway.app';
+    process.env.RAILWAY_GIT_COMMIT_SHA = '5335ca477c0c83376e55fe752e702c3508578f61';
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.commit).toBe('5335ca477c0c83376e55fe752e702c3508578f61');
+  });
+
+  it('reports the deployed commit from VERCEL_GIT_COMMIT_SHA on vercel', async () => {
+    process.env.VERCEL = '1';
+    process.env.VERCEL_GIT_COMMIT_SHA = '0c684d67a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.commit).toBe('0c684d67a1b2c3d4e5f60718293a4b5c6d7e8f90');
+  });
+
+  it('reports commit: null when no platform injected a commit sha', async () => {
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body).toHaveProperty('commit', null);
+  });
+
+  it('treats an empty commit sha as absent rather than reporting ""', async () => {
+    process.env.RAILWAY_GIT_COMMIT_SHA = '';
+    process.env.VERCEL_GIT_COMMIT_SHA = '';
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body).toHaveProperty('commit', null);
   });
 });

@@ -55,6 +55,7 @@ const config = {
     '/.next/',
     '__tests__/api/helpers/',
     '/e2e/', // Playwright specs — use `npm run e2e`, not jest.
+    '/e2e-live/', // Live dev smoke specs (playwright.live.config.ts) — Playwright, not jest.
     '/__tests__/rules/', // Firestore rules tests — use `npm run test:rules` (boots emulator).
   ],
 

@@ -20,6 +20,18 @@ function originLabel(): string {
   return 'unknown';
 }
 
+/**
+ * Git SHA this origin was deployed from, or null when the platform injected
+ * none — Railway sets RAILWAY_GIT_COMMIT_SHA only for GitHub-triggered
+ * deploys; Vercel sets VERCEL_GIT_COMMIT_SHA when system env vars are exposed.
+ * Not secret (public repo). The live dev smoke runner polls this to confirm
+ * dev is serving the commit it is about to test. An empty value counts as
+ * absent so callers only ever see a SHA or null.
+ */
+function deployedCommit(): string | null {
+  return process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || null;
+}
+
 async function firestoreReachable(): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -48,6 +60,7 @@ export async function GET() {
     {
       ok,
       origin: originLabel(),
+      commit: deployedCommit(),
       checked_at: new Date().toISOString(),
       latency_ms: Date.now() - started,
     },
