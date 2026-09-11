@@ -21,7 +21,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import type { ChatShareView } from '@/lib/hoot/shareTypes';
 
 // react-markdown and remark-gfm ship ESM only ("type": "module") and jest's
@@ -33,6 +33,13 @@ jest.mock('react-markdown', () => ({
   default: ({ children }: { children: string }) => children,
 }));
 jest.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
+
+// The real icon behind a spy, so a test can tell which mark the header drew. It
+// still renders for real: its `useId` runs inside the page's render here too.
+jest.mock('@/components/landing/OwletteEye', () => {
+  const actual = jest.requireActual('@/components/landing/OwletteEye');
+  return { ...actual, OwletteEyeIcon: jest.fn(actual.OwletteEyeIcon) };
+});
 
 const getPublicChatShare = jest.fn();
 jest.mock('@/lib/hoot/shareStore.server', () => ({
@@ -74,6 +81,7 @@ jest.mock('@/lib/logger', () => ({
 import SharePage, { generateMetadata } from '@/app/share/[token]/page';
 import ShareNotFound from '@/app/share/[token]/not-found';
 import ShareOpengraphImage from '@/app/share/[token]/opengraph-image';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 
 const TOKEN = 'shr_AbCdEfGhIjKlMnOpQrStUv';
 
@@ -150,6 +158,65 @@ describe('/share/[token] page', () => {
     // someone rendered arguments or a result alongside them, which is the one
     // regression this row exists to prevent.
     expect(tool.textContent).toBe('ran get_machine_logs·completed');
+  });
+
+  it('heads the page with the owlette mark, linking home as "owlette hoot"', async () => {
+    getPublicChatShare.mockResolvedValue(share());
+
+    render(await SharePage(props()));
+
+    expect(screen.getByRole('link', { name: 'owlette hoot' })).toHaveAttribute(
+      'href',
+      'https://owlette.app',
+    );
+    // The mark PageHeader draws, at PageHeader's size — not hoot's owl glyph.
+    expect(jest.mocked(OwletteEyeIcon).mock.calls[0]?.[0]).toMatchObject({ size: 24 });
+  });
+
+  it('sets the conversation in a chat panel, between the heading and the footnote', async () => {
+    getPublicChatShare.mockResolvedValue(share());
+
+    render(await SharePage(props()));
+
+    const panel = screen.getByTestId('shared-conversation-panel');
+    expect(panel).toContainElement(screen.getByTestId('shared-conversation'));
+    expect(panel).not.toContainElement(screen.getByRole('heading', { level: 1 }));
+    expect(panel).not.toContainElement(
+      screen.getByText(/shared from owlette hoot — a read-only snapshot/),
+    );
+  });
+
+  it('scrolls wide content inside the panel rather than past its border', async () => {
+    getPublicChatShare.mockResolvedValue(share());
+
+    render(await SharePage(props()));
+
+    // jsdom does no layout, so the utility itself is the only thing to assert:
+    // without it a markdown table wider than a phone's column crosses the
+    // panel's border and is clipped by body's overflow-x: hidden.
+    expect(screen.getByTestId('shared-conversation-panel')).toHaveClass('overflow-x-auto');
+  });
+
+  it('frames hoot turns with the hoot avatar and user turns with a generic one', async () => {
+    getPublicChatShare.mockResolvedValue(share());
+
+    render(await SharePage(props()));
+
+    // One element per message: the e2e spec counts them.
+    const turns = screen.getAllByTestId('shared-message');
+    expect(turns).toHaveLength(2);
+    const [userTurn, hootTurn] = turns;
+
+    expect(userTurn).toHaveAttribute('data-role', 'user');
+    expect(within(userTurn).getByText('user')).toBeInTheDocument();
+    expect(within(userTurn).queryByTestId('shared-hoot-avatar')).toBeNull();
+    // A snapshot carries no author identity: a glyph, never initials or a name.
+    expect(within(userTurn).getByTestId('shared-user-avatar').textContent).toBe('');
+
+    expect(hootTurn).toHaveAttribute('data-role', 'assistant');
+    expect(within(hootTurn).getByText('hoot')).toBeInTheDocument();
+    expect(within(hootTurn).getByTestId('shared-hoot-avatar')).toBeInTheDocument();
+    expect(within(hootTurn).queryByTestId('shared-user-avatar')).toBeNull();
   });
 
   it('labels a site-wide share and one that never expires', async () => {

@@ -27,7 +27,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { cache } from 'react';
 import { SharedConversation } from '@/components/hoot/SharedConversation';
-import { HootIcon } from '@/components/icons/HootIcon';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { getPublicChatShare } from '@/lib/hoot/shareStore.server';
 import {
   SITE_WIDE_TARGET_LABEL,
@@ -172,14 +172,16 @@ export default async function SharePage({ params }: SharePageProps) {
 
   return (
     <div className="min-h-[100dvh]">
-      <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-3xl items-center px-6 py-4">
+      {/* Mark and wordmark as PageHeader draws them. The wordmark inherits the
+          link's color rather than setting its own, so the hover still reaches it. */}
+      <header className="border-b border-border bg-background">
+        <div className="mx-auto flex h-14 w-full max-w-3xl items-center px-6">
           <Link
             href={OWLETTE_URL}
-            className="inline-flex items-center gap-2 text-foreground transition-colors hover:text-accent-cyan"
+            className="inline-flex items-center gap-1.5 text-foreground transition-colors hover:text-accent-cyan"
           >
-            <HootIcon className="h-5 w-5" />
-            <span className="text-sm font-semibold">owlette</span>
+            <OwletteEyeIcon size={24} className="translate-y-[1px]" />
+            <span className="text-base font-semibold translate-y-[1px]">owlette hoot</span>
           </Link>
         </div>
       </header>
@@ -189,7 +191,15 @@ export default async function SharePage({ params }: SharePageProps) {
         <h1 className="text-2xl font-bold text-pretty text-foreground">{share.title}</h1>
         <p className="mt-2 text-xs text-muted-foreground">{shareMetaLine(share)}</p>
 
-        <div className="mt-8">
+        {/* The hoot chat panel's surface (HootChatView's <main>), so the snapshot
+            reads as the conversation it was, not loose text on the page. It scrolls
+            sideways as ChatWindow's scroller does, so a wide table or an unbroken
+            path stays inside the border instead of running off a viewport that
+            body's overflow-x: hidden clips. */}
+        <div
+          data-testid="shared-conversation-panel"
+          className="mt-8 overflow-x-auto rounded-lg border border-border bg-card p-4 md:p-6"
+        >
           <SharedConversation messages={share.messages} />
         </div>
 

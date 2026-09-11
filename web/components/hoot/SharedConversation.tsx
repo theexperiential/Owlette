@@ -6,13 +6,14 @@
  * The share dialog's preview and the public `/share/{token}` page both render
  * THIS component, so what the owner previews is exactly what a reader sees.
  * No auth context, no hooks that need a session: it must work on a page with
- * no signed-in user. Visual language mirrors ChatWindow (markdown classes, user
- * turns right-aligned) minus everything interactive.
+ * no signed-in user. Layout mirrors ChatWindow's turns (avatar + rail columns,
+ * label row, markdown classes, user turns right-aligned) minus everything
+ * interactive.
  */
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Ban, CircleCheck, CircleDashed, CircleX, Wrench } from 'lucide-react';
+import { Ban, CircleCheck, CircleDashed, CircleX, User, Wrench } from 'lucide-react';
 import { HootIcon } from '@/components/icons/HootIcon';
 import type { SharedMessage, SharedToolOutcome } from '@/lib/hoot/shareTypes';
 
@@ -22,6 +23,40 @@ const OUTCOME: Record<SharedToolOutcome, { label: string; icon: typeof CircleChe
   denied: { label: 'denied', icon: Ban, className: 'text-muted-foreground' },
   incomplete: { label: 'not completed', icon: CircleDashed, className: 'text-muted-foreground' },
 };
+
+/**
+ * The avatar + rail column that frames a turn, as ChatWindow draws it. A user
+ * turn gets a generic glyph, not `UserAvatar`: the snapshot is text-only and
+ * carries no author identity, and the signed-in viewer's avatar would put the
+ * reader's face beside someone else's words.
+ */
+function TurnAvatar({ role }: { role: SharedMessage['role'] }) {
+  if (role === 'user') {
+    return (
+      <div className="flex-shrink-0 flex flex-col items-center">
+        <div
+          data-testid="shared-user-avatar"
+          className="h-7 w-7 rounded-full bg-accent flex items-center justify-center"
+        >
+          <User className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div className="mt-1 flex-1 w-0.5 bg-muted-foreground/25" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-shrink-0 flex flex-col items-center">
+      <div
+        data-testid="shared-hoot-avatar"
+        className="h-7 w-7 rounded-full bg-accent flex items-center justify-center"
+      >
+        <HootIcon className="h-4 w-4 text-foreground" />
+      </div>
+      <div className="mt-1 flex-1 w-0.5 bg-accent-cyan/25" />
+    </div>
+  );
+}
 
 interface SharedConversationProps {
   messages: SharedMessage[];
@@ -41,53 +76,55 @@ export function SharedConversation({ messages, variant = 'page' }: SharedConvers
             key={message.id}
             data-testid="shared-message"
             data-role={message.role}
-            className={isUser ? 'flex flex-col items-end' : ''}
+            className={`flex gap-3 ${isUser ? 'justify-end' : ''}`}
           >
-            <div className="flex items-center gap-1.5 mb-1 text-xs text-muted-foreground">
-              {isUser ? (
-                <span>user</span>
-              ) : (
-                <>
-                  <HootIcon className="h-3.5 w-3.5" />
-                  <span>hoot</span>
-                </>
-              )}
-            </div>
+            {!isUser && <TurnAvatar role={message.role} />}
 
-            <div className={isUser ? 'opacity-80 text-right max-w-[85%]' : ''}>
-              {message.parts.map((part, i) => {
-                if (part.type === 'text') {
+            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+              {/* 'user', never ChatWindow's "you": the one reading this is not its author. */}
+              <div
+                className={`flex items-center h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}
+              >
+                {isUser ? 'user' : 'hoot'}
+              </div>
+
+              <div className={isUser ? 'opacity-80 text-right' : ''}>
+                {message.parts.map((part, i) => {
+                  if (part.type === 'text') {
+                    return (
+                      <div
+                        key={i}
+                        className="hoot-markdown text-sm text-foreground prose prose-invert prose-sm max-w-none prose-code:before:content-none prose-code:after:content-none"
+                      >
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+                      </div>
+                    );
+                  }
+
+                  const outcome = OUTCOME[part.outcome];
+                  const OutcomeIcon = outcome.icon;
+                  // ToolCallCard's collapsed header, minus the expand: a snapshot
+                  // has no inputs or outputs to open.
                   return (
                     <div
                       key={i}
-                      className="hoot-markdown text-sm text-foreground prose prose-invert prose-sm max-w-none prose-code:before:content-none prose-code:after:content-none"
+                      data-testid="shared-tool"
+                      className="my-2 flex items-center gap-2 rounded-lg border border-border bg-secondary/50 px-3 py-2 text-xs text-muted-foreground"
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.text}</ReactMarkdown>
+                      <OutcomeIcon className={`h-4 w-4 flex-shrink-0 ${outcome.className}`} />
+                      <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="min-w-0 truncate">
+                        ran <code className="text-foreground">{part.toolName}</code>
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className={`flex-shrink-0 ${outcome.className}`}>{outcome.label}</span>
                     </div>
                   );
-                }
-
-                const outcome = OUTCOME[part.outcome];
-                const OutcomeIcon = outcome.icon;
-                return (
-                  <div
-                    key={i}
-                    data-testid="shared-tool"
-                    className="my-1.5 inline-flex items-center gap-2 rounded-md border border-border bg-secondary px-2.5 py-1 text-xs text-muted-foreground"
-                  >
-                    <Wrench className="h-3.5 w-3.5" />
-                    <span>
-                      ran <code className="text-foreground">{part.toolName}</code>
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span className={`inline-flex items-center gap-1 ${outcome.className}`}>
-                      <OutcomeIcon className="h-3.5 w-3.5" />
-                      {outcome.label}
-                    </span>
-                  </div>
-                );
-              })}
+                })}
+              </div>
             </div>
+
+            {isUser && <TurnAvatar role={message.role} />}
           </div>
         );
       })}
