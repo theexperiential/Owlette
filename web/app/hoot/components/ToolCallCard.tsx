@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Ban, Check } from 'lucide-react';
+import { ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Ban, Check } from 'lucide-react';
 import { getToolByName } from '@/lib/mcp-tools';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { CopyButton } from './CopyButton';
 
 interface ToolCallCardProps {
@@ -69,7 +70,9 @@ export function ToolCallCard({
   );
 
   return (
-    <div
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
       className={`my-2 rounded-lg border overflow-hidden ${
         awaitingApproval ? 'border-amber-500/40 bg-amber-500/5' : 'border-border bg-secondary/50'
       }`}
@@ -77,33 +80,28 @@ export function ToolCallCard({
       {/* Cancel is a sibling of the expand toggle, never nested inside it —
           nested interactive controls are an axe violation. */}
       <div className="flex items-stretch">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer"
-        >
-          {statusIcon}
+        <CollapsibleTrigger asChild>
+          <button className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer">
+            {statusIcon}
 
-          <Wrench className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+            <Wrench className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
 
-          <span className="font-mono text-xs text-foreground truncate">{toolName}</span>
+            <span className="font-mono text-xs text-foreground truncate">{toolName}</span>
 
-          {tierLabel && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0">
-              {tierLabel}
-            </span>
-          )}
-
-          <span className="ml-auto flex items-center gap-1 text-muted-foreground flex-shrink-0">
-            {awaitingApproval && <span className="text-xs text-amber-400">awaiting approval</span>}
-            {denied && <span className="text-xs">denied</span>}
-            {isLoading && !awaitingApproval && <span className="text-xs">executing...</span>}
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+            {tierLabel && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0">
+                {tierLabel}
+              </span>
             )}
-          </span>
-        </button>
+
+            <span className="ml-auto flex items-center gap-1 text-muted-foreground flex-shrink-0">
+              {awaitingApproval && <span className="text-xs text-amber-400">awaiting approval</span>}
+              {denied && <span className="text-xs">denied</span>}
+              {isLoading && !awaitingApproval && <span className="text-xs">executing...</span>}
+              <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+            </span>
+          </button>
+        </CollapsibleTrigger>
 
         {isLoading && onCancel && (
           <button
@@ -175,7 +173,10 @@ export function ToolCallCard({
         </a>
       )}
 
-      {expanded && (
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        {/* Border and padding live on this inner box: on the animated element
+            they would hold it padding-tall at `height: 0`, and the slide would
+            end in a jump. */}
         <div className="border-t border-border px-3 py-2 space-y-2">
           {Object.keys(args).length > 0 && (
             <div>
@@ -223,7 +224,7 @@ export function ToolCallCard({
             );
           })()}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUp, X, Pencil } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserAvatar } from '@/components/UserAvatar';
+import { Button } from '@/components/ui/button';
 import { ToolCallCard } from './ToolCallCard';
 import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
@@ -63,6 +64,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
 
   const cancelEdit = () => {
@@ -104,6 +106,36 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [expandedImage]);
+
+  // Grow the edit box with its text, as the composer does: collapse to the
+  // 3-row floor, then take the content height. A layout effect, so the box
+  // never paints at the floor first. Under border-box `height` counts the
+  // borders and scrollHeight does not — left out, the box comes up 2px short
+  // and shows a scrollbar. `max-h-[40vh]` caps it; past that it scrolls.
+  // Unlike the composer, this box sits inside the chat's scroller: the collapse
+  // shortens the scroller for the measuring layout, one resting near its bottom
+  // is clamped, and regrowing the box does not give the position back.
+  useLayoutEffect(() => {
+    const textarea = editTextareaRef.current;
+    if (!textarea) return;
+    const scroller = containerRef.current;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight}px`;
+    if (scroller) scroller.scrollTop = scrollTop;
+  }, [editingId, editText]);
+
+  // Open the edit with the caret after the text, where an edit usually starts.
+  // Focus alone leaves it before the first character; the scroll keeps it in
+  // view when the text overflows the cap.
+  useLayoutEffect(() => {
+    const textarea = editTextareaRef.current;
+    if (!textarea) return;
+    const end = textarea.value.length;
+    textarea.focus();
+    textarea.setSelectionRange(end, end);
+    textarea.scrollTop = textarea.scrollHeight;
+  }, [editingId]);
 
   if (messages.length === 0) {
     return (
@@ -202,8 +234,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
               </div>
             )}
 
-            {/* Content */}
-            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+            {/* Content. A user bubble shrinks to fit under a 75% cap, but the
+                edit form takes the whole row — shrink-to-fit left the textarea
+                at its intrinsic ~20-column width. */}
+            <div className={`min-w-0 ${isUser && !isEditing ? 'max-w-[75%]' : 'flex-1'}`}>
               <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
                 {/*
                   Three tooltip triggers stand shoulder to shoulder in this row.
@@ -268,7 +302,8 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
               {isEditing ? (
                 <div className="flex flex-col gap-2">
                   <textarea
-                    autoFocus
+                    ref={editTextareaRef}
+                    aria-label="edit message"
                     value={editText}
                     onChange={(e) => setEditText(e.target.value)}
                     onKeyDown={(e) => {
@@ -279,25 +314,21 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                         cancelEdit();
                       }
                     }}
-                    rows={2}
-                    className="w-full resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm leading-normal text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
+                    rows={3}
+                    className="w-full max-h-[40vh] resize-none rounded-lg border border-border bg-secondary px-4 py-3 text-sm leading-relaxed text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
                   />
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={cancelEdit}
-                      className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
-                    >
+                    <Button type="button" variant="ghost" size="sm" onClick={cancelEdit}>
                       cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      size="sm"
                       onClick={() => saveEdit(message.id)}
                       disabled={!editText.trim()}
-                      className="text-xs px-3 py-1.5 rounded-md bg-accent-cyan text-gray-900 font-medium hover:bg-accent-cyan/90 disabled:opacity-50 transition-colors cursor-pointer"
                     >
                       save &amp; resend
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
