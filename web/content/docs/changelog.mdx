@@ -7,6 +7,27 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ## [Unreleased]
 
+### added — a resizable conversation list, and a simpler share dialog
+
+Hoot's conversation list can be dragged wider from its right edge — 200px to
+560px, double-click to reset — and both that width and whether the list is
+collapsed are remembered for you across sessions and devices. The list starts
+wider than before, and a row's rename and delete controls now sit over the end
+of the title instead of beside it, so a conversation's generated name has the
+full width of the column to be read in.
+
+The share dialog leads with the preview: what a link includes and leaves out is
+folded behind a "more" link, the expiry sits with the buttons that use it, and
+creating a link copies it to your clipboard and says so. Every link a
+conversation has can be copied from its row, and those rows now carry the time
+each link was made, not only the date. The dialog itself no longer scrolls — the
+preview absorbs the space as links come and go — and it renders the conversation
+on the same surface, with the same avatars and rails, that the live chat does.
+
+A tool call's inputs and outputs slide open and closed rather than snapping, at
+every tier, and editing a message to resend it now opens a full-width box that
+grows with what you type.
+
 ### added — share a hoot conversation as a public page
 
 A hoot conversation you started can now be published as a read-only page at
