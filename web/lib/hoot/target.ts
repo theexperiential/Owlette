@@ -299,32 +299,42 @@ function isAssistantMessage(value: unknown): boolean {
   );
 }
 
+/** Last index whose role is 'user' (mirrors `findLastUserIndex`, repairMessages.ts). */
+function lastUserIndex(messages: unknown[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const value = messages[i];
+    if (typeof value === 'object' && value !== null) {
+      if ((value as { role?: unknown }).role === 'user') return i;
+    }
+  }
+  return -1;
+}
+
 /**
- * Tool call ids the trailing assistant turn is answering an approval for.
+ * Tool call ids the in-flight assistant turn is answering an approval for.
  * Approvals AND denials both count: each consumes the one-shot ledger claim
  * (`applyApprovalConsumption`, `repairMessages.ts`), so each binds the resumed
  * turn to the machines the approval was requested on.
  *
- * Scans the whole trailing assistant RUN — every assistant message after the
- * last user one — because that is exactly the span `applyApprovalConsumption`
- * claims and dispatches. Reading only the final message would leave an approval
- * sitting in an earlier trailing message unchecked by the binding test while
- * still being executed, which is the re-aiming this binding exists to stop.
+ * Scans every assistant message AFTER THE LAST USER ONE, because that is exactly
+ * the span `applyApprovalConsumption` claims and dispatches. Reading a narrower
+ * span — the final message, or the trailing run up to the first non-assistant
+ * message — would leave an approval that still gets claimed and executed
+ * unchecked by the binding test, which is the re-aiming this binding stops.
  *
  * Takes `unknown` so the route can call it on a parsed body before trusting it.
  */
 export function approvalResponseIds(messages: unknown): string[] {
   if (!Array.isArray(messages)) return [];
 
-  // Walk back over the run. Stopping at the last message's role keeps
-  // `isApprovalResume` aligned with the runner's own resume signal, which seeds
-  // the snapshot pump from a trailing assistant message (`turnRunner.server.ts`).
-  let start = messages.length;
-  while (start > 0 && isAssistantMessage(messages[start - 1])) start--;
-  if (start === messages.length) return [];
-
+  // Everything after the last user message, skipping the messages that are not
+  // assistant ones rather than STOPPING at them. `applyApprovalConsumption`
+  // claims exactly that span, so a trailing `system` message (a legal UIMessage
+  // role) would otherwise end the scan while the approval behind it still got
+  // claimed and executed — on whatever machines the request named.
   const ids: string[] = [];
-  for (let i = start; i < messages.length; i++) {
+  for (let i = lastUserIndex(messages) + 1; i < messages.length; i++) {
+    if (!isAssistantMessage(messages[i])) continue;
     const parts: unknown = (messages[i] as { parts?: unknown }).parts;
     if (!Array.isArray(parts)) continue;
     for (const part of parts) {

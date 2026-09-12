@@ -97,6 +97,14 @@ export type TurnOwnership = 'owned' | 'lost' | 'error';
 export interface TurnResumeBinding {
   messageId: string;
   toolCallIds: string[];
+  /**
+   * The mode the RESUMED turn dispatches in, resolved from the bound set (never
+   * from the request body). The prior's own flag described the set it asked for,
+   * and a bound turn that comes down to one machine runs the single path — so
+   * inheriting that flag would leave the record claiming a fan-out this turn
+   * never ran, and the next turn would recover its tool results wrapped.
+   */
+  fanOut: boolean;
 }
 
 export interface TurnLockMeta {
@@ -421,10 +429,11 @@ function resumeTargetRecord(
   const recorded = readTargetRecord(data.target);
   return {
     // A legacy prior has no `target`, so its inherited set comes from the same
-    // `machineId` mapping the rest of this module reads it by.
+    // `machineId` mapping the rest of this module reads it by. `fanOut` is this
+    // turn's own, not the prior's — see {@link TurnResumeBinding}.
     target: {
       machineIds: recorded ? recorded.machineIds : prior.resolvedMachineIds,
-      fanOut: prior.fanOut,
+      fanOut: resume.fanOut,
       source: 'resume',
     },
     // `null` only when the bound turn was a legacy site-wide one; the caller
@@ -508,6 +517,30 @@ export async function acquireTurnLock(
   lastSnapshotWriteAt.delete(chatId);
 
   return priorTurn;
+}
+
+/**
+ * Narrow the machines this turn dispatches to. The caller resolved them before
+ * the claim; the runner re-checks the site listing at turn start and records
+ * whatever survived, so the record never names a machine the turn did not reach
+ * — a later approval resume binds to exactly this list.
+ *
+ * Guarded like every other post-claim write, and NEVER called with an empty
+ * list: `null`/`[]` would read back as "whatever was online" or as nothing at
+ * all. `false` means the write did not land (superseded, or Firestore failed)
+ * and the runner must abort before dispatching.
+ */
+export async function recordResolvedMachines(
+  db: FirebaseFirestore.Firestore,
+  chatId: string,
+  turnId: string,
+  machineIds: string[],
+): Promise<boolean> {
+  if (machineIds.length === 0) {
+    throw new Error('recordResolvedMachines: a turn with no machines must not dispatch');
+  }
+  const outcome = await guardedTurnUpdate(db, chatId, turnId, { resolvedMachineIds: machineIds });
+  return outcome === 'written';
 }
 
 /**

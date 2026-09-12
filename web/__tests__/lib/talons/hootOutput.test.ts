@@ -374,9 +374,11 @@ describe('site-wide pre-flight', () => {
   });
 
   it('does not consult the per-machine kill switch in site mode', async () => {
-    // Deliberate: site mode fans out to `getOnlineMachines` without reading
-    // `cortexEnabled` anywhere (buildExecutableTools, /api/hoot site mode), so
-    // refusing here would make talons stricter than the turn being pre-flighted.
+    // This pre-flight asks only "is anything online". The kill switch is now
+    // enforced where the commands are queued — the runner drops hoot-off
+    // machines from the set it dispatches to (D-A) — so the run still reaches a
+    // turn, which then has nothing to do. Wave 4.2 moves this check onto the
+    // same listing and reports that as `skipped`.
     fake.seeded.clear();
     seedMachine({ online: true, cortexEnabled: false });
 
@@ -452,6 +454,10 @@ describe('the chat', () => {
       turnId: 'turn_fixed',
       siteId: SITE,
       machineId: 'm1',
+      // The record carries the turn's target from the moment it is claimed, so a
+      // later approval resume has an explicit list to bind to.
+      target: { machineIds: ['m1'], fanOut: false, source: 'talon' },
+      resolvedMachineIds: ['m1'],
     });
   });
 
@@ -463,7 +469,13 @@ describe('the chat', () => {
       targetMachineId: null,
       machineName: 'All Machines',
     });
-    expect(startTurnParams()).toMatchObject({ machineId: '__site__', machineName: '' });
+    // The turn fans out over the online machines; no `chatTarget`, so the
+    // runner cannot overwrite the friendly label written above.
+    expect(startTurnParams()).toMatchObject({
+      resolved: { ids: ['m1'], fanOut: true },
+      turnTarget: { machineIds: null, fanOut: true, source: 'talon' },
+    });
+    expect(startTurnParams().chatTarget).toBeUndefined();
   });
 
   it('fails without a lock or a turn when the chat cannot be written', async () => {
@@ -512,11 +524,11 @@ describe('the turn', () => {
       chatId: EXPECTED_CHAT_ID,
       turnId: 'turn_fixed',
       siteId: SITE,
-      machineId: 'm1',
-      machineName: 'LOBBY-01',
+      resolved: { ids: ['m1'], fanOut: false },
+      turnTarget: { machineIds: ['m1'], fanOut: false, source: 'talon' },
       userId: 'admin-uid',
       source: 'talon',
-      priorToolCommands: { call_1: { m1: { commandId: 'cmd_1' } } },
+      priorTurn: { toolCommands: { call_1: { m1: { commandId: 'cmd_1' } } } },
     });
   });
 

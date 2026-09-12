@@ -13,11 +13,13 @@ import { convertToModelMessages, type UIMessage } from 'ai';
 const SIGNATURE = 'sig-abc123';
 
 function persisted(messages: UIMessage[]): UIMessage[] {
-  // The same round-trip persistChatMessages applies to every part.
+  // The same round-trip persistChatMessages applies to every part — and now to
+  // the per-turn `metadata.hoot` beside them, which must not disturb the parts.
   return messages.map((m) => ({
     id: m.id,
     role: m.role,
     parts: m.parts.map((p) => JSON.parse(JSON.stringify(p))),
+    ...(m.metadata === undefined ? {} : { metadata: JSON.parse(JSON.stringify(m.metadata)) }),
   })) as UIMessage[];
 }
 
@@ -56,6 +58,15 @@ describe('thinking replay', () => {
       {
         id: 'a1',
         role: 'assistant',
+        // The per-turn target stamp rides along on the persisted message.
+        metadata: {
+          hoot: {
+            turnId: 'turn_1',
+            machineIds: ['kiosk-01'],
+            via: 'chat',
+            skipped: { offline: [], disabled: [] },
+          },
+        },
         parts: [
           { type: 'reasoning', text: '', providerMetadata: { anthropic: { signature: SIGNATURE } } },
           {

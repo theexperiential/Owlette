@@ -475,6 +475,25 @@ describe('approvalResponseIds / isApprovalResume', () => {
     expect(isApprovalResume(messages)).toBe(true);
   });
 
+  it('sees an approval behind a trailing non-assistant message', () => {
+    // `role: 'system'` is a legal UIMessage role, and `applyApprovalConsumption`
+    // claims by index (everything after the last user message), not by an
+    // unbroken run — so ending the scan at one would leave this approval
+    // claimed, executed, and never checked against the set it was requested on.
+    const messages = [
+      { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'run it' }] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [{ type: 'tool-x', toolCallId: 'call-1', state: 'approval-responded' }],
+      },
+      { id: 's1', role: 'system', parts: [] },
+    ];
+
+    expect(approvalResponseIds(messages)).toEqual(['call-1']);
+    expect(isApprovalResume(messages)).toBe(true);
+  });
+
   it('stops at the last user message even when the run is long', () => {
     const messages = [
       {

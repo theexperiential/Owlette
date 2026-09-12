@@ -50,6 +50,7 @@ import type { UIMessage } from 'ai';
 import { timestampToMs } from '@/lib/firestoreTime.server';
 import {
   SiteAccessError,
+  resolveHootTargets,
   verifyUserSiteAccess,
   type SiteAccessLevel,
 } from '@/lib/hoot-utils.server';
@@ -59,11 +60,13 @@ import {
   generateTurnId,
   TurnActiveError,
 } from '@/lib/hoot/turnStore.server';
+import {
+  SITE_TARGET_ID,
+  neverWidenLegacyMachineId,
+  type HootTarget,
+} from '@/lib/hoot/target';
 import { followupsCollection, type FollowupDoc } from '@/lib/hoot/followupStore.server';
 import logger from '@/lib/logger';
-
-/** Sentinel `machineId` for site-wide mode (mirrors /api/hoot + the runner). */
-const SITE_TARGET_ID = '__site__';
 
 /** Turns started per sweep; a backlog drains over the following minutes. */
 const MAX_FOLLOWUP_FIRES_PER_SWEEP = 10;
@@ -162,6 +165,21 @@ async function watchedCommandFinished(db: Firestore, followup: FollowupDoc): Pro
 }
 
 /**
+ * The target a follow-up was scheduled against. The recorded list wins whenever
+ * it is present — including an explicit `null`, which is the dynamic "every
+ * machine in the site". Docs written before targets were recorded have only the
+ * legacy single `machineId`, which reads as one machine or the whole site.
+ */
+function scheduledTarget(followup: FollowupDoc): HootTarget {
+  if (followup.targetMachineIds !== undefined) {
+    return { machineIds: followup.targetMachineIds };
+  }
+  return followup.machineId === SITE_TARGET_ID
+    ? { machineIds: null }
+    : { machineIds: [followup.machineId] };
+}
+
+/**
  * Take ownership of one follow-up. The flip out of `scheduled` IS the claim, so
  * an overlapping sweep re-reads a non-scheduled doc and walks away. `runAt` is
  * not re-checked: it is immutable after creation, and the early-fire path
@@ -216,11 +234,32 @@ async function dispatchFollowup(
     return { outcome: 'failed', turnError: 'chat_owner_mismatch' };
   }
 
-  const isSiteMode = followup.machineId === SITE_TARGET_ID;
+  // Where it was promised (D-D), re-validated now: machines that went offline or
+  // had hoot switched off since are dropped, and a target with nothing left
+  // fails the follow-up rather than dispatching into a turn that can reach
+  // nobody.
+  const target = scheduledTarget(followup);
+  const outcome = await resolveHootTargets(db, followup.siteId, {
+    requested: target.machineIds,
+  });
+  if (!outcome.ok) {
+    return { outcome: 'failed', turnError: outcome.reason };
+  }
+
   const messages = [
     ...readChatHistory(chat),
     buildFollowupMessage(followupId, followup.note),
   ];
+
+  // Recorded on the stream doc as this turn's own target. There is deliberately
+  // no `chatTarget` beside it: a follow-up fires on the set it was scheduled
+  // with, which is not necessarily the chat's current selection, and firing must
+  // not move that selection behind the owner's back.
+  const turnTarget = {
+    machineIds: target.machineIds,
+    fanOut: outcome.resolved.fanOut,
+    source: 'followup' as const,
+  };
 
   const turnId = generateTurnId();
   let prior;
@@ -228,7 +267,9 @@ async function dispatchFollowup(
     prior = await acquireTurnLock(db, followup.chatId, {
       turnId,
       siteId: followup.siteId,
-      machineId: followup.machineId,
+      machineId: neverWidenLegacyMachineId(target),
+      target: turnTarget,
+      resolvedMachineIds: outcome.resolved.ids,
     });
   } catch (error) {
     // A person is mid-conversation in this chat. Superseding them for a
@@ -242,17 +283,17 @@ async function dispatchFollowup(
       chatId: followup.chatId,
       turnId,
       siteId: followup.siteId,
-      machineId: followup.machineId,
-      machineName: isSiteMode ? '' : (chat.machineName as string) || followup.machineId,
       messages,
       userId: followup.userId,
       access,
+      resolved: outcome.resolved,
+      turnTarget,
       // The scheduling turn's ceiling, which `startTurn` then intersects with
       // what access earns now — so the fire is capped by the lower of the two
       // and can never widen. Legacy docs carry none and fire as they always
       // did, on re-resolved access alone.
       ...(followup.maxToolTier ? { maxToolTier: followup.maxToolTier } : {}),
-      priorToolCommands: prior?.toolCommands ?? null,
+      priorTurn: prior,
       // Nobody is watching the moment a follow-up fires — see the header.
       forceTier3Approval: true,
       source: 'followup',

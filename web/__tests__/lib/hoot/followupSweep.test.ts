@@ -37,6 +37,7 @@ jest.mock('@/lib/hoot-utils.server', () => {
     __esModule: true,
     SiteAccessError,
     verifyUserSiteAccess: jest.fn(),
+    resolveHootTargets: jest.fn(),
   };
 });
 
@@ -69,16 +70,22 @@ jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { SiteAccessError, verifyUserSiteAccess } from '@/lib/hoot-utils.server';
+import { SiteAccessError, resolveHootTargets, verifyUserSiteAccess } from '@/lib/hoot-utils.server';
 import { TurnActiveError, acquireTurnLock } from '@/lib/hoot/turnStore.server';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { fireDueFollowups } from '@/lib/hoot/followupSweep.server';
 
 const verifyUserSiteAccessMock = verifyUserSiteAccess as jest.Mock;
+const resolveHootTargetsMock = resolveHootTargets as jest.Mock;
 const acquireTurnLockMock = acquireTurnLock as jest.Mock;
 const startTurnMock = startTurn as jest.Mock;
 
 const MIN = 60_000;
+
+/** What the resolver hands back for a healthy target. */
+function resolvedOn(ids: string[], fanOut = ids.length !== 1) {
+  return { ok: true, resolved: { ids, fanOut, skipped: { offline: [], disabled: [] } } };
+}
 const ADMIN_ACCESS = { role: 'admin', isSuperadmin: false, isSiteAdmin: true, isSiteOwner: true };
 
 /** Follow-up docs by id. The claim transaction reads and writes through this map. */
@@ -238,6 +245,7 @@ beforeEach(() => {
     messages: [userMessage('m1', 'restart the player')],
   });
   verifyUserSiteAccessMock.mockResolvedValue(ADMIN_ACCESS);
+  resolveHootTargetsMock.mockResolvedValue(resolvedOn(['lobby-01']));
   acquireTurnLockMock.mockResolvedValue(null);
   startTurnMock.mockReturnValue({ cancel: jest.fn(async () => {}) });
 });
@@ -262,8 +270,6 @@ describe('fireDueFollowups', () => {
       chatId: 'chat-1',
       turnId: 'turn_fixed',
       siteId: 'node-pa',
-      machineId: 'lobby-01',
-      machineName: 'lobby wall',
       // The prior history is carried, or the runner's persist would replace the
       // conversation with the note alone.
       messages: [
@@ -272,11 +278,23 @@ describe('fireDueFollowups', () => {
       ],
       userId: 'user-1',
       access: ADMIN_ACCESS,
-      priorToolCommands: null,
+      // Re-resolved at fire time against the machines it was scheduled on…
+      resolved: { ids: ['lobby-01'], fanOut: false, skipped: { offline: [], disabled: [] } },
+      turnTarget: { machineIds: ['lobby-01'], fanOut: false, source: 'followup' },
+      // …and NO chatTarget: firing must not move the chat's own selection, and
+      // the client-sent `machineName` never reaches the turn.
+      priorTurn: null,
       // Nobody is watching a follow-up start, so tier 3 must wait for a person
       // even on a site that lets an attended turn auto-run it.
       forceTier3Approval: true,
       source: 'followup',
+    });
+    expect(acquireTurnLockMock).toHaveBeenCalledWith(db, 'chat-1', {
+      turnId: 'turn_fixed',
+      siteId: 'node-pa',
+      machineId: 'lobby-01',
+      target: { machineIds: ['lobby-01'], fanOut: false, source: 'followup' },
+      resolvedMachineIds: ['lobby-01'],
     });
     expect(followups.get('fu-1')).toMatchObject({ status: 'fired', firedAt: expect.any(Date) });
   });
@@ -296,7 +314,7 @@ describe('fireDueFollowups', () => {
     await sweep();
 
     expect(startTurnMock.mock.calls[0][1]).toMatchObject({
-      priorToolCommands: { call_1: { 'lobby-01': { commandId: 'cmd_1' } } },
+      priorTurn: { toolCommands: { call_1: { 'lobby-01': { commandId: 'cmd_1' } } } },
     });
   });
 
@@ -312,6 +330,58 @@ describe('fireDueFollowups', () => {
     await sweep();
 
     expect(startTurnMock.mock.calls[0][1]).toMatchObject({ maxToolTier: 1 });
+  });
+
+  it('fires a subset follow-up on the machines it was scheduled with', async () => {
+    // The doc records the scheduling turn's whole target; the legacy `machineId`
+    // beside it only ever narrows, so old sweep code cannot widen this.
+    seedFollowup(
+      'fu-1',
+      followup({ targetMachineIds: ['lobby-01', 'lobby-02'], machineId: 'lobby-01' }),
+    );
+    resolveHootTargetsMock.mockResolvedValue(resolvedOn(['lobby-01', 'lobby-02']));
+
+    await sweep();
+
+    expect(resolveHootTargetsMock).toHaveBeenCalledWith(db, 'node-pa', {
+      requested: ['lobby-01', 'lobby-02'],
+    });
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      resolved: { ids: ['lobby-01', 'lobby-02'], fanOut: true },
+      turnTarget: { machineIds: ['lobby-01', 'lobby-02'], fanOut: true, source: 'followup' },
+    });
+  });
+
+  it('fires a recorded site-wide follow-up against every machine, dynamically', async () => {
+    seedFollowup('fu-1', followup({ targetMachineIds: null, machineId: '__site__' }));
+    resolveHootTargetsMock.mockResolvedValue(resolvedOn(['lobby-01', 'lobby-02']));
+
+    await sweep();
+
+    expect(resolveHootTargetsMock).toHaveBeenCalledWith(db, 'node-pa', { requested: null });
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      turnTarget: { machineIds: null, source: 'followup' },
+    });
+  });
+
+  it('fails a follow-up whose machines are all unreachable, instead of dispatching', async () => {
+    seedFollowup('fu-1');
+    resolveHootTargetsMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      reason: 'machine_offline',
+      machineIds: ['lobby-01'],
+    });
+
+    const counts = await sweep();
+
+    expect(counts).toMatchObject({ due: 1, fired: 0, failed: 1 });
+    expect(startTurnMock).not.toHaveBeenCalled();
+    expect(acquireTurnLockMock).not.toHaveBeenCalled();
+    expect(followups.get('fu-1')).toMatchObject({
+      status: 'failed',
+      turnError: 'machine_offline',
+    });
   });
 
   it('leaves a follow-up that is not due yet alone', async () => {

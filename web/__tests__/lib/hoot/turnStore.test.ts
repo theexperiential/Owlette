@@ -179,6 +179,7 @@ import {
   writeSnapshot,
   touch,
   recordToolCommand,
+  recordResolvedMachines,
   finishTurn,
   generateTurnId,
   readTurnRecord,
@@ -564,12 +565,13 @@ describe('acquireTurnLock — approval resume', () => {
     });
   }
 
+  /** `fanOut` is the RESUMING turn's own mode, resolved from the bound set. */
   function resumeLock(meta: Record<string, unknown> = {}) {
     return acquireTurnLock(fakeDb, CHAT_ID, {
       turnId: 'turn_resume',
       siteId: SITE_ID,
       machineId: SITE_TARGET_ID,
-      resume: { messageId: 'msg_a', toolCallIds: ['call_1'] },
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'], fanOut: true },
       ...meta,
     });
   }
@@ -600,13 +602,33 @@ describe('acquireTurnLock — approval resume', () => {
     });
   });
 
+  it('records the mode the RESUME runs in, not the one the bound turn asked for', async () => {
+    // The asking turn wanted two machines (fanOut) but only reached one, so the
+    // resume runs the single path — unwrapped tool output. A record that still
+    // said `fanOut: true` would make the NEXT turn recover this turn's lost
+    // result wrapped in `{machines:[…]}`, crediting a shape that never existed.
+    seedApprovalTurn({ resolvedMachineIds: ['machine-1'] });
+
+    await resumeLock({
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'], fanOut: false },
+    });
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: false, source: 'resume' },
+      resolvedMachineIds: ['machine-1'],
+    });
+  });
+
   it('inherits a legacy single-machine prior as that machine alone', async () => {
     seedStream({
       status: 'complete',
       message: approvalMessage('msg_a', 'call_1'),
     });
 
-    await resumeLock({ machineId: MACHINE_ID });
+    await resumeLock({
+      machineId: MACHINE_ID,
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'], fanOut: false },
+    });
 
     expect(store[STREAM_PATH]).toMatchObject({
       target: { machineIds: [MACHINE_ID], fanOut: false, source: 'resume' },
@@ -655,7 +677,7 @@ describe('acquireTurnLock — approval resume', () => {
     seedApprovalTurn();
 
     await expect(
-      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: ['call_1', 'call_2'] } }),
+      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: ['call_1', 'call_2'], fanOut: true } }),
     ).rejects.toMatchObject({ name: 'ApprovalStaleError', reason: 'approval_missing' });
     expect(store[STREAM_PATH].turnId).toBe('turn_old');
   });
@@ -681,7 +703,7 @@ describe('acquireTurnLock — approval resume', () => {
     seedApprovalTurn();
 
     await expect(
-      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: [] } }),
+      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: [], fanOut: true } }),
     ).rejects.toMatchObject({ name: 'ApprovalStaleError', reason: 'no_approvals' });
   });
 
@@ -988,6 +1010,42 @@ describe('recordToolCommand', () => {
   });
 });
 
+describe('recordResolvedMachines', () => {
+  it('narrows the recorded set the runner actually dispatches to', async () => {
+    seedStream({ resolvedMachineIds: [MACHINE_ID, 'machine-2'] });
+    nowMs += 3_000;
+
+    expect(await recordResolvedMachines(fakeDb, CHAT_ID, 'turn_old', [MACHINE_ID])).toBe(true);
+    expect(store[STREAM_PATH].resolvedMachineIds).toEqual([MACHINE_ID]);
+    expect((store[STREAM_PATH].updatedAt as Timestamp).toMillis()).toBe(nowMs);
+  });
+
+  it('no-ops on turnId mismatch, so a superseded runner cannot rewrite the set', async () => {
+    seedStream({ turnId: 'turn_new', resolvedMachineIds: [MACHINE_ID, 'machine-2'] });
+
+    expect(await recordResolvedMachines(fakeDb, CHAT_ID, 'turn_old', [MACHINE_ID])).toBe(false);
+    expect(store[STREAM_PATH].resolvedMachineIds).toEqual([MACHINE_ID, 'machine-2']);
+  });
+
+  it('reports false on a firestore failure, so the runner aborts before dispatch', async () => {
+    seedStream({ resolvedMachineIds: [MACHINE_ID, 'machine-2'] });
+    failNextTransaction = true;
+
+    expect(await recordResolvedMachines(fakeDb, CHAT_ID, 'turn_old', [MACHINE_ID])).toBe(false);
+  });
+
+  it('refuses an empty list rather than recording "whatever was online"', async () => {
+    // `null`/`[]` read back as the legacy site-wide meaning, so a turn with
+    // nothing left must fail instead of writing one.
+    seedStream({ resolvedMachineIds: [MACHINE_ID] });
+
+    await expect(recordResolvedMachines(fakeDb, CHAT_ID, 'turn_old', [])).rejects.toThrow(
+      /must not dispatch/,
+    );
+    expect(store[STREAM_PATH].resolvedMachineIds).toEqual([MACHINE_ID]);
+  });
+});
+
 describe('finishTurn', () => {
   it('marks the turn complete without an error field', async () => {
     seedStream();
@@ -1096,7 +1154,7 @@ describe('finishTurn', () => {
       turnId: 'turn_resume',
       siteId: SITE_ID,
       machineId: SITE_TARGET_ID,
-      resume: { messageId: 'msg_a', toolCallIds: ['call_1'] },
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'], fanOut: false },
     });
 
     expect(store[STREAM_PATH]).toMatchObject({

@@ -47,6 +47,11 @@ import type { ToolTier } from '@/lib/mcp-tools';
 import { getOnlineMachines, isHootEnabled, isMachineOnline } from '@/lib/hoot-utils.server';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { acquireTurnLock, generateTurnId } from '@/lib/hoot/turnStore.server';
+import {
+  SITE_TARGET_ID,
+  type ResolvedTargets,
+  type TurnTargetRecord,
+} from '@/lib/hoot/target';
 import logger from '@/lib/logger';
 import {
   TalonAuthorError,
@@ -56,9 +61,6 @@ import {
 } from './author.server';
 import type { StoredTalon } from './store.server';
 import type { TalonDisabledReason, TalonRunCondition } from './types';
-
-/** Sentinel `machineId` for site-wide mode (mirrors /api/hoot + the runner). */
-const SITE_TARGET_ID = '__site__';
 
 /** Everything a hoot turn needs about the run that is firing it. */
 export interface RunHootOutputArgs {
@@ -159,29 +161,31 @@ async function checkMachineGuards(
  * `skipped`, matching {@link checkMachineGuards}: an away site is not a talon
  * fault and must not spend one of the `AUTO_DISABLE_AFTER_FAILURES` lives.
  *
- * The kill switch has no site-wide counterpart on purpose: site mode fans tool
- * calls out to `getOnlineMachines` without consulting `cortexEnabled` anywhere
- * (`buildExecutableTools`, and `/api/hoot` site mode likewise), so refusing on
- * it here would make talons stricter than the turn they are pre-flighting —
- * and cost one read per machine, since `getOnlineMachines` returns ids only.
+ * This pre-flight asks only "is anything online". The per-machine kill switch is
+ * now enforced where the commands are actually queued — the runner drops
+ * hoot-off machines from the set it dispatches to (D-A) — so a site run against
+ * an all-hoot-off site still reaches a turn that then has nothing to do. Wave
+ * 4.2 moves this check onto the same listing and reports that as `skipped`.
  *
- * @returns the refusal to record, or `null` when the site has somewhere to run.
+ * @returns the refusal to record, or the machines the turn will fan out to.
  */
 async function checkSiteGuards(
   db: Firestore,
   siteId: string,
-): Promise<RunHootOutputResult | null> {
+): Promise<{ refusal: RunHootOutputResult } | { onlineMachines: string[] }> {
   try {
     const onlineMachines = await getOnlineMachines(db, siteId);
     if (onlineMachines.length === 0) {
-      return { status: 'skipped', detail: 'no_machines_online' };
+      return { refusal: { status: 'skipped', detail: 'no_machines_online' } };
     }
+    return { onlineMachines };
   } catch (error) {
     // Same classification as the machine guards: a failed read is transient and
     // decides nothing about the site.
-    return { status: 'failed', detail: 'machine_check_failed', error: errorText(error) };
+    return {
+      refusal: { status: 'failed', detail: 'machine_check_failed', error: errorText(error) },
+    };
   }
-  return null;
 }
 
 /**
@@ -261,16 +265,39 @@ export async function runHootOutput(
   // After the author checks, before any write: a dead author is terminal and
   // must still disable the talon even when the machine happens to be down, and
   // a refusal here must leave no chat or claimed lock behind either.
-  const refusal = args.machineId
+  const machineRefusal = args.machineId
     ? await checkMachineGuards(db, siteId, args.machineId)
-    : await checkSiteGuards(db, siteId);
-  if (refusal) return refusal;
+    : null;
+  if (machineRefusal) return machineRefusal;
+
+  const isSiteMode = !args.machineId;
+  let onlineMachines: string[] = [];
+  if (isSiteMode) {
+    const siteGuards = await checkSiteGuards(db, siteId);
+    if ('refusal' in siteGuards) return siteGuards.refusal;
+    onlineMachines = siteGuards.onlineMachines;
+  }
 
   const access = author.access;
-  const isSiteMode = !args.machineId;
   const machineId = args.machineId ?? SITE_TARGET_ID;
   const machineName = args.machineName || args.machineId || '';
   const chatId = `talon_${Date.now()}_${runId}`;
+
+  // A site-scoped talon run fans out, exactly as it always has; a machine-scoped
+  // one is the single path. The runner re-checks this set against what is online
+  // and hoot-enabled when the turn starts, which is where the kill switch (D-A)
+  // reaches a site-wide talon — this pre-flight still only asks "is anything
+  // online", and Wave 4.2 moves it onto the same listing.
+  const turnTarget: TurnTargetRecord = {
+    machineIds: isSiteMode ? null : [machineId],
+    fanOut: isSiteMode,
+    source: 'talon',
+  };
+  const resolved: ResolvedTargets = {
+    ids: isSiteMode ? onlineMachines : [machineId],
+    fanOut: isSiteMode,
+    skipped: { offline: [], disabled: [] },
+  };
 
   // Create the chat BEFORE the turn: the runner then sees an existing doc and
   // treats this as a continuation, so its placeholder title can't overwrite
@@ -303,7 +330,13 @@ export async function runHootOutput(
   const turnId = generateTurnId();
   let prior;
   try {
-    prior = await acquireTurnLock(db, chatId, { turnId, siteId, machineId });
+    prior = await acquireTurnLock(db, chatId, {
+      turnId,
+      siteId,
+      machineId,
+      target: turnTarget,
+      resolvedMachineIds: resolved.ids,
+    });
   } catch (error) {
     return { status: 'failed', detail: 'turn_lock_failed', error: errorText(error) };
   }
@@ -313,18 +346,20 @@ export async function runHootOutput(
       chatId,
       turnId,
       siteId,
-      machineId,
-      machineName: isSiteMode ? '' : machineName,
       messages: [buildDirectiveMessage(args)],
       userId: author.userId,
       access,
+      resolved,
+      turnTarget,
+      // No `chatTarget`: this chat's target fields are written above, with the
+      // machine's display name, and the runner must not overwrite that label.
       // Two ceilings and nothing else, on purpose (decided 2026-08-15): the
       // default is read-only, and the per-talon `let hoot act` opt-in raises it
       // to tier 2. There is deliberately NO finer per-call cap to thread down
       // into `getToolsByTier` — an unattended turn either looks, or looks and
       // acts, and tier 3 stays unreachable either way (see UNATTENDED_MAX_TIER).
       maxToolTier: unattendedToolTier(args.allowActions === true),
-      priorToolCommands: prior?.toolCommands ?? null,
+      priorTurn: prior,
       source: 'talon',
     });
 
