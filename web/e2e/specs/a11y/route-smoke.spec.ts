@@ -32,11 +32,22 @@ async function stabilizeForA11y(page: Page) {
   await page.evaluate(() => document.fonts?.ready);
 }
 
-async function expectNoSeriousA11yViolations(page: Page) {
+/**
+ * `within` scopes the scan to one open surface instead of the whole document.
+ *
+ * Needed for a modal Radix menu: while one is open the library marks everything
+ * outside it `aria-hidden` (`hideOthers`, the aria-hidden package), and /hoot's
+ * focusable window-splitter — the conversation-list resize handle — is then a
+ * tabbable element inside an aria-hidden subtree, which axe reports as
+ * `aria-hidden-focus` (serious). That is true of every modal menu in the app,
+ * including the header's site switcher, and is not what the picker is being
+ * asked about here; the page's own full-page pass runs with nothing open.
+ */
+async function expectNoSeriousA11yViolations(page: Page, within?: string) {
   await stabilizeForA11y(page);
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa'])
-    .analyze();
+  const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']);
+  if (within) builder.include(within);
+  const results = await builder.analyze();
   const blocking = results.violations.filter(
     (violation) => violation.impact === 'serious' || violation.impact === 'critical',
   );
@@ -84,6 +95,36 @@ test.describe('authenticated a11y smoke', () => {
     await seedHootFixture({ userId: TEST_USERS.admin.uid });
     await page.goto('/hoot');
     await expect(page.getByLabel('chat message')).toBeVisible();
+    await expectNoSeriousA11yViolations(page);
+  });
+
+  test('hoot target picker and mention list have no serious/critical axe violations', async ({
+    page,
+  }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
+    const composer = page.getByLabel('chat message');
+    await expect(composer).toBeVisible();
+
+    // The checkbox picker, open: a tri-state master row and one row per machine,
+    // each carrying its status as text. Scoped — see the helper.
+    await page.getByLabel(/hoot target/i).click();
+    await expect(page.getByRole('menuitemcheckbox', { name: /^all machines/i })).toBeVisible();
+    await expectNoSeriousA11yViolations(page, '[data-slot="dropdown-menu-content"]');
+    await page.keyboard.press('Escape');
+
+    // The `@` completion list, open. A Radix popover is NOT modal, so nothing is
+    // aria-hidden and the whole page is scanned with the list up — which is the
+    // state that matters: the listbox is named in its own right, and the
+    // composer stays a textbox driving it through aria-activedescendant.
+    //
+    // The query matches both seeded machines, so the scan covers a highlighted
+    // row and a plain one. Which is which is deterministic: `useMachines` sorts
+    // by id and `filterMentionOptions` keeps that order, so the online
+    // `e2e-cortex-machine` leads and carries the highlight.
+    await composer.click();
+    await composer.pressSequentially('@e2e-cortex');
+    await expect(page.getByRole('listbox', { name: /machines to mention/i })).toBeVisible();
     await expectNoSeriousA11yViolations(page);
   });
 });

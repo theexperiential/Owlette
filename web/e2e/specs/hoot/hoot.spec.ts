@@ -1,10 +1,27 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
-import { TEST_USERS } from '../../helpers/seed';
+import { grantMembership, revokeMembership, TEST_USERS } from '../../helpers/seed';
 import {
   clearHootFixture,
+  hootMachinesChatId,
   seedHootFixture,
+  setLastSite,
+  HOOT_FIXTURE_MACHINE_ID,
+  HOOT_FIXTURE_OFFLINE_MACHINE_ID,
 } from '../../helpers/coverageSeed';
+
+const SITE_ID = 'site-A';
+/** The seeded chat whose target is the legacy single machine. */
+const LEGACY_CHAT_ID = `e2e-cortex-user-${TEST_USERS.admin.uid}`;
+/** A row in the target picker, matched from the start of its id. */
+const machineRow = (machineId: string) => new RegExp(`^${machineId}`, 'i');
+
+/**
+ * A row's checkbox column — the half that TOGGLES that machine within the ticked
+ * set. Clicking the row anywhere else selects ONLY that machine, so a test that
+ * means to add one to the set has to hit this, exactly as a user does.
+ */
+const checkboxOf = (row: Locator): Locator => row.locator('[data-checkbox-box]');
 
 /**
  * Leave exactly one machine ticked, from whatever the picker started on, and
@@ -93,6 +110,123 @@ test.describe('hoot conversations and controls', () => {
     await expect(page.getByText(/machine is offline/i)).toBeVisible();
   });
 
+  test('ticking another machine re-aims the open conversation instead of starting one', async ({
+    page,
+  }) => {
+    await page.goto('/hoot');
+    await page.getByText('Deployment triage').click();
+    await expect(page).toHaveURL(new RegExp(`/hoot/${LEGACY_CHAT_ID}$`));
+    await expect(page.getByText(/installer exited with a retryable warning/i)).toBeVisible();
+
+    // The header adopts the conversation's own target, so the picker opens on
+    // the one machine this legacy chat stored — not on the site preference.
+    const target = page.getByLabel(/hoot target/i);
+    await expect(target).toContainText(HOOT_FIXTURE_MACHINE_ID);
+
+    await target.click();
+    const offlineRow = page.getByRole('menuitemcheckbox', {
+      name: machineRow(HOOT_FIXTURE_OFFLINE_MACHINE_ID),
+    });
+    await expect(offlineRow).toHaveAttribute('aria-checked', 'false');
+    // The checkbox column, so this ADDS to the chat's set — clicking the row's
+    // name would select only this machine and drop the one the chat came with.
+    await checkboxOf(offlineRow).click();
+    // The tick itself, read off the row rather than off the trigger's label: a
+    // selection that ends up covering every machine in the site collapses back
+    // to the dynamic "all machines" (`normalizeSelection`), and site-A's machine
+    // count is whatever the specs before this one seeded. Ticked is ticked in
+    // both worlds; the label is not.
+    await expect(offlineRow).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+
+    // THE property: re-aiming continues the conversation. Before multi-machine
+    // targeting, changing the target was only possible by abandoning the chat.
+    await expect(page).toHaveURL(new RegExp(`/hoot/${LEGACY_CHAT_ID}$`));
+    await expect(page.getByText(/installer exited with a retryable warning/i)).toBeVisible();
+  });
+
+  test('a send carries the ticked target and the typed @machine', async ({ page }) => {
+    // The turn never reaches a model: the route is stubbed, and this spec is
+    // about the REQUEST. A refusal body is the cheapest valid response — the
+    // composer's error banner is the only visible consequence.
+    await page.route('**/api/hoot', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'LLM unavailable in e2e' }),
+      });
+    });
+
+    await page.goto('/hoot');
+    const target = page.getByLabel(/hoot target/i);
+    await aimAtOnly(page, machineRow(HOOT_FIXTURE_MACHINE_ID));
+    await expect(target).toContainText(HOOT_FIXTURE_MACHINE_ID);
+
+    // `@` names a machine OUTSIDE the ticked set: a mention narrows one turn,
+    // and the server keeps only the ids its own parse of this same message
+    // agrees with (D-I). Filling in one go leaves the caret past the id, so the
+    // completion list is closed by the time send is clicked.
+    await page
+      .getByLabel('chat message')
+      .fill(`check @${HOOT_FIXTURE_OFFLINE_MACHINE_ID} for disk space`);
+
+    const sent = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' && new URL(request.url()).pathname === '/api/hoot',
+    );
+    // Pending until awaited below: a click that throws first must not leave it
+    // to reject unhandled.
+    sent.catch(() => undefined);
+    await page.getByRole('button', { name: /send message/i }).click();
+    const body = (await sent).postDataJSON() as {
+      siteId?: unknown;
+      machineId?: unknown;
+      target?: { machineIds?: unknown; mentions?: unknown };
+    };
+
+    expect(body.siteId).toBe(SITE_ID);
+    // toEqual on the whole object, so a `target` that lost `machineIds`
+    // altogether fails here rather than reading downstream as "all machines".
+    expect(body.target).toEqual({
+      machineIds: [HOOT_FIXTURE_MACHINE_ID],
+      mentions: [HOOT_FIXTURE_OFFLINE_MACHINE_ID],
+    });
+    // Deploy skew: an instance still on the old route reads this field only, and
+    // it must never widen to the site sentinel.
+    expect(body.machineId).toBe(HOOT_FIXTURE_MACHINE_ID);
+  });
+
+  test('an approval card names the machines its own turn ran on', async ({ page }) => {
+    await page.goto(`/hoot/${hootMachinesChatId(TEST_USERS.admin.uid)}`);
+
+    // The header adopts the CHAT's target, so both of its machines are ticked.
+    // Read off the rows, not the trigger's label: on a site holding nothing but
+    // these two, a set covering every machine collapses back to the dynamic
+    // "all machines" (`normalizeSelection`) and the label changes with it. Both
+    // rows are ticked either way.
+    const target = page.getByLabel(/hoot target/i);
+    await target.click();
+    for (const machineId of [HOOT_FIXTURE_MACHINE_ID, HOOT_FIXTURE_OFFLINE_MACHINE_ID]) {
+      await expect(
+        page.getByRole('menuitemcheckbox', { name: machineRow(machineId) }),
+      ).toHaveAttribute('aria-checked', 'true');
+    }
+    await page.keyboard.press('Escape');
+
+    // ...while the pending approval belongs to a turn a mention narrowed to one
+    // of them. Scoped to the ToolCallCard root (`my-2 rounded-lg border
+    // overflow-hidden`) so the user message that typed the mention can't satisfy
+    // the assertion.
+    const approvalCard = page
+      .locator('div.rounded-lg.border.overflow-hidden')
+      .filter({ hasText: 'hoot wants to run the privileged' })
+      .first();
+    await expect(approvalCard).toContainText(`on ${HOOT_FIXTURE_MACHINE_ID}`);
+    await expect(approvalCard).not.toContainText(HOOT_FIXTURE_OFFLINE_MACHINE_ID);
+    await expect(approvalCard.getByRole('button', { name: /^approve$/i })).toBeVisible();
+    await expect(approvalCard.getByRole('button', { name: /^deny$/i })).toBeVisible();
+  });
+
   test('resizes the conversation sidebar and remembers the width and the collapsed state', async ({ page }) => {
     await page.goto('/hoot');
 
@@ -177,5 +311,56 @@ test.describe('hoot conversations and controls', () => {
     await page.getByLabel('chat message').fill('summarize the latest issue');
     await page.getByRole('button', { name: /send message/i }).click();
     await expect(page.getByText(/LLM unavailable in e2e/i)).toBeVisible();
+  });
+});
+
+/**
+ * The counterpart to "ticking continues the chat": a SITE change still starts a
+ * fresh conversation. The open chat belongs to the old site — it has already
+ * left the sidebar and cannot be sent to — so keeping it in front would only
+ * invite a cross-site send (OWL-48).
+ *
+ * Its own describe because it needs a second site on the admin fixture, borrowed
+ * for this block and handed back: a grant left behind makes site auto-selection
+ * prefer it for every later spec, which is the contamination `releaseFixtureSite`
+ * exists for.
+ */
+test.describe('hoot site change', () => {
+  test.use(roleState('admin'));
+
+  const ADMIN_UID = TEST_USERS.admin.uid;
+  const OTHER_SITE_ID = 'site-B';
+  const OTHER_SITE_NAME = 'Site B (Unassigned)';
+
+  test.beforeAll(async () => {
+    await grantMembership(OTHER_SITE_ID, ADMIN_UID, 'admin');
+  });
+
+  test.afterAll(async () => {
+    await revokeMembership(OTHER_SITE_ID, ADMIN_UID);
+    // The switch below persists the new site. Put the saved one back, or every
+    // later spec opens on a site it seeded nothing into.
+    await setLastSite(ADMIN_UID, SITE_ID);
+  });
+
+  test('changing site starts a new conversation', async ({ page }) => {
+    await seedHootFixture({ userId: ADMIN_UID });
+    // Deterministic starting site: the field outlives the run, so an earlier
+    // spec (or a failed attempt at this one) would otherwise decide it.
+    await setLastSite(ADMIN_UID, SITE_ID);
+
+    await page.goto('/hoot');
+    await page.getByText('Deployment triage').click();
+    await expect(page).toHaveURL(new RegExp(`/hoot/${LEGACY_CHAT_ID}$`));
+    await expect(page.getByText(/installer exited with a retryable warning/i)).toBeVisible();
+
+    await page.getByTestId('site-switcher-trigger').click();
+    await page.getByRole('menuitem', { name: OTHER_SITE_NAME }).click();
+
+    // Back to the landing URL — a chat with no id yet — and the old site's
+    // transcript is gone with it.
+    await expect(page).toHaveURL(/\/hoot$/);
+    await expect(page.getByText(/installer exited with a retryable warning/i)).toHaveCount(0);
+    await expect(page.getByTestId('site-switcher-trigger')).toContainText(OTHER_SITE_NAME);
   });
 });
