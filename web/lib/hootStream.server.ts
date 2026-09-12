@@ -1,18 +1,24 @@
 /**
- * hoot streaming dispatcher, shared by `/api/hoot` and
- * `/api/hoot/conversations/{conversationId}`.
+ * hoot streaming dispatcher for the PUBLIC conversations API:
+ * `/api/hoot/conversations/{conversationId}`, its `/api/chat/{conversationId}`
+ * twin and the `/api/cortex/conversations/{conversationId}` re-export. All of
+ * them pass the `onAssistantText` tap that persists the final assistant message.
+ *
+ * The dashboard's `/api/hoot` no longer comes through here — it runs async turns
+ * through `lib/hoot/turnRunner.server.ts` — so a change made in this file lands
+ * on the documented public contract and nothing else.
  *
  * Three mutually exclusive paths:
- *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools
+ *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools, over the
+ *     machines that are online AND have the hoot kill switch on (D-A)
  *   - single machine, local hoot + site-admin caller: the agent runs the llm and
  *     streams via firestore onSnapshot
  *   - single machine, fallback: server-side llm + tool relay
- *
- * The legacy route is a thin wrapper with unchanged observable behavior; the
- * chat-noun route adds the `onAssistantText` tap to persist the final message.
  */
 
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { withAdvisor } from '@/lib/hoot/advisor';
+import { SITE_TARGET_ID } from '@/lib/hoot/target';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
@@ -22,15 +28,27 @@ import {
   resolveHootMaxTier,
   isMachineOnline,
   isHootEnabled,
-  getOnlineMachines,
+  listSiteMachines,
   getHootRequireTier3Approval,
   buildExecutableTools,
 } from '@/lib/hoot-utils.server';
 
-export const SITE_TARGET_ID = '__site__';
+// Re-exported, not redefined: both conversation routes import the sentinel from
+// here, and `lib/hoot/target.ts` holds the one definition in `web/`.
+export { SITE_TARGET_ID };
 
 const HEARTBEAT_STALE_MS = 30_000;
 const LOCAL_HOOT_TIMEOUT_MS = 60_000;
+
+/** This surface's chatId is a `chat_conversations` id, but the follow-up sweep
+ *  resolves `chats/{chatId}` — a follow-up scheduled from here could never fire
+ *  (it fails closed at fire time as `chat_deleted`). Withhold the tools rather
+ *  than let the model make a promise the sweep silently breaks. */
+const UNSUPPORTED_TOOLS = new Set(['schedule_followup', 'cancel_followup']);
+
+export function conversationsToolDefs(maxToolTier: ToolTier) {
+  return getToolsByTier(maxToolTier).filter((def) => !UNSUPPORTED_TOOLS.has(def.name));
+}
 
 export interface HootStreamRequest {
   db: FirebaseFirestore.Firestore;
@@ -67,14 +85,33 @@ export async function runHootStream(
   const maxToolTier = req.maxToolTier ?? resolveHootMaxTier(access);
 
   if (isSiteMode) {
-    const onlineMachines = await getOnlineMachines(db, siteId);
-    if (onlineMachines.length === 0) {
+    const machines = await listSiteMachines(db, siteId);
+    const online = machines.filter((machine) => machine.online);
+    if (online.length === 0) {
       return {
         ok: false,
         status: 503,
         error: 'no machines are currently online in this site.',
       };
     }
+
+    // The per-machine kill switch reaches site mode too (D-A): a machine with
+    // hoot switched off receives nothing here, exactly as on the single-machine
+    // path below. Offline is classified first, so a machine that is both keeps
+    // its 503 and the "turn hoot back on" fix stays visible when it is the only
+    // thing in the way.
+    const dispatchMachines = online
+      .filter((machine) => machine.hootEnabled)
+      .map((machine) => machine.id);
+    if (dispatchMachines.length === 0) {
+      return {
+        ok: false,
+        status: 423,
+        error:
+          'hoot is disabled on every online machine in this site. re-enable it from the hoot header to deliver tool calls.',
+      };
+    }
+
     return {
       ok: true,
       response: handleSiteWideMode(
@@ -84,7 +121,7 @@ export async function runHootStream(
         messages,
         chatId,
         maxToolTier,
-        onlineMachines,
+        dispatchMachines,
         access.role,
         req.onAssistantText,
       ),
@@ -389,7 +426,7 @@ async function runServerSideLLM(
     getHootRequireTier3Approval(db, siteId),
   ]);
 
-  const toolDefs = getToolsByTier(maxToolTier);
+  const toolDefs = conversationsToolDefs(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,
@@ -407,7 +444,8 @@ async function runServerSideLLM(
     model,
     system: buildSystemPrompt(machineName || machineId, false, processes),
     messages,
-    tools: executableTools,
+    // Plus the Opus 5 advisor, capped per reply, when this model may consult it.
+    ...withAdvisor(llmConfig, executableTools),
     stopWhen: stepCountIs(10),
   });
 
@@ -421,12 +459,12 @@ function handleSiteWideMode(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
-  onlineMachines: string[],
+  dispatchMachines: string[],
   userRole: string | null,
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines, userRole),
+    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, dispatchMachines, userRole),
     onAssistantText,
   );
 }
@@ -438,14 +476,15 @@ async function runSiteWideMode(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
-  onlineMachines: string[],
+  /** Online AND hoot-enabled — the kill switch is applied before we get here. */
+  dispatchMachines: string[],
   userRole: string | null,
 ): Promise<Response> {
   const [llmConfig, requireTier3Approval] = await Promise.all([
     resolveLlmConfig(db, userId),
     getHootRequireTier3Approval(db, siteId),
   ]);
-  const toolDefs = getToolsByTier(maxToolTier);
+  const toolDefs = conversationsToolDefs(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
     siteId,
@@ -453,7 +492,7 @@ async function runSiteWideMode(
     chatId,
     toolDefs,
     true,
-    onlineMachines,
+    dispatchMachines,
     { userId, userRole, requireTier3Approval },
   );
 
@@ -463,7 +502,8 @@ async function runSiteWideMode(
     model,
     system: buildSystemPrompt('', true),
     messages,
-    tools: executableTools,
+    // Plus the Opus 5 advisor, capped per reply, when this model may consult it.
+    ...withAdvisor(llmConfig, executableTools),
     stopWhen: stepCountIs(10),
   });
 

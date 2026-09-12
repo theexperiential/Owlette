@@ -9,14 +9,20 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import {
+  problem,
   problemFromError,
   problemNotFound,
   problemValidation,
+  ProblemType,
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
-import { applyAuthDeprecations, readAndParseJsonBody } from '../../../_shared';
+import {
+  applyAuthDeprecations,
+  readAndParseJsonBody,
+  requireSiteScopesForBulkMembership,
+} from '../../../_shared';
 import { MAX_SITES_PER_REQUEST, removeSiteFromUser } from '@/lib/actions/removeSiteFromUser.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
@@ -66,6 +72,12 @@ export const POST = authorizedPlatformHandler<RouteParams>({
           );
         }
 
+        const scopeError = requireSiteScopesForBulkMembership(
+          ctx.auth,
+          siteIds as string[],
+        );
+        if (scopeError) return scopeError;
+
         const result = await removeSiteFromUser(
           {
             auditActor: auditActor(ctx),
@@ -93,6 +105,36 @@ export const POST = authorizedPlatformHandler<RouteParams>({
             'body.siteIds': [
               'each entry must match site-id format (1-128 chars: letters, digits, underscore, hyphen)',
             ],
+          });
+        }
+        if (result.kind === 'owns_sites') {
+          // Mirrors cannot_remove_owner on the members endpoint: stripping an
+          // owner's membership would leave the site with nobody who can
+          // administer or delete it.
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'cannot remove owned sites',
+            status: 409,
+            detail:
+              `user ${uid} owns ${result.ownedSiteIds.join(', ')}; transfer ownership before removing membership`,
+            instance: `/api/users/${uid}/remove-sites`,
+            code: 'cannot_remove_owner',
+          });
+        }
+
+        // A membership write was refused mid-batch. Reported rather than
+        // swallowed: sites BEFORE this one were written, so a caller that
+        // saw a bare 500 would not know how far the batch got.
+        if (result.kind === 'remove_failed') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'could not remove site membership',
+            status: 409,
+            detail: `membership write refused for site ${result.siteId} (${result.reason}); sites processed before it were applied`,
+            instance: `/api/users/${uid}/remove-sites`,
+            code: 'remove_failed',
+            siteId: result.siteId,
+            reason: result.reason,
           });
         }
 

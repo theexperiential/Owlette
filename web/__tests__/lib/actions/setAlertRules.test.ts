@@ -42,7 +42,7 @@ const actor: UserActor = {
   type: 'user',
   userId: 'user-superadmin',
   role: 'superadmin',
-  sites: [],
+  siteRoles: {},
 };
 
 const AUDIT_ACTOR = 'user:user-superadmin';

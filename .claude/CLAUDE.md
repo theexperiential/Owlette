@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 3.2.3 | **License**: FSL-1.1-Apache-2.0
+**Version**: 3.3.3 | **License**: FSL-1.1-Apache-2.0
 
 ---
 
@@ -49,7 +49,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 ## Tech Stack
 
 - **Web** (`web/`): Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, shadcn/ui, Firebase Auth + Firestore
-- **Agent** (`agent/`): Python 3.9+ hosted as a Windows service by `owlette-host` (`agent/host`, Rust — replaced NSSM in 3.0.0), Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
+- **Agent** (`agent/`): Python 3.11 (bundled 3.11.8 ships; a fresh dependency install needs ≥3.10 — Pillow 12.x) hosted as a Windows service by `owlette-host` (`agent/host`, Rust — replaced NSSM in 3.0.0), Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
 - **Database**: Cloud Firestore (real-time NoSQL), Firebase Auth (Email/Password, Google OAuth, Passkey/WebAuthn)
 - **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 
@@ -75,7 +75,7 @@ cd agent && build_installer_quick.bat             # Quick build (~30 sec)
 node scripts/sync-versions.js X.Y.Z
 ```
 
-Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
+Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/internal/version-management.md`.
 
 **E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@15`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
 
@@ -221,4 +221,4 @@ detail that changes a decision.
 
 ---
 
-**Last Updated**: 2026-08-30
+**Last Updated**: 2026-09-12

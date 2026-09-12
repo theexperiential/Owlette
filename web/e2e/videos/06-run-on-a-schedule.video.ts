@@ -20,12 +20,24 @@
  * need the standalone ScheduleEditor dialog (preset bar + "save schedule")
  * reached from the row's gear, not the inline ProcessDialog editor.
  *
- * TIMEZONE: do NOT frame the chip under the "configure schedule" title, or the
- * "times in …" label in the process dialog. The chip is labelled `source="site"`,
- * but the agent can never read the site document (firestore.rules scopes it to
- * its own machine subtree), so `site_timezone` is always None and every window
- * is evaluated on the machine's own local clock. Site-time evaluation is
- * designed, not wired. No timezone claim is spoken either way.
+ * SITE-TIME FLAG: `sites/{siteId}.schedulesFollowSiteTime` decides whose clock
+ * evaluates a launch window (agent support shipped in 3.2.3). Three states, and
+ * absent is a real one: absent = never asked, `false` = declined, `true` = site
+ * time. Only `true` renders the `source="site"` chip under the "configure
+ * schedule" title and swaps the copy to "times run on the site's clock";
+ * absent and `false` both keep "times run on each machine's own clock" byte for
+ * byte (lib/scheduleClockCopy).
+ *
+ * This scene pins the flag to FALSE on its own site doc (below) — it does NOT
+ * touch the shared fixture, where absent must keep meaning machine-local for
+ * every other scene. Two reasons. The frames then match the narration, which
+ * makes no timezone claim and is served by the machine-clock wording. And it
+ * keeps SiteTimeConfirmBanner off camera: that banner needs a site admin,
+ * `flag === undefined`, and at least one scheduled process — which b03's save
+ * creates — so on a flag-absent site it would pop in above the machines heading
+ * partway through, shift the layout under b03–b07, and print an amber "these
+ * machines run an agent older than 3.2.3" line naming the fixture's seeded
+ * 3.0.0 agents. Teaching that banner is a scripted beat, not a side effect.
  *
  * Run:  cd web && npm run videos -- --grep "episode 6"
  * Out:  dev/video-tutorials/footage/web/06-run-on-a-schedule.mp4
@@ -40,6 +52,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -57,6 +70,14 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
       .collection('users')
       .doc(TEST_USERS.admin.uid)
       .set({ lastSiteId: ctx.siteId }, { merge: true });
+
+    // Declined, not absent — see the SITE-TIME FLAG note in the header. Written
+    // here and never in `seedScreenshotFixtures`, because absent is the state
+    // every other scene's frames were shot in.
+    await db
+      .collection('sites')
+      .doc(ctx.siteId)
+      .set({ schedulesFollowSiteTime: false }, { merge: true });
 
     // Pre-seed a process on lobby-display so b02 has something to "open for
     // edit" and b03+ has a row with a schedule gear.
@@ -140,7 +161,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         await expect(lobbyCard).toBeVisible();
         await centerInView(page, lobbyCard);
         await highlight(page, lobbyCard, 2600);
-        await narrate(page, 'b01 why schedule', 21);
+        await narrate(page, 'b01 why schedule', 6.3);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 why schedule - close', 6.7);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 why schedule - settle', 1.0);
 
         // [b02] switch to scheduled (~12.8s). The process list is EXPANDED by
         // default (seed.ts user prefs + the AuthContext default), so the single
@@ -181,7 +206,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         await centerInView(page, rowGear);
         await clickWithCursor(page, rowGear);
         await expect(page.getByText('configure schedule', { exact: true })).toBeVisible();
-        await narrate(page, 'b03 day pills + time range', 20);
+        await narrate(page, 'b03 day pills + time range', 6.0);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b03 day pills + time range - close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 day pills + time range - settle', 1.0);
 
         // [b04] overnight windows (~15.9s). The seeded admin preference is 12h
         // and the default block ends 17:00, so a bare "06:00" parses as 6 PM and
@@ -197,7 +226,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
         const plusOneDay = page.getByText('+1 day', { exact: true });
         await expect(plusOneDay).toBeVisible();
         await highlight(page, plusOneDay, 2400);
-        await narrate(page, 'b04 crosses midnight, +1 day badge', 17);
+        await narrate(page, 'b04 crosses midnight, +1 day badge', 5.1);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b04 crosses midnight, +1 day badge - close', 3.9);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b04 crosses midnight, +1 day badge - settle', 1.0);
 
         // [b05] presets (~21.2s).
         const businessHoursPill = page.getByRole('button', { name: 'business hours' });
@@ -244,7 +277,11 @@ test('episode 6 — run apps on a schedule', async ({ browser }) => {
           .filter({ hasText: 'lobby-display' });
         await centerInView(page, lobbyCardFinal);
         await highlight(page, lobbyCardFinal, 2600);
-        await narrate(page, 'b07 cover — the native insert goes here', 12);
+        await narrate(page, 'b07 cover — the native insert goes here', 3.6);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 3.5 });
+        await narrate(page, 'b07 cover — the native insert goes here - close', 1.4);
+        await slowPush(page, { scale: 1.0, seconds: 2.5 });
+        await narrate(page, 'b07 cover — the native insert goes here - settle', 1.0);
         // Reopen the editor so the pills — the thing the local app lacks — land
         // the closing contrast.
         await clickWithCursor(

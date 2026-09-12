@@ -5,6 +5,7 @@
 
 import { tool, jsonSchema } from 'ai';
 import { decryptApiKey } from '@/lib/llm-encryption.server';
+import { resolveSiteAccess, type MembershipRole } from '@/lib/sitePolicy.server';
 import {
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
@@ -17,6 +18,19 @@ import { deleteProcess } from '@/lib/actions/deleteProcess.server';
 import { ProcessConfigError, type PublicProcessConfig } from '@/lib/processConfig.server';
 import { Capability, hasCapability, type Actor, type Role, type SystemActorName } from '@/lib/capabilities';
 import { timestampToIso } from '@/lib/firestoreTime.server';
+import {
+  cancelFollowup,
+  scheduleFollowup,
+  type CancelFollowupOutcome,
+} from '@/lib/hoot/followupStore.server';
+import {
+  MAX_TARGET_MACHINES,
+  SITE_TARGET_ID,
+  effectiveFanOut,
+  isValidMachineId,
+  type HootTarget,
+  type ResolvedTargets,
+} from '@/lib/hoot/target';
 import type { TalonStoreContext } from '@/lib/talons/store.server';
 
 /**
@@ -35,6 +49,9 @@ export const SERVER_SIDE_TOOLS: ReadonlySet<string> = new Set([
   'create_talon',
   'list_talons',
   'set_talon_enabled',
+  // Follow-ups are chat records; the cron sweep acts on them, never an agent.
+  'schedule_followup',
+  'cancel_followup',
 ]);
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
@@ -46,6 +63,17 @@ export const COMMAND_TIMEOUT_MS = 30000;
  * pending-entry GC so a command can never outlive its pending entry.
  */
 export const MAX_TOOL_TIMEOUT_SECONDS = 3300;
+
+/**
+ * `schedule_followup` horizon — one minute to seven days. Enforced here rather
+ * than in the store, which stores whatever `runAt` it is handed; the tool
+ * description quotes the same numbers.
+ */
+export const MIN_FOLLOWUP_DELAY_MINUTES = 1;
+export const MAX_FOLLOWUP_DELAY_MINUTES = 10080;
+
+/** A follow-up note is an instruction to one future turn, not a document. */
+export const MAX_FOLLOWUP_NOTE_LENGTH = 1000;
 
 /**
  * Dispatch/poll hooks: the turn runner records `toolCallId → commandId` for
@@ -78,13 +106,33 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
 
 export interface BuildExecutableToolsOptions {
   userId?: string;
+  /** GLOBAL role. Grants nothing on a site; kept for audit attribution. */
   userRole?: string | null;
+  /** PER-SITE standing. Omit it and every site-scoped tool denies. */
+  userSiteRole?: MembershipRole;
   /** Unattended attribution for the autonomous Hoot path (no session). Wins over
    *  userId/userRole so the audit row reads `system:<name>`, not a phantom user. */
   systemActor?: SystemActorName;
   /** Chat this tool loop belongs to; defaulted from the positional `chatId` so
    *  server-side tools can stamp provenance (talon `createdVia` + `chatId`). */
   chatId?: string;
+  /** The chat's target the way the follow-up store records it: a machine id, or
+   *  `__site__` for a site-wide chat. Defaulted from `buildExecutableTools`'
+   *  positional args — `machineIds` cannot supply it, because site mode passes
+   *  the fanned-out online machines rather than the sentinel. Read only by
+   *  `schedule_followup`, and only when `followupTarget` is absent. */
+  chatMachineId?: string;
+  /** This turn's target, recorded on whatever `schedule_followup` writes so the
+   *  follow-up fires where it was promised (D-D). Wins over `chatMachineId`,
+   *  which can only say "one machine" or "the whole site": without it a subset
+   *  turn would schedule a SITE-WIDE follow-up, since fan-out defaults to the
+   *  sentinel. */
+  followupTarget?: HootTarget;
+  /** This turn's effective tool-tier ceiling — what `access` earns, already
+   *  intersected with any caller cap. Recorded by `schedule_followup` on the
+   *  follow-up doc so the turn it fires later cannot out-reach the turn that
+   *  promised it; nothing else reads it. */
+  maxToolTier?: ToolTier;
   /** Tier-3 in-chat approval gate; defaults true. Off means tier-3 auto-runs on
    *  the server-side and site-wide paths too, not just local Hoot. */
   requireTier3Approval?: boolean;
@@ -106,6 +154,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeActorRole(role: string | null | undefined): Role {
+  // Unknown values, `'user'` included, are the same tier as `'member'`: no
+  // global privilege. See normaliseRole in lib/sitePolicy.server.ts.
   return role === 'member' || role === 'admin' || role === 'superadmin' ? role : 'member';
 }
 
@@ -128,7 +178,11 @@ function actionContextForHoot(
     type: 'user',
     userId,
     role: normalizeActorRole(options.userRole),
-    sites: [siteId],
+    // Was `sites: [siteId]` — a fabricated membership that asserted the caller
+    // belonged to the site without ever checking, so the global role alone
+    // decided what the tools could do. The real standing is resolved by
+    // `verifyUserSiteAccess` and threaded in; absent, nothing site-scoped runs.
+    siteRoles: options.userSiteRole ? { [siteId]: options.userSiteRole } : {},
   };
   return {
     siteId,
@@ -232,6 +286,30 @@ export async function resolveSiteKeyOwner(
   db: FirebaseFirestore.Firestore,
   siteId: string
 ): Promise<string> {
+  // The owner MEMBER ROW is authoritative. `sites/{siteId}.owner` is legacy and
+  // wave 6.1 deletes it — reading only that would make every unattended run
+  // throw "site has no owner" the moment the migration ran.
+  const ownerRows = await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .where('role', '==', 'owner')
+    .limit(1)
+    .get();
+
+  const ownerRow = ownerRows.docs[0];
+  if (ownerRow) {
+    const data = ownerRow.data() ?? {};
+    if (data.status === 'active') {
+      return typeof data.uid === 'string' && data.uid.length > 0
+        ? data.uid
+        : ownerRow.id;
+    }
+  }
+
+  // Transitional fallback: an environment where the membership backfill has not
+  // run yet has an owner field but no owner row. Remove once prod is migrated —
+  // after 6.1 this branch can only ever return undefined.
   const siteDoc = await db.collection('sites').doc(siteId).get();
   const owner = siteDoc.data()?.owner;
   if (typeof owner !== 'string' || owner.length === 0) {
@@ -247,7 +325,14 @@ export async function resolveSiteKeyOwner(
  * `isSiteAdmin` mirrors AuthContext's `isSiteAdmin(siteId)`.
  */
 export interface SiteAccessLevel {
+  /** GLOBAL `users/{uid}.role`, unnormalised. Carries no site privilege. */
   role: string | null;
+  /**
+   * PER-SITE standing from `sites/{siteId}/members/{uid}`, or null for none.
+   * This is what grants; `role` above does not. Callers building a `UserActor`
+   * must pass this through, or every site-scoped capability denies.
+   */
+  siteRole: MembershipRole;
   isSuperadmin: boolean;
   isSiteAdmin: boolean;
   isSiteOwner: boolean;
@@ -280,51 +365,66 @@ export class SiteAccessError extends Error {
 
 /**
  * Verify site access and return the caller's access level; throws on no-access.
- * Granted iff superadmin, site owner, or listed in `users/{uid}.sites[]` — owner
- * is honored explicitly so a fresh site's owner is not locked out before
- * `sites[]` catches up. Matches `assertUserHasSiteAccess` in apiAuth.server.
+ *
+ * A thin adapter over `resolveSiteAccess` (lib/sitePolicy.server.ts) since Wave 1
+ * task 1.5. This was the THIRD independent membership derivation in the codebase
+ * and the one every unattended talon run goes through.
+ *
+ * The core's precedence differs from the one this function has always reported,
+ * so the codes are re-derived from `facts` rather than taken from `reason`:
+ * the core checks the SITE first and collapses "no user document" and
+ * "soft-deleted" into a single `user_inactive`, while this reports
+ * user_not_found > site_not_found > user_deleted > no_site_access. The facts
+ * carry `userExists`, `siteExists` and `deletedAt` on the denial branch too, so
+ * the original order is reproducible exactly.
+ *
+ * Preserving the codes is not cosmetic. `resolveTalonAuthor` maps them to decide
+ * whether to DISABLE a talon, and `followupSweep` persists the raw code string as
+ * `turnError` — a renamed code is stored-data drift.
  */
 export async function verifyUserSiteAccess(
   db: FirebaseFirestore.Firestore,
   userId: string,
   siteId: string
 ): Promise<SiteAccessLevel> {
-  const [userDoc, siteDoc] = await Promise.all([
-    db.collection('users').doc(userId).get(),
-    db.collection('sites').doc(siteId).get(),
-  ]);
+  const outcome = await resolveSiteAccess(userId, siteId, db);
+  const { facts } = outcome;
 
-  if (!userDoc.exists) {
+  // This function's own precedence, not the core's.
+  if (!facts.userExists) {
     throw new SiteAccessError('user_not_found', 'User not found');
   }
-  if (!siteDoc.exists) {
+  if (!facts.siteExists) {
     throw new SiteAccessError('site_not_found', 'Site not found');
   }
-
-  const userData = userDoc.data()!;
-
   // Soft-delete does not invalidate the iron-session cookie, so without this a
   // deleted superadmin (granted by role, not sites[]) keeps driving tier-3 Hoot
-  // until the cookie lapses. Mirrors assertUserDataActive() in apiAuth.server.
-  if (typeof userData.deletedAt === 'number') {
+  // until the cookie lapses.
+  if (facts.deletedAt !== null) {
     throw new SiteAccessError('user_deleted', 'User is deleted or inactive');
   }
-
-  const siteData = siteDoc.data() || {};
-  const role: string | null = typeof userData.role === 'string' ? userData.role : null;
-  const isSuperadmin = role === 'superadmin';
-  const isSiteOwner = siteData.owner === userId;
-  const userSites: string[] = Array.isArray(userData.sites) ? userData.sites : [];
-  const isAssigned = userSites.includes(siteId);
-
-  if (!isSuperadmin && !isSiteOwner && !isAssigned) {
+  if (!outcome.ok) {
     throw new SiteAccessError('no_site_access', 'You do not have access to this site');
   }
 
-  // Mirrors AuthContext.isSiteAdmin; members never get admin privileges.
-  const isSiteAdmin = isSuperadmin || (role === 'admin' && (isSiteOwner || isAssigned));
+  const isSuperadmin = facts.globalRole === 'superadmin';
+  const isSiteOwner = facts.membershipRole === 'owner';
+  // Mirrors AuthContext.computeIsSiteAdmin: per-site standing decides, and the
+  // global role contributes nothing but superadmin. This previously read
+  // `globalRole === 'admin' && membershipRole !== null`, which is how one global
+  // admin held tier-3 Hoot on every site it was assigned to.
+  const isSiteAdmin =
+    isSuperadmin || facts.membershipRole === 'owner' || facts.membershipRole === 'admin';
 
-  return { role, isSuperadmin, isSiteAdmin, isSiteOwner };
+  // `rawRole`, not `globalRole`: this returns the unnormalised value, so a user
+  // doc with no role stays `null` rather than becoming 'member'.
+  return {
+    role: facts.rawRole,
+    siteRole: facts.membershipRole,
+    isSuperadmin,
+    isSiteAdmin,
+    isSiteOwner,
+  };
 }
 
 /**
@@ -405,26 +505,183 @@ export async function getHootRequireTier3Approval(
   }
 }
 
-/** All online machines for a site. */
-export async function getOnlineMachines(
+/** One machine of a site, with the two facts a dispatch turns on. */
+export interface SiteMachineSummary {
+  id: string;
+  online: boolean;
+  /** `cortexEnabled !== false` — absent means on, mirroring {@link isHootEnabled}. */
+  hootEnabled: boolean;
+}
+
+/**
+ * Every machine in a site, in ONE collection read.
+ *
+ * Resolving a SET through `isMachineOnline` + `isHootEnabled` would cost two
+ * document reads per machine. Those two stay for the single-machine callers that
+ * are not on this path: hootStream's machine mode and the talon runner's
+ * per-machine pre-flight each check one named machine.
+ */
+export async function listSiteMachines(
   db: FirebaseFirestore.Firestore,
-  siteId: string
-): Promise<string[]> {
-  const machinesSnapshot = await db
+  siteId: string,
+): Promise<SiteMachineSummary[]> {
+  const snapshot = await db
     .collection('sites')
     .doc(siteId)
     .collection('machines')
     .get();
 
-  const onlineMachines: string[] = [];
-  for (const doc of machinesSnapshot.docs) {
+  return snapshot.docs.map((doc) => {
     const data = doc.data();
-    const online = data.online ?? false;
-    if (online) {
-      onlineMachines.push(doc.id);
+    return {
+      id: doc.id,
+      online: !!data.online,
+      hootEnabled: data.cortexEnabled !== false,
+    };
+  });
+}
+
+/** What a turn asks to target, before the site has been consulted. */
+export interface ResolveHootTargetsRequest {
+  /** The chat's selection: `null` = every machine in the site, dynamically. */
+  requested: string[] | null;
+  /** `@machine` ids parsed from THIS turn's message. They REPLACE `requested`
+   *  for this turn only (D-3), so a mention can name an unticked machine. */
+  mentions?: string[];
+}
+
+/**
+ * Why {@link resolveHootTargets} refused. Each reason is paired with the status
+ * the caller returns, and `machineIds` names the machines that caused it so the
+ * refusal can say which — never a second read to find out.
+ */
+export type ResolveTargetsFailure =
+  | { ok: false; status: 400; reason: 'invalid_target' | 'unknown_machine'; machineIds: string[] }
+  | { ok: false; status: 423; reason: 'hoot_disabled'; machineIds: string[] }
+  | { ok: false; status: 503; reason: 'machine_offline' | 'no_machines'; machineIds: string[] };
+
+export type ResolveTargetsResult =
+  | { ok: true; resolved: ResolvedTargets }
+  | ResolveTargetsFailure;
+
+/** Validated, deduped, capped id list — or null when the list is unusable. */
+function readTargetIds(value: unknown): string[] | null {
+  // `[]` is never a valid target (see target.ts): it has no legacy encoding, and
+  // an empty set reaching dispatch would read as "all machines" downstream.
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TARGET_MACHINES) {
+    return null;
+  }
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (!isValidMachineId(entry)) return null;
+    if (!ids.includes(entry)) ids.push(entry);
+  }
+  return ids;
+}
+
+/**
+ * The machines a turn dispatches to, resolved once against the site's listing.
+ *
+ * The single decision point: the route, follow-ups and talons all come through
+ * here, so the kill switch (D-A) and the offline rules (D-B) cannot drift apart
+ * between paths. It only ever NARROWS — an id this site cannot name is a 400,
+ * never a fallback to "all machines".
+ *
+ * Skipped machines are reported rather than refused, unless nothing is left:
+ * 423 when the kill switch is the whole reason, 503 otherwise. A machine the
+ * user NAMED with `@` is refused outright, since silently dropping it would
+ * answer a question about a different machine.
+ */
+export async function resolveHootTargets(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  request: ResolveHootTargetsRequest,
+): Promise<ResolveTargetsResult> {
+  // `null` is the one widening value and it is not a list, so it skips the id
+  // validation rather than failing it.
+  const wantsAll = request.requested === null;
+  const requested = wantsAll ? null : readTargetIds(request.requested);
+  const mentionsGiven = Array.isArray(request.mentions) && request.mentions.length > 0;
+  const mentions = mentionsGiven ? readTargetIds(request.mentions) : null;
+  if ((!wantsAll && requested === null) || (mentionsGiven && mentions === null)) {
+    // Malformed before any read: a `/` in an id would be a path traversal
+    // against `sites/{siteId}/machines`, so it never reaches Firestore.
+    return { ok: false, status: 400, reason: 'invalid_target', machineIds: [] };
+  }
+
+  const machines = await listSiteMachines(db, siteId);
+  const byId = new Map(machines.map((machine) => [machine.id, machine]));
+
+  if (mentions) {
+    const unknown = mentions.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      return { ok: false, status: 400, reason: 'unknown_machine', machineIds: unknown };
+    }
+    // Offline before the kill switch — the order `/api/hoot` has always checked
+    // a single machine in, so a machine that is both keeps its 503.
+    const offline = mentions.filter((id) => !byId.get(id)!.online);
+    if (offline.length > 0) {
+      return { ok: false, status: 503, reason: 'machine_offline', machineIds: offline };
+    }
+    const disabled = mentions.filter((id) => !byId.get(id)!.hootEnabled);
+    if (disabled.length > 0) {
+      return { ok: false, status: 423, reason: 'hoot_disabled', machineIds: disabled };
+    }
+    return {
+      ok: true,
+      resolved: {
+        ids: mentions,
+        fanOut: effectiveFanOut({ machineIds: mentions }, machines.length),
+        skipped: { offline: [], disabled: [] },
+      },
+    };
+  }
+
+  if (requested !== null) {
+    const unknown = requested.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      // Includes another site's machine: the listing is this site's, so a
+      // foreign id is simply absent. Refusing beats quietly dropping it.
+      return { ok: false, status: 400, reason: 'unknown_machine', machineIds: unknown };
     }
   }
-  return onlineMachines;
+
+  // A ticked machine that is offline or hoot-off is SKIPPED and reported (D-B),
+  // so one dead wall doesn't cost the user the rest of the fleet. Offline is
+  // classified first, keeping the status `/api/hoot` returns for a machine that
+  // is both.
+  const ids: string[] = [];
+  const offline: string[] = [];
+  const disabled: string[] = [];
+  for (const id of requested ?? machines.map((machine) => machine.id)) {
+    const machine = byId.get(id)!;
+    if (!machine.online) offline.push(id);
+    else if (!machine.hootEnabled) disabled.push(id);
+    else ids.push(id);
+  }
+
+  if (ids.length === 0) {
+    // Nothing left: 423 only when the kill switch is the WHOLE reason, so a
+    // half-offline set still reads as "nothing is online".
+    if (offline.length === 0 && disabled.length > 0) {
+      return { ok: false, status: 423, reason: 'hoot_disabled', machineIds: disabled };
+    }
+    return offline.length > 0
+      ? { ok: false, status: 503, reason: 'machine_offline', machineIds: offline }
+      : { ok: false, status: 503, reason: 'no_machines', machineIds: [] };
+  }
+
+  return {
+    ok: true,
+    resolved: {
+      ids,
+      // fanOut follows what was REQUESTED, not what survived: a two-machine turn
+      // with one machine offline still reports per machine, and a one-machine
+      // site asking for "all" stays on the single path.
+      fanOut: effectiveFanOut({ machineIds: requested }, machines.length),
+      skipped: { offline, disabled },
+    },
+  };
 }
 
 /** Queue an MCP tool call for an agent via Firestore and wait for the result. */
@@ -1319,6 +1576,228 @@ async function executeSetTalonEnabledTool(
   }
 }
 
+/**
+ * Refusal for a caller with no chat identity. Unattended hoot (autonomous
+ * dispatch, talon directives) runs as a system actor: there is no chat to
+ * re-open and no user whose access could be re-resolved at fire time, so a
+ * follow-up scheduled there could never legitimately run.
+ */
+function followupUnavailableResult(): ProcessToolResult {
+  return {
+    ok: false,
+    error: 'followup_unavailable',
+    detail: 'follow-ups are only available inside a user chat.',
+    status: 400,
+  };
+}
+
+type FollowupRunAtResult = { ok: true; runAt: Date } | { ok: false; result: ProcessToolResult };
+
+function followupInputError(code: string, detail: string): FollowupRunAtResult {
+  return { ok: false, result: { ok: false, error: code, detail, status: 400 } };
+}
+
+/**
+ * `delay_minutes` or `at` → the absolute fire time. Exactly one of the two:
+ * accepting both would mean silently picking a winner, and accepting neither
+ * would mean inventing a schedule the model did not ask for.
+ */
+function resolveFollowupRunAt(params: Record<string, unknown>, now: number): FollowupRunAtResult {
+  const delay = params.delay_minutes;
+  const hasDelay = delay !== undefined && delay !== null;
+  const at = typeof params.at === 'string' ? params.at.trim() : params.at;
+  const hasAt = at !== undefined && at !== null && at !== '';
+
+  if (hasDelay && hasAt) {
+    return followupInputError(
+      'invalid_schedule',
+      'pass exactly one of delay_minutes or at — both were given.',
+    );
+  }
+  if (!hasDelay && !hasAt) {
+    return followupInputError(
+      'invalid_schedule',
+      'pass exactly one of delay_minutes or at — neither was given.',
+    );
+  }
+
+  if (hasDelay) {
+    if (typeof delay !== 'number' || !Number.isFinite(delay)) {
+      return followupInputError('invalid_delay_minutes', 'delay_minutes must be a number of minutes.');
+    }
+    if (delay < MIN_FOLLOWUP_DELAY_MINUTES || delay > MAX_FOLLOWUP_DELAY_MINUTES) {
+      return followupInputError(
+        'invalid_delay_minutes',
+        `delay_minutes must be between ${MIN_FOLLOWUP_DELAY_MINUTES} and ${MAX_FOLLOWUP_DELAY_MINUTES} (seven days).`,
+      );
+    }
+    return { ok: true, runAt: new Date(now + delay * 60_000) };
+  }
+
+  if (typeof at !== 'string') {
+    return followupInputError('invalid_at', 'at must be an ISO 8601 timestamp string, e.g. 2026-01-31T14:00:00Z.');
+  }
+  const parsed = Date.parse(at);
+  if (Number.isNaN(parsed)) {
+    return followupInputError('invalid_at', `"${at}" is not a timestamp — use ISO 8601, e.g. 2026-01-31T14:00:00Z.`);
+  }
+  if (parsed <= now) {
+    return followupInputError(
+      'at_in_the_past',
+      'at is in the past — pass a future timestamp, or use delay_minutes for a relative time.',
+    );
+  }
+  if (parsed > now + MAX_FOLLOWUP_DELAY_MINUTES * 60_000) {
+    return followupInputError('at_too_far_out', 'at must be within seven days from now.');
+  }
+  return { ok: true, runAt: new Date(parsed) };
+}
+
+/**
+ * The target a follow-up is filed against: this turn's own, when the caller
+ * threaded one, else the legacy single-`machineId` view (`__site__`, or one id).
+ * An empty explicit set is a caller bug with no safe encoding, so it reads as
+ * "no target" — the tool refuses — rather than widening to the whole site.
+ */
+function followupTargetFor(options: BuildExecutableToolsOptions): HootTarget | null {
+  const target = options.followupTarget;
+  if (target) {
+    if (target.machineIds === null) return { machineIds: null };
+    return target.machineIds.length > 0 ? { machineIds: [...target.machineIds] } : null;
+  }
+
+  const machineId = options.chatMachineId?.trim();
+  if (!machineId) return null;
+  return machineId === SITE_TARGET_ID ? { machineIds: null } : { machineIds: [machineId] };
+}
+
+async function executeScheduleFollowupTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  const chatId = options.chatId?.trim();
+  const userId = options.userId?.trim();
+  const target = followupTargetFor(options);
+  if (!chatId || !userId || !target) return followupUnavailableResult();
+
+  const note = typeof params.note === 'string' ? params.note.trim() : '';
+  if (!note) {
+    return {
+      ok: false,
+      error: 'missing_note',
+      detail: 'note is required — say what the follow-up turn should do.',
+      status: 400,
+    };
+  }
+  if (note.length > MAX_FOLLOWUP_NOTE_LENGTH) {
+    return {
+      ok: false,
+      error: 'note_too_long',
+      detail: `note must be ${MAX_FOLLOWUP_NOTE_LENGTH} characters or fewer.`,
+      status: 400,
+    };
+  }
+
+  const schedule = resolveFollowupRunAt(params, Date.now());
+  if (!schedule.ok) return schedule.result;
+
+  const watchCommandId =
+    typeof params.watch_command_id === 'string' ? params.watch_command_id.trim() : '';
+
+  try {
+    const scheduled = await scheduleFollowup(db, {
+      chatId,
+      siteId,
+      target,
+      userId,
+      note,
+      runAt: schedule.runAt,
+      ...(watchCommandId ? { watchCommandId } : {}),
+      // The ceiling travels with the promise: without it the fired turn would
+      // earn the OWNER's tier, so a chat-scoped API key held to tier 1 could
+      // schedule itself tier-2 reach with no approval gate.
+      ...(options.maxToolTier ? { maxToolTier: options.maxToolTier } : {}),
+    });
+    const firesAt = scheduled.runAt.toISOString();
+    return {
+      ok: true,
+      followup_id: scheduled.id,
+      fires_at: firesAt,
+      ...(watchCommandId ? { watch_command_id: watchCommandId } : {}),
+      message: `scheduled a follow-up for ${firesAt}.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'internal_error',
+      detail: error instanceof Error ? error.message : 'unknown error',
+    };
+  }
+}
+
+/** Every non-success {@link cancelFollowup} outcome, as something the model can read. */
+const CANCEL_FOLLOWUP_FAILURES: Record<
+  Exclude<CancelFollowupOutcome, 'cancelled'>,
+  { error: string; detail: string; status: number }
+> = {
+  not_found: {
+    error: 'followup_not_found',
+    detail: 'no follow-up has that id — use the followup_id schedule_followup returned.',
+    status: 404,
+  },
+  forbidden: {
+    error: 'followup_forbidden',
+    detail: 'that follow-up belongs to another user.',
+    status: 403,
+  },
+  not_scheduled: {
+    error: 'followup_not_scheduled',
+    detail: 'that follow-up already fired or was cancelled — there is nothing left to cancel.',
+    status: 409,
+  },
+};
+
+async function executeCancelFollowupTool(
+  db: FirebaseFirestore.Firestore,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  // Ownership is the only thing that gates a cancel, and the store enforces it
+  // against this userId — an unattended caller has none.
+  const userId = options.userId?.trim();
+  if (!userId) return followupUnavailableResult();
+
+  const followupId = typeof params.followup_id === 'string' ? params.followup_id.trim() : '';
+  if (!followupId) {
+    return {
+      ok: false,
+      error: 'missing_followup_id',
+      detail: 'followup_id is required — schedule_followup returns it.',
+      status: 400,
+    };
+  }
+
+  try {
+    const outcome = await cancelFollowup(db, followupId, { userId });
+    if (outcome === 'cancelled') {
+      return {
+        ok: true,
+        followup_id: followupId,
+        message: `cancelled follow-up ${followupId}.`,
+      };
+    }
+    return { ok: false, followup_id: followupId, ...CANCEL_FOLLOWUP_FAILURES[outcome] };
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'internal_error',
+      detail: error instanceof Error ? error.message : 'unknown error',
+    };
+  }
+}
+
 /** Execute a server-side tool (never relayed to an agent). */
 export async function executeServerSideTool(
   db: FirebaseFirestore.Firestore,
@@ -1347,6 +1826,10 @@ export async function executeServerSideTool(
       return executeListTalonsTool(db, siteId);
     case 'set_talon_enabled':
       return executeSetTalonEnabledTool(db, siteId, params, options);
+    case 'schedule_followup':
+      return executeScheduleFollowupTool(db, siteId, params, options);
+    case 'cancel_followup':
+      return executeCancelFollowupTool(db, params, options);
     default:
       return { error: `Unknown server-side tool: ${toolName}` };
   }
@@ -1368,9 +1851,13 @@ export function buildExecutableTools(
 ) {
   // Server-side tools only see `options`, so fold the positional chatId in. An
   // explicit `options.chatId` wins, attributing the loop to a different chat.
+  // `chatMachineId` is the one-machine-or-whole-site view of the target — the
+  // sentinel in site mode, where the positional machineId may be blank. A caller
+  // that knows the real set passes `followupTarget`, which wins over it.
   const serverSideOptions: BuildExecutableToolsOptions = {
     ...options,
     chatId: options.chatId ?? chatId,
+    chatMachineId: options.chatMachineId ?? (siteMode ? SITE_TARGET_ID : machineId),
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

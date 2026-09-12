@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "3.2.3",
+  "version": "3.3.3",
   "private": true,
   "packageManager": "npm@10.9.0",
   "engines": {
@@ -12,6 +12,7 @@
     "postinstall": "fumadocs-mdx",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -22,11 +23,14 @@
     "e2e": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --project=chromium --project=mobile-chromium\"",
     "e2e:ui": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --project=chromium --project=mobile-chromium --ui\"",
     "e2e:install": "playwright install chromium",
+    "smoke:dev": "node e2e-live/run.mjs",
     "e2e:desktop-sync": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.config.desktop-sync.ts\"",
     "e2e:desktop-sync:nobuild": "cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.config.desktop-sync.ts\"",
     "screenshots": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts\"",
     "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\"",
     "screenshots:desktop": "npx playwright test --config=playwright.desktop-screenshots.config.ts",
+    "screenshots:release": "node ../scripts/refresh-docs-screens.mjs",
+    "screenshots:check": "node ../scripts/refresh-docs-screens.mjs --check",
     "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
     "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\"",
     "videos:desktop": "npx playwright test --config=playwright.desktop-videos.config.ts",
@@ -35,9 +39,9 @@
     "e2e:functions:nobuild": "npm run e2e:functions-build && cd .. && cross-env FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase emulators:exec --only auth,firestore,storage,functions --project demo-playwright-e2e \"cd web && npx playwright test e2e/specs/functions --project=functions-triggers\""
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.63",
-    "@ai-sdk/openai": "^3.0.47",
-    "@ai-sdk/react": "^3.0.136",
+    "@ai-sdk/anthropic": "^3.0.117",
+    "@ai-sdk/openai": "^3.0.112",
+    "@ai-sdk/react": "^3.0.283",
     "@anthropic-ai/sdk": "^0.120.0",
     "@aws-sdk/client-s3": "^3.1033.0",
     "@aws-sdk/s3-request-presigner": "^3.1033.0",
@@ -58,11 +62,11 @@
     "@scalar/nextjs-api-reference": "^0.10.5",
     "@sentry/nextjs": "^10.47.0",
     "@simplewebauthn/browser": "^13.3.0",
-    "@simplewebauthn/server": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.3",
     "@tailwindcss/typography": "^0.5.19",
     "@upstash/ratelimit": "^2.0.3",
     "@upstash/redis": "^1.34.3",
-    "ai": "^6.0.134",
+    "ai": "^6.0.280",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.3.0",
@@ -94,7 +98,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.11.2",
+    "@axe-core/playwright": "^4.13.0",
     "@firebase/rules-unit-testing": "^5.0.0",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4.3.0",
@@ -117,10 +121,10 @@
     "typescript": "^5"
   },
   "overrides": {
+    "firebase-admin": {
+      "jwks-rsa": "3.2.0"
+    },
     "protobufjs": "^7.5.5",
-    "websocket-driver": "^0.7.5",
-    "@google-cloud/storage": {
-      "fast-xml-parser": "^4.5.4"
-    }
+    "websocket-driver": "^0.7.5"
   }
 }

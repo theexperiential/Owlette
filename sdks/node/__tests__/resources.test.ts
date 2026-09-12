@@ -1084,6 +1084,28 @@ describe('owlette.members (factory)', () => {
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ uid: 'u-1', role: 'admin' });
   });
 
+  it('add by EMAIL sends email, not uid', async () => {
+    // The affordance an admin actually has: they know a colleague's address,
+    // not their uid. The server resolves it through Firebase Auth.
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 200,
+        body: {
+          uid: 'u-1',
+          siteId: 'site-1',
+          requestedRole: 'member',
+          roleHonored: true,
+          globalRole: 'member',
+        },
+      },
+    ]);
+    await owlette.members('site-1').add({ email: 'Alice@Example.com ', role: 'member' });
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      email: 'Alice@Example.com ',
+      role: 'member',
+    });
+  });
+
   it('remove → DELETE /api/sites/{siteId}/members/{uid}', async () => {
     const { owlette, calls } = makeOwlette([
       { status: 200, body: { siteId: 'site-1', uid: 'u-1', wasMember: true } },
@@ -1092,6 +1114,37 @@ describe('owlette.members (factory)', () => {
     expect(calls[0]!.init.method).toBe('DELETE');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members/u-1');
     expect(result.wasMember).toBe(true);
+  });
+
+  it('setRole → PATCH the member, changing the PER-SITE role only', async () => {
+    const { owlette, calls } = makeOwlette([
+      { status: 200, body: { siteId: 'site-1', uid: 'u-1', role: 'admin' } },
+    ]);
+    const result = await owlette.members('site-1').setRole('u-1', 'admin');
+
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members/u-1');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ role: 'admin' });
+    expect((calls[0]!.init.headers as Record<string, string>)['Idempotency-Key'])
+      .toMatch(/^sdk-members-setrole-/);
+    expect(result.role).toBe('admin');
+  });
+
+  it('transferOwnership → POST the site-level transfer endpoint', async () => {
+    // Deliberately NOT under /members: ownership is a property of the site, and
+    // it moves through its own transactional endpoint.
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 200,
+        body: { siteId: 'site-1', previousOwnerUid: 'u-old', newOwnerUid: 'u-new' },
+      },
+    ]);
+    const result = await owlette.members('site-1').transferOwnership('u-new');
+
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/transfer-ownership');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ successorUid: 'u-new' });
+    expect(result.newOwnerUid).toBe('u-new');
   });
 });
 

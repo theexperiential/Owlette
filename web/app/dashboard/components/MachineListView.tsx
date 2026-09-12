@@ -33,6 +33,7 @@ import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUt
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
+import { machineClockTooltip } from '@/lib/scheduleClockCopy';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
 import { resolveDevice } from '@/lib/deviceResolvers';
@@ -204,6 +205,14 @@ interface MachineRowProps {
   currentSiteId: string;
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
+  /**
+   * `sites/{siteId}.schedulesFollowSiteTime`, straight off the Firestore
+   * snapshot (`useCurrentSite` / `useSites`). Three-state: `undefined` = never
+   * asked, `false` = declined, `true` = site time. Do not source it from
+   * `GET /api/sites`, which collapses the first two. Left unset, the clock
+   * tooltip renders exactly as it did before the site-time work.
+   */
+  schedulesFollowSiteTime?: boolean;
   userPreferences: { temperatureUnit: 'C' | 'F' };
   isSiteAdmin?: boolean;
   onToggleExpanded: () => void;
@@ -233,6 +242,7 @@ export function MachineRow({
   currentSiteId,
   siteTimezone,
   siteTimeFormat,
+  schedulesFollowSiteTime,
   userPreferences,
   isSiteAdmin,
   onToggleExpanded,
@@ -316,13 +326,26 @@ export function MachineRow({
   );
   const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
   const isStale = !machine.online || !!machine.rebooting;
-  const staleClass = isStale ? ' opacity-40' : '';
+  // Dimmed, not faded: below ~75% the muted device labels fall under 4.5:1 contrast.
+  const staleClass = isStale ? ' opacity-80' : '';
 
   // Machine-local clock under the hostname. The shared minute tick re-renders every row in
   // lockstep off a single app-wide interval.
   useMinuteTick();
   const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
   const localTzShort = formatTimezoneShortName(machine.machineTimezone);
+  // Non-null exactly when the machine has reported a timezone, so it doubles as
+  // the render guard below. One line unless this site evaluates launch windows
+  // in site time, which splits restarts (always machine-local, decision D2)
+  // from the windows that now follow the site.
+  const clockTooltip = machine.machineTimezone
+    ? machineClockTooltip({
+        machineTimezone: machine.machineTimezone,
+        siteTimezone,
+        schedulesFollowSiteTime,
+        agentVersion: machine.agent_version,
+      })
+    : null;
 
   const handleRowClick = () => {
     const selection = window.getSelection();
@@ -390,7 +413,7 @@ export function MachineRow({
               <span className="truncate">{machine.machineId}</span>
               {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
             </div>
-            {showLocalClock && machine.machineTimezone && localClock && (
+            {showLocalClock && clockTooltip && localClock && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="text-[10px] text-muted-foreground/80 select-none cursor-help truncate ml-5">
@@ -398,7 +421,13 @@ export function MachineRow({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                  <p className="max-w-xs">{clockTooltip.machineLine}</p>
+                  {clockTooltip.scheduleLine && (
+                    <p className="max-w-xs mt-1">{clockTooltip.scheduleLine}</p>
+                  )}
+                  {clockTooltip.advisory && (
+                    <p className="max-w-xs mt-1 text-amber-400">{clockTooltip.advisory}</p>
+                  )}
                 </TooltipContent>
               </Tooltip>
             )}
@@ -661,7 +690,7 @@ export function MachineRow({
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
-                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
+                              <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted text-muted-foreground' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600 text-white' : 'bg-yellow-600'}`}>
                                 {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                               </Badge>
                               {process.pid && <span className="text-xs text-muted-foreground flex-shrink-0 select-text">PID: {process.pid}</span>}

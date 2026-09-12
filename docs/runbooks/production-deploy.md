@@ -2,10 +2,10 @@
 
 This runbook is for maintainers shipping a normal Owlette production release after
 the release content has already been reviewed. It is written as an at-any-hour
-checklist for the web app, Cloud Functions, Firestore rules, storage rules, and
-the docs site.
+checklist for the web app, Cloud Functions, Firestore rules, and storage
+rules.
 
-> **scope**: regular production release of web + functions + Firestore rules + storage rules + docs site. For agent installer releases see [agent-installer-release.md](agent-installer-release.md). For emergency fixes see [hotfix-rollback.md](hotfix-rollback.md).
+> **scope**: regular production release of web + functions + Firestore rules + storage rules. For agent installer releases see [agent-installer-release.md](agent-installer-release.md). For emergency fixes see [hotfix-rollback.md](hotfix-rollback.md).
 
 > **manual surfaces and deploy order**: [manual-infrastructure.md](manual-infrastructure.md) is the authority on every surface that is not deployed by pushing a branch — the cron-job.org schedules, the Cloudflare load balancer, Firebase console state — and on the order these steps run in. Firestore indexes and rules deploy **before** the web deploy that depends on them, not after; the numbered steps below are otherwise sequential.
 
@@ -22,9 +22,13 @@ the docs site.
   into the release commit.
 - `OWLETTE_API_KEY` available in `.claude/.env.local` or equivalent local shell
   setup for smoke scripts that need an API key.
+- The live dev smoke suite's local credentials for step 5: the dev service
+  account `agent/config/firebase-creds-dev.json`, `web/.env.local` pointing at
+  `owlette-dev-3838a`, and, for its first run, `SMOKE_LLM_API_KEY` in
+  `.claude/.env.local`. See [web/e2e-live/README.md](../../web/e2e-live/README.md).
 - A real site id and API key for the R2 round-trip smoke test.
 - npm install behavior must match production:
-  - Railway uses Nixpacks pinned to `nodejs_20` and `npm-10_x`
+  - Railway uses Nixpacks pinned to `nodejs_22` and `npm-10_x`
   - install command is `npm ci --legacy-peer-deps`
 - Firebase deploy permissions for functions, Firestore, and storage.
 - Access to Instatus if status-page component checks fail.
@@ -51,13 +55,13 @@ the docs site.
 | Cloud Functions | none | no CI workflow | run `FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions --project prod` if functions changed (firebase-tools 15.x) |
 | Firestore rules and indexes | none | no CI workflow | run `firebase deploy --only firestore` if rules or indexes changed |
 | storage rules | none | no CI workflow | run `firebase deploy --only storage` if storage rules changed |
-| docs site | push to `main` touching `docs/**` or `mkdocs.yml` | `.github/workflows/deploy-docs.yml` publishes to `gh-pages` | merge docs changes to `main`; watch workflow |
+| published docs (/docs) | push or merge to `main` | ships with the web prod deploy — fumadocs MDX under `web/content/docs/` is compiled by `npm run build` | none beyond the web deploy; verify `https://owlette.app/docs` in smoke |
 | CLI npm package | tag push matching `cli-v[0-9]+.[0-9]+.[0-9]+` | `.github/workflows/cli-publish.yml` publishes to npm with provenance | out of scope here |
 | agent installer | separate release process | separate runbook | use [agent-installer-release.md](agent-installer-release.md) |
 
 ## step-by-step: a normal release
 
-1. Update `/docs/changelog.md`.
+1. Update `/docs/changelog.md` **and** `/web/content/docs/changelog.mdx` — both, same entry. The second is the published one.
 
    Add the release notes before bumping versions or building release artifacts.
    The changelog should describe user-visible changes, operational changes, and
@@ -88,7 +92,7 @@ the docs site.
    not assume that every new feature is a minor release.
 
    If this production release is coordinated with a later agent installer
-   release, the version bump and `/docs/changelog.md` update must happen before
+   release, the version bump and BOTH changelog updates must happen before
    the installer is built. The installer bakes the version into the EXE
    filename.
 
@@ -125,7 +129,7 @@ the docs site.
 
    - `web/railway.toml`
    - `web/nixpacks.toml`
-   - Nixpacks pinned to `nodejs_20` and `npm-10_x`
+   - Nixpacks pinned to `nodejs_22` and `npm-10_x`
    - `npm ci --legacy-peer-deps`
 
    A "multiple lockfiles" warning when running tools at the repo root is
@@ -134,7 +138,41 @@ the docs site.
 
 5. Verify dev.
 
-   Load the dev web app manually and check the main flows touched by the
+   **The live dev smoke suite must be green on the exact commit being promoted
+   before step 6.** Run it from a `dev` checkout pulled to that commit, so the
+   specs match the build (the runner refuses a checkout at any other commit):
+
+   ```sh
+   cd web && npm run smoke:dev
+   ```
+
+   It waits for `https://dev.owlette.app/api/health` to report `origin/dev`
+   HEAD (up to 10 minutes, so it can start while Railway is still building),
+   then drives a real browser against dev: a hoot turn with a tool call, cancel
+   mid-turn, a denied tier-3 call, a public share link, passkey registration
+   and sign-in, and per-site member management. It runs on your workstation,
+   not in CI, so nothing but this runbook enforces it. Credentials, what each
+   check asserts, and cleanup: [web/e2e-live/README.md](../../web/e2e-live/README.md).
+
+   The run counts only when all of these hold:
+
+   - it exits 0, and its summary's `commit` line reads
+     `<sha> (origin/dev; dev served it when the specs started)`
+   - that SHA is still `origin/dev` when you merge in step 6 — fetch first
+     (`git fetch origin dev && git rev-parse origin/dev`), because the runner's
+     own fetch set that ref; if `dev` has moved, run it again on the new commit
+   - it ran without `--any-commit` (which skips the commit check) and without
+     forwarded Playwright arguments that filter the specs (`-- --grep …`)
+   - the summary has no `WARNING` line (a deploy landed mid-run, or dev's commit
+     could not be re-read after the specs; Playwright arguments were forwarded;
+     or the suite's files had uncommitted changes)
+
+   A red run blocks the promotion: fix forward on `dev` and run it again on the
+   new commit rather than merging around it. Record the result with the smoke
+   results in step 11, including any check marked `FLAKY` (it passed only on
+   its retry).
+
+   Then load the dev web app manually and check the main flows touched by the
    release. At minimum, confirm login, dashboard load, and any changed workflow.
 
    Run the status-page readiness smoke check against dev if the dev environment
@@ -148,7 +186,7 @@ the docs site.
    upload, manifest, content, API key, storage, or worker-adjacent behavior:
 
    ```sh
-   /scripts/smoke-r2-roundtrip.mjs --base-url https://dev.owlette.app --site <id> --api-key owk_xxx
+   /scripts/checks/smoke-r2-roundtrip.mjs --base-url https://dev.owlette.app --site <id> --api-key owk_xxx
    ```
 
 6. Merge `dev` to `main`.
@@ -252,16 +290,11 @@ the docs site.
     probe, so a 503 here also means the LB is about to fail this origin out of
     rotation. Then load the dashboard and run the smoke scripts.
 
-    Confirm docs deployment if docs changed.
+    Confirm the published docs if they changed.
 
-    The docs site publishes from `.github/workflows/deploy-docs.yml` when a
-    push to `main` touches:
-
-    - `docs/**`
-    - `mkdocs.yml`
-
-    The workflow publishes to `gh-pages`. Watch it if the release includes docs
-    changes.
+    If `web/content/docs/**` changed, confirm the pages render at
+    `https://owlette.app/docs` after the Railway prod deploy. There is no
+    separate docs deploy.
 
 11. Tag the release and record completion.
 
@@ -279,7 +312,7 @@ the docs site.
     - functions deploy status, if applicable
     - Firestore deploy status, if applicable
     - storage deploy status, if applicable
-    - docs deploy status, if applicable
+    - published docs spot-check, if `web/content/docs/**` changed
     - smoke script results
     - any follow-up rollback risk
 
@@ -299,8 +332,8 @@ the docs site.
   depends on them, before the production web deploy rather than after it.
 - [ ] If storage rules changed, `firebase deploy --only storage` completed
   successfully.
-- [ ] If docs changed, the docs deploy workflow completed and published to
-  `gh-pages`.
+- [ ] If `web/content/docs/**` changed, the affected pages render at
+  `https://owlette.app/docs`.
 - [ ] Status-page readiness script passed:
 
   ```sh
@@ -310,7 +343,7 @@ the docs site.
 - [ ] R2 round-trip script passed with a real site id and API key:
 
   ```sh
-  /scripts/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_xxx
+  /scripts/checks/smoke-r2-roundtrip.mjs --base-url https://owlette.app --site <id> --api-key owk_xxx
   ```
 
 - [ ] Login works on `https://owlette.app`.
@@ -406,18 +439,17 @@ firebase deploy --only storage
 Console history is also available for storage rules. Use it when it is the
 fastest clear rollback path.
 
-### docs
+### published docs
 
-Docs rollback is a revert of the docs commit on `main`. The docs deploy workflow
-reruns and republishes to `gh-pages`.
+Docs rollback is a revert of the docs commit on `main`.
 
 ```sh
 git revert <offending-docs-sha>
 git push origin main
 ```
 
-Watch `.github/workflows/deploy-docs.yml` after the push if the reverted commit
-touches `docs/**` or `mkdocs.yml`.
+Reverting on `main` triggers the normal Railway web deploy, which rebuilds the
+docs. There is no separate docs workflow to watch.
 
 ## env vars maintained per environment
 
@@ -487,7 +519,8 @@ Required production reminders:
 - If Railway's injected `RAILWAY_PUBLIC_DOMAIN` differs from `owlette.app`, the
   domain string match will not select prod. `ROOST_ENV=prod` avoids that class
   of mistake.
-- Docs deploys only run for pushes to `main` touching `docs/**` or `mkdocs.yml`.
+- Published docs deploy with the web app; repo-root `docs/**` is internal and
+  is not published.
 - CLI package publishing is tag-triggered and out of scope for this runbook.
 
 ## further reading

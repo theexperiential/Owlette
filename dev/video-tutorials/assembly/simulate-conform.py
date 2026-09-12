@@ -42,31 +42,33 @@ for mpath in sorted(MANIFESTS.glob("*.json")):
         if cut is None or dur_s <= 0:
             gaps.append(beat["id"])
             continue
-        if i + 1 < len(beats):
-            length = int(beats[i + 1]["start_frame"]) - int(beat["start_frame"])
-        else:
-            length = int(round(dur_s * fps))
         src_fps = fps                     # all footage is 60fps (verified)
-        src_in = int(round(cut["in_s"] * src_fps))
-        src_len = max(1, int(round(length * src_fps / fps)))
-        avail = max(1, int(round(cut["video_s"] * src_fps))) if cut["video_s"] else None
-        if avail is not None and src_len > avail:
-            print("  %s %s: TRIM needed %d > avail %d" % (m["stem"], beat["id"], src_len, avail))
+        segs, seg_warns = be.beat_segments(beats, i, cut, fps, src_fps)
+        for w in seg_warns:
+            if w.startswith("needs "):    # the videoSec trim, kept as before
+                print("  %s %s: TRIM %s" % (m["stem"], beat["id"], w))
+            else:
+                print("  %s %s: %s" % (m["stem"], beat["id"], w))
             problems += 1
-            src_len = avail
         start = int(beat["start_frame"])
-        placed.append((beat["id"], start, start + src_len))
+        lo = min(a for a, _l, _si, _sl, _f in segs) if segs else 0
+        hi = max(a + l for a, l, _si, _sl, _f in segs) if segs else 0
+        placed.append((beat["id"], start + lo, start + hi))
 
     # 1 + 2: adjacency of consecutive PLACED segments
+    beat_by_id = {b["id"]: b for b in beats}
     for (aid, a0, a1), (bid, b0, b1) in zip(placed, placed[1:]):
         if a1 > b0:
             print("  %s: COLLISION %s ends %d > %s starts %d" % (m["stem"], aid, a1, bid, b0))
             problems += 1
         elif a1 < b0:
-            # a hole is only expected when a gap beat sits between them
+            # a hole is expected when a gap beat sits between them, or when
+            # the gap is exactly the next beat's title card (the card clip
+            # fills it — see build_episode.card_slots).
             ids = [b["id"] for b in beats]
             between = ids[ids.index(aid) + 1:ids.index(bid)]
-            if not between:
+            card_frames = int((beat_by_id[bid].get("card") or {}).get("frames") or 0)
+            if not between and (b0 - a1) != card_frames:
                 print("  %s: HOLE of %d frame(s) between %s and %s"
                       % (m["stem"], b0 - a1, aid, bid))
                 problems += 1

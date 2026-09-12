@@ -1,11 +1,14 @@
 /** @jest-environment node */
 
 import { createMockRequest } from './helpers/utils';
+import { FieldValue } from 'firebase-admin/firestore';
 import {
   mocks,
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedSiteOwner,
+  seedMember,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -55,24 +58,68 @@ import { POST as rotatePOST } from '@/app/api/webhooks/[webhookId]/rotate-secret
 import { GET as deliveriesGET } from '@/app/api/webhooks/[webhookId]/deliveries/route';
 import { GET as deliveryDetailGET } from '@/app/api/webhooks/[webhookId]/deliveries/[deliveryId]/route';
 import { POST as retryPOST } from '@/app/api/webhooks/[webhookId]/deliveries/[deliveryId]/retry/route';
+// Real class — the module mock above spreads `jest.requireActual`, so this is
+// the same constructor `_shared.ts` branches on with `instanceof`.
+import { ApiAuthError } from '@/lib/apiAuth.server';
 
 const SITE = 'site-alpha';
 const WEBHOOK = 'wh_test_0000000001';
 const DELIVERY = 'abcdef123__wh_test_0000000001';
 
+/**
+ * Default caller: `user-1`, who OWNS the site. The mutating routes gate on
+ * WEBHOOK_MANAGE, and the owner short-circuits that gate — so these fixtures
+ * keep every behavioural test below reading one `mocks.get` per route call, with
+ * no `users/{uid}` read interleaved. Capability enforcement itself is covered by
+ * the non-owner fixtures in "WEBHOOK_MANAGE enforcement".
+ */
 function authed() {
   mockResolveAuth.mockResolvedValue({ userId: 'user-1', keyContext: null });
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+  seedSiteOwner(SITE, 'user-1');
+}
+
+/**
+ * A caller who is NOT the site owner, so the capability matrix — not the owner
+ * short-circuit — decides. `mocks.get` answers per path: the `users/{uid}` read
+ * the gate makes, and the subscription read a route makes afterwards.
+ */
+function authedAsNonOwner(
+  userId: string,
+  role: 'member' | 'admin' | 'superadmin',
+  sites: string[],
+) {
+  mockResolveAuth.mockResolvedValue({ userId, keyContext: null });
+  mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+  seedSiteOwner(SITE, 'someone-else');
+  // Standing is a member row now. Mirror the global role onto each site the
+  // fixture claims, which is what that role used to confer there; superadmins
+  // get none, matching production, where they reach every site by role.
+  if (role !== 'superadmin') {
+    for (const siteId of sites) {
+      seedMember(siteId, userId, role === 'admin' ? 'admin' : 'member');
+    }
+  }
+  mocks.get.mockImplementation((path?: unknown) =>
+    Promise.resolve(
+      typeof path === 'string' && path.startsWith('users/')
+        ? docSnapshot(userId, { role, sites })
+        : docSnapshot(WEBHOOK, {
+            url: 'https://ex.com',
+            events: ['version.published'],
+            signingSecret: 'whsec_OLD',
+          }),
+    ),
+  );
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  authed();
-  mocks.siteDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
+  authed();
 });
 
 // POST /api/webhooks
@@ -117,7 +164,7 @@ describe('POST /api/webhooks', () => {
     expect(body.errors?.['body.events']?.[0]).toMatch(/unknown:.*not\.a\.real\.event/);
   });
 
-  it('201 returns signingSecret + stores plaintext secret on the doc', async () => {
+  it('201 returns signingSecret + keeps it OFF the client-readable webhook doc', async () => {
     const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
       method: 'POST',
       body: {
@@ -141,9 +188,17 @@ describe('POST /api/webhooks', () => {
     expect(body.events.sort()).toEqual(['deployment.failed', 'version.published']);
     expect(body.paused).toBe(false);
     expect(body.description).toBe('ci pager');
-    expect(mocks.set).toHaveBeenCalledTimes(1);
-    const stored = mocks.set.mock.calls[0]![0] as { signingSecret: string };
-    expect(stored.signingSecret).toBe(body.signingSecret);
+    // Two writes now: the secret to the server-only sibling
+    // (sites/{siteId}/webhook_secrets/{id}), then the webhook document itself.
+    expect(mocks.set).toHaveBeenCalledTimes(2);
+    const secretDoc = mocks.set.mock.calls[0]![0] as { signingSecret: string };
+    expect(secretDoc.signingSecret).toBe(body.signingSecret);
+    // The leak this closes: the webhook document is readable by any site member,
+    // so it must carry no secret material at all.
+    const webhookDoc = mocks.set.mock.calls[1]![0] as Record<string, unknown>;
+    expect(webhookDoc.signingSecret).toBeUndefined();
+    expect(webhookDoc.secret).toBeUndefined();
+    expect(webhookDoc.previousSigningSecret).toBeUndefined();
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'webhook_mutated',
@@ -536,9 +591,19 @@ describe('POST /api/webhooks/{webhookId}/rotate-secret', () => {
     expect(typeof body.previousSecretValidUntil).toBe('string');
     expect(typeof body.rotatedAt).toBe('string');
 
-    const updatePayload = mocks.update.mock.calls[0]![0] as Record<string, unknown>;
-    expect(updatePayload.signingSecret).toBe(body.signingSecret);
-    expect(updatePayload.previousSigningSecret).toBe('whsec_OLD');
+    // Both writes are in ONE batch, so a partial rotation cannot leave the
+    // subscription signing with a secret the caller was never handed.
+    // batch.set/update take (ref, data) — the payload is the second argument.
+    const secretDoc = mocks.batchSet.mock.calls[0]![1] as Record<string, unknown>;
+    expect(secretDoc.signingSecret).toBe(body.signingSecret);
+    expect(secretDoc.previousSigningSecret).toBe('whsec_OLD');
+    // The rotation also HEALS the leak on this subscription: the legacy
+    // in-document fields are deleted, not overwritten.
+    const updatePayload = mocks.batchUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    // Real FieldValue.delete() sentinels (DeleteTransform), not plain objects.
+    expect(updatePayload.signingSecret).toEqual(FieldValue.delete());
+    expect(updatePayload.previousSigningSecret).toEqual(FieldValue.delete());
+    expect(updatePayload.secret).toEqual(FieldValue.delete());
     expect(updatePayload.previousSecretValidUntil).toBeDefined();
     expect(mockEmitMutation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -714,15 +779,18 @@ describe('GET /api/webhooks/{webhookId}/deliveries/{deliveryId}', () => {
 
 describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
   it('creates a new pending delivery with retryOf pointer + fresh stripe signature', async () => {
-    // get 1: subscription (current secret). get 2: original delivery
-    // (canonicalBody + headers).
+    // get 1: subscription doc (no secret on it any more). get 2: the server-only
+    // secret sibling, which is now where the signing key comes from. get 3: the
+    // original delivery (canonicalBody + headers).
     mocks.get
       .mockResolvedValueOnce(
         docSnapshot(WEBHOOK, {
           url: 'https://ex.com/hook',
           events: ['version.published'],
-          signingSecret: 'whsec_CURRENT',
         }),
+      )
+      .mockResolvedValueOnce(
+        docSnapshot(WEBHOOK, { signingSecret: 'whsec_CURRENT' }),
       )
       .mockResolvedValueOnce(
         docSnapshot(DELIVERY, {
@@ -812,6 +880,156 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
     });
     expect(res.status).toBe(404);
     expect(mocks.set).not.toHaveBeenCalled();
+  });
+});
+
+// WEBHOOK_MANAGE enforcement (site-scoped capability, mutations only)
+
+describe('WEBHOOK_MANAGE enforcement', () => {
+  it('403s a member of the site on create', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { detail?: string };
+    expect(body.detail).toBe('capability not granted');
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('403s a member of the site on rotate-secret', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/rotate-secret?siteId=${SITE}`,
+      { method: 'POST' },
+    );
+    const res = await rotatePOST(req, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+
+    expect(res.status).toBe(403);
+    // The secret is never minted, let alone written.
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('403s a member of the site on update and delete', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const patchReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+      { method: 'PATCH', body: { paused: true } },
+    );
+    const patchRes = await detailPATCH(patchReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(patchRes.status).toBe(403);
+
+    const deleteReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+      { method: 'DELETE' },
+    );
+    const deleteRes = await detailDELETE(deleteReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(deleteRes.status).toBe(403);
+
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an admin of the site create', async () => {
+    authedAsNonOwner('admin-uid', 'admin', [SITE]);
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(201);
+    // Secret document + webhook document.
+    expect(mocks.set).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets an admin of the site rotate a secret', async () => {
+    authedAsNonOwner('admin-uid', 'admin', [SITE]);
+
+    const req = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/rotate-secret?siteId=${SITE}`,
+      { method: 'POST' },
+    );
+    const res = await rotatePOST(req, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { signingSecret: string };
+    expect(body.signingSecret).toMatch(/^whsec_[0-9a-f]{64}$/);
+  });
+
+  it('masks an admin of ANOTHER site as 404, before the capability check', async () => {
+    authedAsNonOwner('admin-uid', 'admin', ['site-other-org']);
+    // Site access is what fails first; it collapses 403 to "not found or no
+    // access" so site existence never leaks.
+    mockAssertSite.mockRejectedValue(
+      new ApiAuthError(403, 'Forbidden: You do not have access to this site'),
+    );
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
+      method: 'POST',
+      body: { url: 'https://example.com/hook', events: ['version.published'] },
+    });
+    const res = await createPOST(req);
+
+    expect(res.status).toBe(404);
+    expect(mocks.set).not.toHaveBeenCalled();
+  });
+
+  it('still lets a member list subscriptions (read paths are unchanged)', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+    mocks.collectionGet.mockResolvedValueOnce(
+      querySnapshot([
+        {
+          id: 'wh_alive_0000000001',
+          data: {
+            url: 'https://example.com/a',
+            events: ['version.published'],
+            paused: false,
+          },
+        },
+      ]),
+    );
+
+    const req = createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`);
+    const res = await listGET(req);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { webhooks: Array<{ id: string }> };
+    expect(body.webhooks).toHaveLength(1);
+  });
+
+  it('still lets a member read a subscription and its deliveries', async () => {
+    authedAsNonOwner('member-uid', 'member', [SITE]);
+
+    const detailReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}?siteId=${SITE}`,
+    );
+    const detailRes = await detailGET(detailReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(detailRes.status).toBe(200);
+
+    const deliveriesReq = createMockRequest(
+      `http://localhost/api/webhooks/${WEBHOOK}/deliveries?siteId=${SITE}`,
+    );
+    const deliveriesRes = await deliveriesGET(deliveriesReq, {
+      params: Promise.resolve({ webhookId: WEBHOOK }),
+    });
+    expect(deliveriesRes.status).toBe(200);
   });
 });
 

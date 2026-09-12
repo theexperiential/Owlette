@@ -20,29 +20,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { HootIcon } from '@/components/icons/HootIcon';
 import { ApiKeysManager } from '@/components/ApiKeysManager';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { AVAILABLE_MODELS, preselectedModel } from '@/lib/llmModels';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
-
-const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
-  anthropic: [
-    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-    { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
-    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
-    { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
-    { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
-    { id: 'claude-sonnet-4-0', name: 'Claude Sonnet 4' },
-    { id: 'claude-opus-4-0', name: 'Claude Opus 4' },
-  ],
-  openai: [
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini' },
-    { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano' },
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-    { id: 'o3', name: 'o3' },
-    { id: 'o4-mini', name: 'o4 Mini' },
-  ],
-};
 
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[] = [
   { id: 'profile', label: 'profile', icon: User },
@@ -82,6 +62,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [hootAlerts, setHootAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
   const [talonAlerts, setTalonAlerts] = useState(true);
+  const [apiKeyAlerts, setApiKeyAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
   const [newCcEmail, setNewCcEmail] = useState('');
   const [ccEmailError, setCcEmailError] = useState('');
@@ -153,6 +134,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setHootAlerts(userPreferences.cortexAlerts);
       setDisplayAlerts(userPreferences.displayAlerts);
       setTalonAlerts(userPreferences.talonAlerts);
+      setApiKeyAlerts(userPreferences.apiKeyAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
       setNewCcEmail('');
       setCcEmailError('');
@@ -302,9 +284,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || hootAlerts !== userPreferences.cortexAlerts
         || displayAlerts !== userPreferences.displayAlerts
         || talonAlerts !== userPreferences.talonAlerts
+        || apiKeyAlerts !== userPreferences.apiKeyAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts: hootAlerts, displayAlerts, talonAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts: hootAlerts, displayAlerts, talonAlerts, apiKeyAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -494,7 +477,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   <div className="space-y-2">
                     <Label className="text-white">display times in</Label>
                     <p className="text-xs text-muted-foreground">
-                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they always show times in the machine&apos;s own local timezone.
+                      controls how heartbeats, activity logs, and other absolute timestamps render across the dashboard. schedule editors are unaffected — they follow the site&apos;s schedule clock setting (each machine&apos;s own clock unless the site opted into site time), not this preference.
                     </p>
                     <div className="space-y-2 mt-1">
                       {([
@@ -662,6 +645,19 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     />
                   </div>
 
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="apiKeyAlerts" className="text-white">api key expiry</Label>
+                      <p className="text-xs text-muted-foreground">emails before an api key expires</p>
+                    </div>
+                    <Switch
+                      id="apiKeyAlerts"
+                      checked={apiKeyAlerts}
+                      onCheckedChange={setApiKeyAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
                   <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
                     <div className="space-y-0.5">
                       <Label className="text-white">alert email</Label>
@@ -801,7 +797,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       <Label htmlFor="llmModel" className="text-white">model</Label>
                       {(() => {
                         const models = llmModels.length > 0 ? llmModels : AVAILABLE_MODELS[llmProvider];
-                        const defaultModel = models[0]?.id || '';
+                        const defaultModel = preselectedModel(llmProvider, models);
                         return (
                           <Select
                             value={llmModel || defaultModel}
@@ -878,7 +874,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                               body: JSON.stringify({
                                 provider: llmProvider,
                                 apiKey: llmApiKey,
-                                model: llmModel || (llmModels.length > 0 ? llmModels[0].id : AVAILABLE_MODELS[llmProvider][0].id),
+                                model: llmModel || preselectedModel(llmProvider, llmModels.length > 0 ? llmModels : AVAILABLE_MODELS[llmProvider]),
                               }),
                             });
                             if (res.ok) {

@@ -19,7 +19,7 @@ import {
   problemValidation,
 } from '@/lib/apiErrors';
 import { ApiAuthError, resolveAuth } from '@/lib/apiAuth.server';
-import { getUserSiteIds } from '@/lib/apiHelpers.server';
+import { listUserSiteIds } from '@/lib/membership.server';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
 import {
@@ -37,8 +37,8 @@ import {
   type ChatRole,
 } from '@/lib/chatStorage.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const VALID_ROLES: ChatRole[] = ['user'];
 
 export async function GET(request: NextRequest) {
@@ -134,7 +134,16 @@ async function resolveReadableSiteIds(
   userId: string,
   keyContext: Awaited<ReturnType<typeof resolveAuth>>['keyContext'],
 ): Promise<string[]> {
-  const membership = await getUserSiteIds(userId);
+  // Member ROWS, not `users/{uid}.sites[]`. That array is legacy and wave 6.1
+  // strips it; reading it here would have made this route return an empty 200
+  // — no error, no log — for every caller the moment the migration ran.
+  //
+  // The owned-sites read stays as a transitional union: on an environment where
+  // the membership backfill has not run yet, a site owner has no member row, and
+  // dropping it would lock them out of their own conversations. It is redundant
+  // once backfilled (owners get a row with role 'owner') and is safe to remove
+  // after prod is migrated.
+  const membership = await listUserSiteIds(userId);
   const ownedSites = await readOwnedSiteIds(userId);
   const membershipSet = new Set<string>([...membership, ...ownedSites]);
 

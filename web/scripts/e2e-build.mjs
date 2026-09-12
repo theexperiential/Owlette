@@ -31,6 +31,19 @@ const e2eEnv = {
   // secret — the submit button stays disabled and every form spec times out.
   // The matching TURNSTILE_SECRET / TURNSTILE_HOSTNAMES live in playwright.config.ts.
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+
+  // `sessionManager.server.ts` throws at MODULE scope when this is unset or
+  // under 32 chars, and `next build`'s page-data collection imports it through
+  // `apiAuth.server.ts` — so the build dies on /api/chat, not at runtime.
+  // Next auto-loads `.env.local`, which is why this build worked on a main
+  // checkout and failed in a worktree: that file is untracked and local-only,
+  // and copying it in is its own trap (it carries the real FIREBASE_PROJECT_ID).
+  // CI already sets this explicitly in e2e.yml; setting it here too makes the
+  // build independent of an untracked file instead of silently inheriting one.
+  // Build-time only — the runtime value is set in playwright.config.ts.
+  SESSION_SECRET:
+    process.env.SESSION_SECRET || 'e2e-build-session-secret-do-not-reuse-in-prod',
+
   OWLETTE_NEXT_DIST_DIR: distDir,
 };
 

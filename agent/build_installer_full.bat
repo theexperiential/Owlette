@@ -415,20 +415,55 @@ if not defined INNO_PATH (
 
 echo Found Inno Setup! Creating installer.exe...
 mkdir build\installer_output 2>nul
+:: The host binary is what an AV false positive removes mid-build (2026-09-08:
+:: Defender ML quarantined it between the copy and the compile). Re-check right
+:: before ISCC so a missing payload fails HERE with a reason, not inside Inno.
+if not exist "build\installer_package\tools\owlette-host.exe" (
+    echo ERROR: build\installer_package\tools\owlette-host.exe is missing.
+    echo It was copied earlier in this build, so something removed it since.
+    echo Check Windows Security protection history for owlette-host.exe.
+    pause
+    exit /b 1
+)
+
+:: Delete this version's expected output first, so the existence check below
+:: cannot be satisfied by a stale exe left behind by an earlier aborted run.
+if exist "build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe" del /q "build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe"
+
 "%INNO_PATH%" owlette_installer.iss
 
+:: Every other error branch in this script pauses and exits 1. This one used
+:: to print a WARNING and fall through to exit 0, so a failed compile reported
+:: success to anything gating on the exit code.
 if errorlevel 1 (
-    echo WARNING: Inno Setup compilation failed
+    echo ERROR: Inno Setup compilation failed
     echo You can manually compile by running:
     echo   "%INNO_PATH%" owlette_installer.iss
-) else (
-    echo.
-    echo ========================================
-    echo SUCCESS! Installer Created!
-    echo ========================================
-    echo.
-    echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
-    echo.
+    pause
+    exit /b 1
 )
+
+if not exist "build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe" (
+    echo ERROR: Inno Setup reported success but the installer is missing:
+    echo   build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
+    pause
+    exit /b 1
+)
+
+echo.
+echo ========================================
+echo SUCCESS! Installer Created!
+echo ========================================
+echo.
+echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
+echo.
+echo REQUIRED NEXT STEP - refresh the agent docs screenshots:
+echo.
+echo     node scripts/refresh-docs-screens.mjs
+echo.
+echo It installs THIS build before capturing. Running the bare
+echo "npm run screenshots:desktop" instead photographs whatever version is
+echo already installed, which is how the docs went three versions stale.
+echo.
 
 pause

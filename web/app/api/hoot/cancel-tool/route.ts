@@ -179,7 +179,9 @@ async function handleCancelTool(request: NextRequest): Promise<NextResponse> {
       userId: auth.userId,
       ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
       role,
-      sites: [siteId],
+      // Per-site standing from the same access check above; the global `role`
+      // beside it grants nothing on a site.
+      siteRoles: access.siteRole ? { [siteId]: access.siteRole } : {},
     };
 
     let queued;

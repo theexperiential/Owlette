@@ -1,13 +1,16 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.8.1 - users create: dropped the retired passkeyEnrolled clause (superseded by mfaFactors)
-// Last Updated: 2026-08-19
+// Version: 2.11.0 - webhook documents are site-admin read (they can still carry a legacy
+//                   in-document signing secret); 2.10.0 moved site access onto
+//                   `sites/{siteId}/members/{uid}`
+// Last Updated: 2026-09-06
 //
 // Security Model:
-// - Role-based access control (RBAC): user | admin | agent
-// - Multi-user site access: Users can only access sites in their assigned sites array
-// - Admins can access ALL sites regardless of assignment
+// - Global roles: superadmin (platform-wide) | everyone else (no implicit site privilege)
+// - Per-site roles: owner | admin | member, held on sites/{siteId}/members/{uid}
+// - Site access is membership: a global `admin` grants NOTHING on a site it has no row for
+// - Superadmins reach every site by global role and hold no member rows
 // - Agents use custom tokens (OAuth) with site-scoped permissions
 // - Agents can ONLY access their assigned site and machine (strict isolation)
 // - Trusted server APIs manage control-plane writes
@@ -18,7 +21,8 @@ rules_version = '2';
 // - Scoped Permissions: Agents limited to their site_id + machine_id (from token claims)
 // - Admin Panel: User management, site assignment, installer version management
 // - Public Downloads: Anyone can download agent installers
-// - Site Access: Users can only access sites they're assigned to (admins see all)
+// - Site Access: membership only — an ACTIVE `sites/{siteId}/members/{uid}`
+//   row, or global superadmin. A global `admin` role grants NOTHING.
 // - Command System: Bidirectional communication with agents
 //
 // Custom Token Claims (for agents):
@@ -83,14 +87,52 @@ service cloud.firestore {
               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deletedAt == null);
     }
 
-    // Check if user owns a site (direct ownership).
-    // Also gated on `deletedAt` so admin-soft-deleted owners lose access
-    // even if they still hold a Firebase session token.
-    function isSiteOwner(siteId) {
+    // ============================================
+    // Per-site membership
+    // ============================================
+    //
+    // Membership is a DOCUMENT: `sites/{siteId}/members/{uid}`, holding
+    // `{ uid, role: 'owner'|'admin'|'member', status: 'active', addedAt, addedBy }`.
+    // It replaces two legacy fields — `sites/{siteId}.owner` and
+    // `users/{uid}.sites[]` — which are no longer consulted anywhere in this file.
+    //
+    // DOCUMENT-ACCESS COST. Firestore bills every get()/exists() in a rule
+    // evaluation, on reject as well as accept, and caps a single-document request
+    // at 10 accesses (20 in a transaction). exists() and get() on the SAME path
+    // count once. The site-access path costs 2:
+    //
+    //     users/{uid}                    1   isNotDeletedUser() and isSuperadmin()
+    //                                        share it — same document
+    //     sites/{siteId}/members/{uid}   1   isActiveMember() and siteMemberRole()
+    //                                        share it — same document
+    //
+    // `get(sites/{siteId})` is deliberately GONE from the auth path: site access
+    // no longer depends on reading the site document at all.
+    //
+    // Reading `users/{uid}` is not the cheapest shape available — membership alone
+    // would cost 1 — but it is what enforces soft-delete IMMEDIATELY. An
+    // admin-disabled user has to lose access while still holding a live session
+    // token, and their member rows survive until the delete cascade removes them.
+    // Drop the user read only once that cascade is the enforcement point.
+
+    function isActiveMember(siteId) {
       return isAuthenticated() &&
-             isNotDeletedUser() &&
-             get(/databases/$(database)/documents/sites/$(siteId)).data.owner == request.auth.uid;
+             exists(/databases/$(database)/documents/sites/$(siteId)/members/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/sites/$(siteId)/members/$(request.auth.uid)).data.status == 'active';
     }
+
+    // Per-site role. Only call behind isActiveMember(): get() on a missing
+    // document returns null, and the field access would abort the evaluation.
+    function siteMemberRole(siteId) {
+      return get(/databases/$(database)/documents/sites/$(siteId)/members/$(request.auth.uid)).data.role;
+    }
+
+    // NOTE: there is deliberately no `isSiteOwner()` helper. Nothing in this file
+    // gates on ownership — site create/update/delete are `isServiceAccount()`, so
+    // ownership is enforced server-side where the transaction lives. The old
+    // helper existed only because `canAccessSite` delegated to it; keeping an
+    // uncalled one would read as a live, tested guard when no rule exercises it.
+    // Ownership is `siteMemberRole(siteId) == 'owner'` if a rule ever needs it.
 
     // Check if agent has access to a specific site
     // Agents can ONLY access their assigned site (from token claim)
@@ -108,36 +150,33 @@ service cloud.firestore {
 
     // Check if user has access to a site.
     // Access is granted to:
-    //   - site owners (direct ownership)
-    //   - superadmins (platform god-mode — every site, regardless of sites[] membership)
-    //   - any user whose role is 'member' or 'admin' AND has siteId in their sites[] array
-    // Returns false if user document doesn't exist (graceful handling for new users).
+    //   - superadmins (platform god-mode — every site, holding no member rows)
+    //   - any user with an ACTIVE membership document for the site
     // Soft-deleted users (users/{uid}.deletedAt != null) are denied: admin
-    // disables are immediately enforced even while a session token is still
-    // valid. isSiteOwner() also checks isNotDeletedUser() so this stays
-    // consistent across the owner path.
+    // disables are immediately enforced even while a session token is still valid.
+    //
+    // Superadmins are deliberately NOT members. They reach every site by global
+    // role, so writing them member rows would leave a demoted superadmin holding
+    // grants nobody issued — which is why the short-circuit is here and not a
+    // membership row. Their OWNERSHIP of a site is separate and is a member row.
     function canAccessSite(siteId) {
-      return isAuthenticated() && isNotDeletedUser() && (
-        isSiteOwner(siteId) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin' ||
-          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites is list &&
-           siteId in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.sites)))
-      );
+      return isAuthenticated() &&
+             isNotDeletedUser() &&
+             (isSuperadmin() || isActiveMember(siteId));
     }
 
     // Check if user is a site-scoped admin for a given site.
-    // True when the user's role is 'admin' or 'superadmin' AND they can access the site.
-    // - admin: role applies across every site in their sites[] array
-    // - superadmin: passes canAccessSite() unconditionally (god-mode fall-through)
-    // Use this for site-level elevated operations (delete machines, edit stored layouts,
-    // manage site-scoped webhooks / settings) — as opposed to isSuperadmin() which is
-    // reserved for platform-wide operations.
+    // `admin` is now a PER-SITE role read from the membership document — a global
+    // `users/{uid}.role == 'admin'` carries NO site privilege here. Owners rank
+    // above admins and satisfy this too.
+    // Use this for site-level elevated operations (delete machines, edit stored
+    // layouts, manage site-scoped webhooks / settings) — as opposed to
+    // isSuperadmin(), which is reserved for platform-wide operations.
     function isSiteAdmin(siteId) {
       return isAuthenticated() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'superadmin'] &&
-             canAccessSite(siteId);
+             isNotDeletedUser() &&
+             (isSuperadmin() ||
+              (isActiveMember(siteId) && siteMemberRole(siteId) in ['owner', 'admin']));
     }
 
     // Validate that required fields are present in write operations
@@ -146,12 +185,87 @@ service cloud.firestore {
     }
 
     // ============================================
+    // Retired Site IDs
+    // ============================================
+
+    match /site_ids/{siteId} {
+      // Tombstones for deleted sites. Site ids are caller-supplied slugs, and
+      // deleteSite clears `users/{uid}.sites[]` only for members whose user
+      // document still exists — a stale entry can outlive the delete on a
+      // hard-deleted or non-member account, so reusing a slug could still hand
+      // the new site's data to a leftover holder. createSite refuses any id
+      // with a tombstone.
+      //
+      // GET only, never LIST: the availability check is a single-document read
+      // (hooks/useFirestore.ts). `allow read: if isAuthenticated()` would also
+      // permit a collection query, since the condition binds neither `resource`
+      // nor the wildcard — that would let any signed-in user enumerate every
+      // deleted site slug in the fleet, which live sites do not allow
+      // (`sites/{siteId}` is gated on canAccessSite). The document holds a
+      // timestamp and nothing else; the deleting principal is in the platform
+      // audit row, not here.
+      // WRITE: trusted server APIs only.
+      allow get: if isAuthenticated();
+      allow list: if false;
+      allow write: if isServiceAccount();
+    }
+
+    // ============================================
+    // Site Membership (recursive — this is what enables collectionGroup)
+    // ============================================
+
+    // A `collectionGroup('members')` query is authorized ONLY by a rule matched at
+    // a RECURSIVE wildcard path. A rule nested under `match /sites/{siteId}` does
+    // not authorize one, however permissive it is. This block is what makes the
+    // client's `collectionGroup('members').where('uid','==',me)` listener legal.
+    //
+    // WHY THIS IS NOT A REPEAT OF THE 1756e5f REGRESSION. An earlier
+    // collectionGroup listener was removed because its rule matched `{siteId}` as
+    // an UNCONSTRAINED path wildcard, so the query was authorized across every
+    // site regardless of who asked. It was NOT removed for using `get()`. Here
+    // both disjuncts bind the caller's own uid, so widening the path grants
+    // nothing wider — the caller still reaches only their own rows.
+    //
+    // TWO DISJUNCTS, because get and list prove themselves differently:
+    //   - `request.auth.uid == memberUid` covers a single-document get at ZERO
+    //     document-access cost: the document id IS the member's uid.
+    //   - `resource.data.uid == request.auth.uid` is what a LIST can prove.
+    //     Firestore authorizes a query only when the query's own constraints
+    //     guarantee the rule, and it cannot know the document id equals the `uid`
+    //     field. `where('uid','==',me)` matches this term exactly — which is why
+    //     MemberDoc duplicates uid as a field rather than relying on the id.
+    //
+    // A site's own members are NOT listable by other members: reading the roster
+    // goes through the API, which applies SITE_MEMBER_MANAGE. Writes are
+    // server-only — `membership.server.ts` is the single writer.
+    //
+    // SCOPE: the recursive wildcard matches ANY collection named `members` at any
+    // depth, not only `sites/{siteId}/members`. That is the only one today. A new
+    // one added elsewhere inherits self-read plus server-only writes, which is a
+    // safe default rather than an accidental grant — but it inherits silently, so
+    // check this block before naming another collection `members`.
+    match /{path=**}/members/{memberUid} {
+      allow get: if isAuthenticated() &&
+                    (request.auth.uid == memberUid ||
+                     (resource != null && resource.data.uid == request.auth.uid) ||
+                     isServiceAccount());
+      allow list: if isAuthenticated() &&
+                     ((resource != null && resource.data.uid == request.auth.uid) ||
+                      isServiceAccount());
+      allow write: if isServiceAccount();
+    }
+
+    // ============================================
     // Sites Collection
     // ============================================
 
     match /sites/{siteId} {
       // Site document access
-      // READ: Allow any authenticated user to check if site exists (for availability checking during creation)
+      // READ: site members and superadmins ONLY (canAccessSite). NOT any
+      //   authenticated user — the id-availability check during site creation
+      //   reads `site_ids/{siteId}` instead (see that block), precisely so this
+      //   collection is not enumerable fleet-wide. The comment here used to say
+      //   the opposite, which would have talked a reader into reopening it.
       // WRITE: trusted server APIs only
       allow read: if canAccessSite(siteId);
       allow create, update, delete: if isServiceAccount();
@@ -326,22 +440,13 @@ service cloud.firestore {
       }
 
       // ----------------------------------------
-      // Project Distributions Subcollection
-      // ----------------------------------------
-
-      match /project_distributions/{distributionId} {
-        // Project file distributions (v1, legacy)
-        // Server APIs create and manage distributions
-        // Coexists with roosts/ (v2 / roost) during migration
-        allow read: if canAccessSite(siteId);
-        allow create, update, delete: if isServiceAccount();
-      }
-
-      // ----------------------------------------
       // Roosts Subcollection (roost / v2)
       // ----------------------------------------
-      // The v2 replacement for project_distributions. Each roost
-      // represents a project that's kept in sync with one or more machines.
+      // The only distribution system. The v1 `project_distributions` block was
+      // removed in rules 2.9.0 — existing docs stay at rest but are no longer
+      // readable or writable through any rule.
+      //
+      // Each roost represents a project kept in sync with one or more machines.
       // The doc itself stores ONLY the version pointer (currentVersionId,
       // previousVersionId, versionUrl) plus targets[] + metadata.
       // Version bodies themselves live in R2 (size: a 500GB project ~10MB
@@ -355,40 +460,25 @@ service cloud.firestore {
 
       match /roosts/{roostId} {
         allow read: if canAccessSite(siteId);
-        // CREATE: site-scoped users can create the roost shell, but the
-        // pointer fields (currentVersionId, previousVersionId, versionUrl —
-        // and the legacy currentManifestId/previousManifestId/manifestUrl
-        // names) MUST be null/unset at create time. The first real version
-        // is published via /api/roosts/.../versions using the admin SDK
-        // (which bypasses these rules). This prevents a direct-Firestore
-        // client from publishing a fake "v0" pointing at attacker-
-        // controlled storage.
-        allow create: if canAccessSite(siteId) &&
-                         hasRequiredFields(['name', 'targets', 'createdAt', 'schemaVersion']) &&
-                         request.resource.data.schemaVersion == 2 &&
-                         (!('currentVersionId' in request.resource.data) ||
-                          request.resource.data.currentVersionId == null) &&
-                         (!('previousVersionId' in request.resource.data) ||
-                          request.resource.data.previousVersionId == null) &&
-                         (!('versionUrl' in request.resource.data) ||
-                          request.resource.data.versionUrl == null) &&
-                         (!('currentManifestId' in request.resource.data) ||
-                          request.resource.data.currentManifestId == null) &&
-                         (!('previousManifestId' in request.resource.data) ||
-                          request.resource.data.previousManifestId == null) &&
-                         (!('manifestUrl' in request.resource.data) ||
-                          request.resource.data.manifestUrl == null);
-        // UPDATE: pointer fields cannot be flipped client-side. They go
-        // through the /api/roosts/.../versions + /rollback routes,
-        // which use Firestore transactions (CAS) under admin SDK creds.
-        allow update: if canAccessSite(siteId) &&
-                         !request.resource.data.diff(resource.data).affectedKeys()
-                            .hasAny([
-                              'currentVersionId', 'previousVersionId', 'versionUrl',
-                              'currentManifestId', 'previousManifestId', 'manifestUrl',
-                              'schemaVersion'
-                            ]);
-        allow delete: if canAccessSite(siteId);
+        // WRITE: trusted server APIs only.
+        //
+        // These three were previously `canAccessSite(siteId)` — membership with
+        // no role term — while the API gates the same operations on
+        // DISTRIBUTION_MANAGE (site admin). A plain member could therefore
+        // create and delete roosts straight from the client SDK, bypassing the
+        // capability model entirely. The old create/update conditions guarded
+        // the pointer fields (currentVersionId, versionUrl and the legacy
+        // manifest names) against a forged "v0" pointing at attacker-controlled
+        // storage, but they said nothing about WHO could write.
+        //
+        // Nothing in the app writes these documents from a client: every roost
+        // mutation goes through /api/roosts/** under the admin SDK, and
+        // hooks/useRoosts.ts holds a read-only listener. So this is server-only
+        // rather than isSiteAdmin(siteId) — a stronger rule at no cost, and it
+        // avoids re-deriving site-admin here at all. (isSiteAdmin is per-site
+        // membership, owner|admin — a self-serve owner DOES satisfy it. The
+        // note here predated per-site roles and said the reverse.)
+        allow create, update, delete: if isServiceAccount();
 
         // ------------------------------------------
         // Per-target reported state (one doc per machine)
@@ -446,11 +536,37 @@ service cloud.firestore {
       // ----------------------------------------
 
       match /webhooks/{webhookId} {
-        // Webhook notification endpoints
-        // READ: any user with site access (superadmins fall through via canAccessSite)
-        // WRITE: trusted server APIs only
-        allow read: if canAccessSite(siteId);
+        // Webhook notification endpoints — url, events, counters and rotation.
+        //
+        // READ is SITE-ADMIN, not site access. The comment here used to say the
+        // signing secret was never in this document, and the code says otherwise:
+        // `webhookSender.server.ts` still falls back to an in-document `secret` /
+        // `signingSecret` for subscriptions predating the move to
+        // `webhook_secrets`, and dev still holds two such documents because that
+        // migration never ran. A plain member reading one gets the HMAC key and
+        // can forge deliveries the customer's receiver validates as authentic —
+        // and keeps that key after being removed from the site.
+        //
+        // Site-admin costs nothing here: webhooks are authored under
+        // WEBHOOK_MANAGE, which is site-admin, and the only client that reads
+        // them is the admin webhooks page. This closes the exposure whether or
+        // not the secret migration has run, which a data fix alone cannot.
+        // WRITE: trusted server APIs only.
+        allow read: if isSiteAdmin(siteId);
         allow write: if isServiceAccount();
+      }
+
+      match /webhook_secrets/{webhookId} {
+        // Webhook signing secrets — server-only, following the talon_secrets
+        // pattern. They previously lived on the webhook document above, whose
+        // read rule is canAccessSite(): every site MEMBER could read the HMAC
+        // secret and forge deliveries the receiver would accept as authentic.
+        // The comment on talon_secrets named that leak; this is it closed.
+        //
+        // Not even isSiteAdmin(): nothing client-side needs these. A secret is
+        // returned exactly once, in the create and rotate API responses.
+        allow read: if false;
+        allow write: if false;
       }
 
       // ----------------------------------------
@@ -551,9 +667,10 @@ service cloud.firestore {
       }
 
       match /talon_secrets/{secretId} {
-        // Webhook signing secrets are server-only by design — do not repeat
-        // the webhooks `signingSecret` client-read leak (see the webhooks
-        // block above, which exposes the secret to any site member).
+        // Webhook signing secrets are server-only by design. (The webhooks
+        // block above is isSiteAdmin-read and its secrets moved to
+        // `webhook_secrets` with read:false in rules 2.11.0 — this used to warn
+        // against repeating a leak that no longer exists.)
         allow read: if false;
         allow write: if false;
       }

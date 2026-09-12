@@ -14,14 +14,13 @@ model: eleven_v3
 > After this you can create an owlette account, get through mandatory two-factor with a passkey or an authenticator app, keep recovery material you can actually use, and stand up your first site with the right clock on it.
 
 ## [b01] cold open
-**SCREEN:** clean browser. Type `owlette.app/dashboard`, hit enter — the URL bounces to `/setup-2fa` before the dashboard ever paints. Hold on the "set up two-factor authentication" card.
-**NOTE:** shoot this cold open OUT OF ORDER. An unauthenticated visitor typing `/dashboard` is sent to `/login`, not `/setup-2fa` (`web/proxy.ts:148-158`); the setup bounce only fires for a session that is already signed in with zero factors (`web/proxy.ts:169-181`). So: register first (b02), then — before enrolling any factor — type `/dashboard` and film the bounce for this beat.
+**SCREEN:** clean browser on the owlette.app sign-up page, held — where a new account actually begins.
 **NOTE:** no capture fixture exists for this episode. `seedScreenshotFixtures` has no scenario for the auth pages or a zero-site dashboard (`web/e2e/screenshots/fixtures.ts` — the union runs `dashboard-mixed-states` … `display-storyboard-frame-3`), so every beat here needs a fresh emulator account: register → enroll → create site. Build one before capture; `scenario: null` until then.
 **VOICEOVER:**
-[warm] owlette holds the keys to every machine you run — so it doesn't hand you a
-dashboard until your account is locked down. two-factor isn't optional here, and
-there's no dismiss button. two minutes, once. let's do the whole first day:
-account, second factor, backup codes, and your first site.
+[warm] before owlette can look after your machines, it makes sure your account
+is looked after first. two-factor is built into setup — no nag screen, no skip
+button. a few minutes, done for good. the whole first day: account, second
+factor, backup codes, and your first site.
 
 ## [b02] signing up
 **SCREEN:** `/register` — the "create an account" card. Show "continue with Google" at the top, then click into the email field so the rest unfolds (first/last name, password with its "8+ characters with at least 2 of..." hint, confirm, terms checkbox, the bot-check widget), then "create account". Land on `/setup-2fa`.
@@ -66,7 +65,7 @@ owlette stops asking for a code there for a month. signing out doesn't clear it 
 turning two-factor off does, and so does an admin reset.
 
 ## [b07] your first site
-**SCREEN:** the dashboard for a brand-new account — the "getting started" card with "step 1: create your first site". Click it → the create dialog: site name ("NYC Office"), the auto-generated site ID with its green available check, "create site". The card re-renders into the download/install steps.
+**SCREEN:** the dashboard for a brand-new account — the "getting started" card with "step 1: create your first site". Click it → the create dialog: site name ("NYC Office"), the auto-generated site ID with its green available check, the "site timezone" row the dialog fills from the browser ("change timezone" underneath it), then "create site". The card re-renders into the download/install steps.
 **NOTE:** needs the zero-site account from b01's note — this empty state only renders when the user has no sites at all.
 **VOICEOVER:**
 first dashboard, and it's empty on purpose — step one is a site. a site is just a
@@ -75,19 +74,19 @@ it the name you'd say out loud. owlette generates the id for you — change it i
 you like — then create the site.
 
 ## [b08] the site's clock
-**SCREEN:** the header site switcher → "manage sites" → the pencil "edit site" on the new row → the timezone picker. Show the timezone column before and after.
+**SCREEN:** the header site switcher → "manage sites" → the new row, whose timezone column already reads the zone b07's dialog detected → the pencil "edit site" → the timezone picker, held open. Nothing is changed on camera: the beat is where the clock lives afterwards, not a correction.
 **VOICEOVER:**
-that dialog never asks about the site's clock. it quietly takes the timezone of
-the browser you made it in — wrong the moment your machines live somewhere else.
-fix it now: site switcher, manage sites, then the pencil. the dashboard reads
-this site's times on that clock, from schedule editors to log windows — and each
-machine still keeps its own clock, so set both right.
+that clock is already set — the create dialog read it from your browser and
+started the site on it. right if you made the site where the machines live,
+wrong the moment they're somewhere else. change it here: site switcher, manage
+sites, then the pencil. new sites follow the site clock, so a nine a.m. window is
+nine at the site on every machine — restarts still go by the machine's own clock.
 
 ## [b09] locked out, and what's next
-**SCREEN:** `/admin/users`, the row menu open with "reset 2FA..." highlighted, then the confirm dialog. Cut back to the getting-started card, now showing "step 1: download owlette agent".
+**SCREEN:** the OPERATOR'S user-management view (framed as theirs, not the viewer's — superadmin is an internal role, never presented as a public feature): the row menu open with "reset 2FA..." highlighted, then the confirm dialog. Cut back to the getting-started card, now showing "step 1: download owlette agent".
 **VOICEOVER:**
-last thing — locked out. a backup code gets you straight back in. lost those too,
-and a superadmin can reset two-factor on your row in admin users: it strips every
-factor, revokes your trusted devices, and drops you back on this setup screen at
-the next sign-in. [warm] account done. next up, getting owlette onto a machine
-and pairing it with this site.
+last thing — locked out. a backup code gets you straight back in. lost those too?
+whoever operates your owlette can reset two-factor from their side — this is what
+it looks like for them. it strips every factor, revokes your trusted devices, and
+drops you back on setup at your next sign-in. [warm] account done. next up,
+getting owlette onto a machine and pairing it with this site.

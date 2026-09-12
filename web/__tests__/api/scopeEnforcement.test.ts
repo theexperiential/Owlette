@@ -100,30 +100,51 @@ type PlatformUserData = {
 type SiteData = Record<string, unknown>;
 
 function mockFirestoreDocs(
-  opts: { user?: PlatformUserData | null; site?: SiteData | null } = {},
+  opts: {
+    user?: PlatformUserData | null;
+    site?: SiteData | null;
+    /** Per-site standing. Defaults to `admin` so the suite exercises SCOPE
+     *  enforcement rather than repeatedly re-proving the capability gate. */
+    member?: SiteData | null;
+  } = {},
 ): void {
   const userData: PlatformUserData | null =
     opts.user === undefined ? { role: 'superadmin' } : opts.user;
   const siteData: SiteData | null =
     opts.site === undefined ? { owner: 'site-owner' } : opts.site;
+  const memberData: SiteData | null =
+    opts.member === undefined
+      ? { uid: 'user-1', role: 'admin', status: 'active' }
+      : opts.member;
+
+  const snapshot = (data: SiteData | PlatformUserData | null) => ({
+    exists: data !== null,
+    data: () => data ?? undefined,
+  });
 
   mockedGetAdminDb.mockReturnValue({
     collection: (collectionName: string) => ({
       doc: () => ({
-        get: async () => {
-          const data =
+        get: async () =>
+          snapshot(
             collectionName === 'users'
               ? userData
               : collectionName === 'sites'
                 ? siteData
-                : null;
-          return {
-            exists: data !== null,
-            data: () => data ?? undefined,
-          };
-        },
+                : null,
+          ),
+        // `sites/{siteId}/members/{uid}` — where site access resolves from.
+        collection: (sub: string) => ({
+          doc: () => ({
+            get: async () => snapshot(sub === 'members' ? memberData : null),
+          }),
+        }),
       }),
     }),
+    // `resolveSiteAccess` reads its three documents in ONE batch. Real getAll
+    // preserves argument order, so delegating to each ref matches its shape.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
   } as unknown as ReturnType<typeof getAdminDb>);
 }
 
@@ -274,10 +295,13 @@ describe('requireRoostAuthAndScope — roost resource matrix', () => {
 });
 
 describe('requireDistributionManageCapability', () => {
-  it('allows a site owner without a users.sites[] assignment', async () => {
+  it('allows a site owner, whose global role grants nothing', async () => {
+    // Self-serve owners are global role `member`; the owner membership row is
+    // what carries DISTRIBUTION_MANAGE.
     mockFirestoreDocs({
       site: { owner: 'user-test' },
-      user: null,
+      user: { role: 'member', sites: [] },
+      member: { uid: 'user-test', role: 'owner', status: 'active' },
     });
 
     const result = await requireDistributionManageCapability(sessionAuth(), SITE_ID);
@@ -285,10 +309,26 @@ describe('requireDistributionManageCapability', () => {
     expect(result).toBeNull();
   });
 
-  it('denies a non-owner member without a users.sites[] assignment', async () => {
+  it('denies a user the site points at who holds no membership row', async () => {
+    // `sites/{siteId}.owner` is no longer read on the auth path. This used to
+    // pass through an ownership short-circuit that bypassed the matrix entirely.
+    mockFirestoreDocs({
+      site: { owner: 'user-test' },
+      user: { role: 'member', sites: [] },
+      member: null,
+    });
+
+    const result = await requireDistributionManageCapability(sessionAuth(), SITE_ID);
+
+    expect(result).not.toBeNull();
+    expect(result?.status).toBe(403);
+  });
+
+  it('denies a plain member of the site', async () => {
     mockFirestoreDocs({
       site: { owner: 'someone-else' },
       user: { role: 'member', sites: [] },
+      member: { uid: 'user-test', role: 'member', status: 'active' },
     });
 
     const result = await requireDistributionManageCapability(sessionAuth(), SITE_ID);

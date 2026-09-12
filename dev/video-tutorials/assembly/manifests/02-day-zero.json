@@ -7,7 +7,12 @@
   "scenario": null,
   "script": "scripts/02-day-zero.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 205.192,
+  "narration_s": 251.283,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/02-day-zero.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\02-day-zero.mp4",
       "exists": true,
-      "duration_s": 301.65,
+      "duration_s": 307.15,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -30,19 +35,20 @@
     {
       "id": "b01",
       "title": "cold open",
-      "screen_note": "clean browser. Type `owlette.app/dashboard`, hit enter — the URL bounces to `/setup-2fa` before the dashboard ever paints. Hold on the \"set up two-factor authentication\" card.",
+      "screen_note": "clean browser on the owlette.app sign-up page, held — where a new account actually begins.",
       "direction": {
-        "SCREEN": "clean browser. Type `owlette.app/dashboard`, hit enter — the URL bounces to `/setup-2fa` before the dashboard ever paints. Hold on the \"set up two-factor authentication\" card.",
-        "NOTE": "shoot this cold open OUT OF ORDER. An unauthenticated visitor typing `/dashboard` is sent to `/login`, not `/setup-2fa` (`web/proxy.ts:148-158`); the setup bounce only fires for a session that is already signed in with zero factors (`web/proxy.ts:169-181`). So: register first (b02), then — before enrolling any factor — type `/dashboard` and film the bounce for this beat. no capture fixture exists for this episode. `seedScreenshotFixtures` has no scenario for the auth pages or a zero-site dashboard (`web/e2e/screenshots/fixtures.ts` — the union runs `dashboard-mixed-states` … `display-storyboard-frame-3`), so every beat here needs a fresh emulator account: register → enroll → create site. Build one before capture; `scenario: null` until then."
+        "SCREEN": "clean browser on the owlette.app sign-up page, held — where a new account actually begins.",
+        "NOTE": "no capture fixture exists for this episode. `seedScreenshotFixtures` has no scenario for the auth pages or a zero-site dashboard (`web/e2e/screenshots/fixtures.ts` — the union runs `dashboard-mixed-states` … `display-storyboard-frame-3`), so every beat here needs a fresh emulator account: register → enroll → create site. Build one before capture; `scenario: null` until then."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b01.mp3",
       "mp3_name": "ep02-b01.mp3",
-      "duration_s": 20.689,
-      "duration_frames": 1241,
-      "status": "ok"
+      "duration_s": 22.936,
+      "duration_frames": 1376,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -51,14 +57,20 @@
       "direction": {
         "SCREEN": "`/register` — the \"create an account\" card. Show \"continue with Google\" at the top, then click into the email field so the rest unfolds (first/last name, password with its \"8+ characters with at least 2 of...\" hint, confirm, terms checkbox, the bot-check widget), then \"create account\". Land on `/setup-2fa`."
       },
-      "start_s": 20.689,
-      "start_frame": 1241,
+      "start_s": 32.5,
+      "start_frame": 1950,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b02.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b02.mp3",
       "mp3_name": "ep02-b02.mp3",
-      "duration_s": 21.891,
-      "duration_frames": 1313,
-      "status": "ok"
+      "duration_s": 22.518,
+      "duration_frames": 1351,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -67,14 +79,20 @@
       "direction": {
         "SCREEN": "`/setup-2fa`, the \"choose your second factor\" step — the passkey card (fingerprint icon, \"recommended\" pill) above the authenticator-app card (phone icon). Hover each so the descriptions are readable."
       },
-      "start_s": 42.58,
-      "start_frame": 2555,
+      "start_s": 59.083,
+      "start_frame": 3545,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b03.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b03.mp3",
       "mp3_name": "ep02-b03.mp3",
-      "duration_s": 24.529,
-      "duration_frames": 1472,
-      "status": "ok"
+      "duration_s": 20.297,
+      "duration_frames": 1218,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -84,14 +102,20 @@
         "SCREEN": "click the passkey card → \"create passkey\" → the windows hello prompt → \"passkey added\". Then sign out, land on `/login`, click \"continue with passkey\", one prompt, straight into the dashboard — no code screen in between.",
         "NOTE": "the sign-out / sign-back-in half is a SEPARATE take, filmed after b05's codes are claimed — leaving the \"passkey added\" screen is one-way, and b05 shoots from it."
       },
-      "start_s": 67.109,
-      "start_frame": 4027,
+      "start_s": 83.4,
+      "start_frame": 5004,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b04.mp3",
       "mp3_name": "ep02-b04.mp3",
-      "duration_s": 27.089,
-      "duration_frames": 1625,
-      "status": "ok"
+      "duration_s": 27.611,
+      "duration_frames": 1657,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -101,14 +125,20 @@
         "SCREEN": "on the \"passkey added\" screen, click \"get backup codes\" — the button flips to \"waiting for your device...\" and the device prompts a second time. Then the backup step: the ten codes in a mono grid, the red \"these codes will only be shown once!\" line, \"copy all codes\", then \"continue to dashboard\".",
         "NOTE": "the passkey path needs that extra step-up before any codes render (`web/app/setup-2fa/page.tsx:589-598`). The sibling button on that screen is \"skip for now\" (`:602-610`) — do not click it on camera; it exits to the dashboard with no codes issued."
       },
-      "start_s": 94.198,
-      "start_frame": 5652,
+      "start_s": 115.033,
+      "start_frame": 6902,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b05.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b05.mp3",
       "mp3_name": "ep02-b05.mp3",
-      "duration_s": 18.207,
-      "duration_frames": 1092,
-      "status": "ok"
+      "duration_s": 19.853,
+      "duration_frames": 1191,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -117,63 +147,87 @@
       "direction": {
         "SCREEN": "a sign-in on the authenticator path — `/verify-2fa`, the six-digit field, and the \"trust this device for 30 days\" checkbox being ticked before \"verify\"."
       },
-      "start_s": 112.405,
-      "start_frame": 6744,
+      "start_s": 138.95,
+      "start_frame": 8337,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b06.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b06.mp3",
       "mp3_name": "ep02-b06.mp3",
-      "duration_s": 18.364,
-      "duration_frames": 1102,
-      "status": "ok"
+      "duration_s": 21.238,
+      "duration_frames": 1274,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b07",
       "title": "your first site",
-      "screen_note": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, \"create site\". The card re-renders into the download/install steps.",
+      "screen_note": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, the \"site timezone\" row the dialog fills from the browser (\"change timezone\" underneath it), then \"create site\". The card re-renders into the download/install steps.",
       "direction": {
-        "SCREEN": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, \"create site\". The card re-renders into the download/install steps.",
+        "SCREEN": "the dashboard for a brand-new account — the \"getting started\" card with \"step 1: create your first site\". Click it → the create dialog: site name (\"NYC Office\"), the auto-generated site ID with its green available check, the \"site timezone\" row the dialog fills from the browser (\"change timezone\" underneath it), then \"create site\". The card re-renders into the download/install steps.",
         "NOTE": "needs the zero-site account from b01's note — this empty state only renders when the user has no sites at all."
       },
-      "start_s": 130.769,
-      "start_frame": 7846,
+      "start_s": 164.25,
+      "start_frame": 9855,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b07.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b07.mp3",
       "mp3_name": "ep02-b07.mp3",
-      "duration_s": 20.924,
-      "duration_frames": 1255,
-      "status": "ok"
+      "duration_s": 20.219,
+      "duration_frames": 1213,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b08",
       "title": "the site's clock",
-      "screen_note": "the header site switcher → \"manage sites\" → the pencil \"edit site\" on the new row → the timezone picker. Show the timezone column before and after.",
+      "screen_note": "the header site switcher → \"manage sites\" → the new row, whose timezone column already reads the zone b07's dialog detected → the pencil \"edit site\" → the timezone picker, held open. Nothing is changed on camera: the beat is where the clock lives afterwards, not a correction.",
       "direction": {
-        "SCREEN": "the header site switcher → \"manage sites\" → the pencil \"edit site\" on the new row → the timezone picker. Show the timezone column before and after."
+        "SCREEN": "the header site switcher → \"manage sites\" → the new row, whose timezone column already reads the zone b07's dialog detected → the pencil \"edit site\" → the timezone picker, held open. Nothing is changed on camera: the beat is where the clock lives afterwards, not a correction."
       },
-      "start_s": 151.693,
-      "start_frame": 9102,
+      "start_s": 188.5,
+      "start_frame": 11310,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b08.mp4",
+        "frames": 205,
+        "duration_s": 3.417
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b08.mp3",
       "mp3_name": "ep02-b08.mp3",
-      "duration_s": 26.749,
-      "duration_frames": 1605,
-      "status": "ok"
+      "duration_s": 31.242,
+      "duration_frames": 1875,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b09",
       "title": "locked out, and what's next",
-      "screen_note": "`/admin/users`, the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\".",
+      "screen_note": "the OPERATOR'S user-management view (framed as theirs, not the viewer's — superadmin is an internal role, never presented as a public feature): the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\".",
       "direction": {
-        "SCREEN": "`/admin/users`, the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\"."
+        "SCREEN": "the OPERATOR'S user-management view (framed as theirs, not the viewer's — superadmin is an internal role, never presented as a public feature): the row menu open with \"reset 2FA...\" highlighted, then the confirm dialog. Cut back to the getting-started card, now showing \"step 1: download owlette agent\"."
       },
-      "start_s": 178.442,
-      "start_frame": 10707,
+      "start_s": 223.767,
+      "start_frame": 13426,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\02-day-zero-b09.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\02-day-zero\\ep02-b09.mp3",
       "mp3_name": "ep02-b09.mp3",
-      "duration_s": 26.749,
-      "duration_frames": 1605,
-      "status": "ok"
+      "duration_s": 26.906,
+      "duration_frames": 1614,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

@@ -7,6 +7,7 @@ import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
 import { sanitizeForLog } from '@/lib/logSanitize';
 
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest) {
       if (resendClient) {
         const recipients = await getSiteAlertRecipients(siteId, 'thresholdAlerts');
         const tz = await getMachineTimezone(siteId, machineId);
-        const baseUrl = request.nextUrl.origin;
+        const baseUrl = publicOrigin(request);
         const siteLabel = await getSiteLabel(siteId);
 
         if (recipients.length > 0) {

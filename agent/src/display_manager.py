@@ -85,7 +85,6 @@ class DisplayErrorCode(str, enum.Enum):
 
     # Preconditions / kill switches
     MOSAIC_ACTIVE = 'mosaic_active'
-    NO_CONSOLE_SESSION = 'no_console_session'
 
     # Auto-restore skip reasons (not failures)
     AUTO_RESTORE_SKIPPED_UNFIXABLE = 'auto_restore_skipped_unfixable'
@@ -1713,7 +1712,23 @@ def _enumerate_with_timeout(timeout: float = _CCD_ENUMERATE_TIMEOUT) -> list:
     """
     if _is_session_0() and timeout < _ENUM_HELPER_TIMEOUT + 0.5:
         timeout = _ENUM_HELPER_TIMEOUT + 0.5
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    # Manual lifecycle, not `with`: the default shutdown(wait=True) on block exit
+    # blocks for the worker's FULL duration, defeating the very timeout this
+    # watchdog exists to enforce. Same fix, same reason, as
+    # _disk_usage_with_timeout in hardware_profile.py and
+    # _wmi_logical_disk_with_timeout in shared_utils.py.
+    #
+    # This matters more here than at those two sites: this is the only watchdog
+    # on the HEARTBEAT path. firebase_client._upload_metrics ->
+    # _ensure_display_profile -> build_display_profile reaches it with no outer
+    # pool, so a wedged console session stalled the heartbeat thread and the
+    # machine read offline in the dashboard.
+    #
+    # Abandoning the worker is safe: its only external write is its own
+    # uuid-named IPC file, removed by that helper's own finally, and the spawned
+    # helper process is still killed by the TerminateProcess in the spawn path.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(_enumerate_monitors)
         try:
             return future.result(timeout=timeout)
@@ -1727,6 +1742,8 @@ def _enumerate_with_timeout(timeout: float = _CCD_ENUMERATE_TIMEOUT) -> list:
             raise DisplayEnumerationError(
                 f'CCD enumeration failed: {e}'
             ) from e
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 # Public API
@@ -3328,14 +3345,12 @@ def _helper_enumerate_modes_to_json(out_path: str) -> int:
     return exit_code
 
 
-def _helper_self_test_to_json(resp_path: str) -> int:
-    """Helper-mode read-only apply self-test.
+def _make_responder(resp_path: str):
+    """Build the ``_respond`` closure shared by the helper-mode entry points.
 
-    Verifies the IPC plumbing (CreateProcessAsUser, env block, response file,
-    atomic rename) and CCD reachability from the console session without ever
-    calling SDC_APPLY: queries the live paths, then SDC_VALIDATEs them against
-    themselves — a true no-op. Writes ``{ok, monitors_seen, query_ms,
-    validate_ms}`` (+ ``error``/``code``) to ``resp_path``.
+    Writes the payload to ``resp_path`` atomically and maps it to the helper
+    exit code: 0 when the payload reports success, 1 when it reports failure,
+    2 when the response file itself could not be written.
     """
     def _respond(payload: dict) -> int:
         try:
@@ -3348,6 +3363,20 @@ def _helper_self_test_to_json(resp_path: str) -> int:
                 )
             )
             return 2
+
+    return _respond
+
+
+def _helper_self_test_to_json(resp_path: str) -> int:
+    """Helper-mode read-only apply self-test.
+
+    Verifies the IPC plumbing (CreateProcessAsUser, env block, response file,
+    atomic rename) and CCD reachability from the console session without ever
+    calling SDC_APPLY: queries the live paths, then SDC_VALIDATEs them against
+    themselves — a true no-op. Writes ``{ok, monitors_seen, query_ms,
+    validate_ms}`` (+ ``error``/``code``) to ``resp_path``.
+    """
+    _respond = _make_responder(resp_path)
 
     try:
         t0 = time.time()
@@ -3422,17 +3451,7 @@ def _helper_apply_to_json(req_path: str, resp_path: str) -> int:
     even on unexpected failure, so the service never sees an absent file for a
     helper that actually ran; the exit code only distinguishes "never launched".
     """
-    def _respond(payload: dict) -> int:
-        try:
-            _atomic_write_json(resp_path, payload)
-            return 0 if payload.get('ok') else 1
-        except OSError as e:
-            sys.stderr.write(
-                'helper: failed to write IPC response {0}: {1}; code={2}\n'.format(
-                    resp_path, e, DisplayErrorCode.IPC_FAILURE.value,
-                )
-            )
-            return 2
+    _respond = _make_responder(resp_path)
 
     try:
         with open(req_path, 'r', encoding='utf-8') as f:
@@ -3475,17 +3494,7 @@ def _helper_revert_from_json(req_path: str, resp_path: str) -> int:
     and calls ``_apply_snapshot``, which saves to the config DB so the restored
     config survives reboot. Response written to ``resp_path``.
     """
-    def _respond(payload: dict) -> int:
-        try:
-            _atomic_write_json(resp_path, payload)
-            return 0 if payload.get('ok') else 1
-        except OSError as e:
-            sys.stderr.write(
-                'helper: failed to write IPC response {0}: {1}; code={2}\n'.format(
-                    resp_path, e, DisplayErrorCode.IPC_FAILURE.value,
-                )
-            )
-            return 2
+    _respond = _make_responder(resp_path)
 
     try:
         with open(req_path, 'r', encoding='utf-8') as f:

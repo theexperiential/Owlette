@@ -19,17 +19,29 @@ const VERSION_FILES = {
   tauriConf: path.join(ROOT, 'desktop', 'src-tauri', 'tauri.conf.json'),
 };
 
-// Own writer: TOML, and only the [package] version may change — dependency
-// `version = "..."` keys must not match.
-const CARGO_TOML = path.join(ROOT, 'desktop', 'src-tauri', 'Cargo.toml');
+// Own reader/writer: TOML, and only the [package] version may change —
+// dependency `version = "..."` keys must not match. Both Rust crates carry the
+// product version: Tauri stamps the desktop app's into its bundle, and
+// agent/host/build.rs stamps the service host's into owlette-host.exe's
+// VERSIONINFO resource. The host crate was missing from this list until 3.3.2
+// and sat at 3.0.0 for six releases — harmless while the binary carried no
+// version resource, wrong the moment it did.
+const CARGO_TOMLS = {
+  desktop: path.join(ROOT, 'desktop', 'src-tauri', 'Cargo.toml'),
+  host: path.join(ROOT, 'agent', 'host', 'Cargo.toml'),
+};
 
-function writeCargoVersion(version) {
-  const content = fs.readFileSync(CARGO_TOML, 'utf8');
-  const updated = content.replace(
-    /^(version = ")\d+\.\d+\.\d+(")/m,
-    `$1${version}$2`,
-  );
-  fs.writeFileSync(CARGO_TOML, updated, 'utf8');
+const CARGO_VERSION_PATTERN = /^(version = ")(\d+\.\d+\.\d+)(")/m;
+
+function readCargoVersion(cargoToml) {
+  const match = fs.readFileSync(cargoToml, 'utf8').match(CARGO_VERSION_PATTERN);
+  return match ? match[2] : '(no [package] version)';
+}
+
+function writeCargoVersion(cargoToml, version) {
+  const content = fs.readFileSync(cargoToml, 'utf8');
+  const updated = content.replace(CARGO_VERSION_PATTERN, `$1${version}$3`);
+  fs.writeFileSync(cargoToml, updated, 'utf8');
 }
 
 const DOC_FILES = {
@@ -149,7 +161,8 @@ function showVersions() {
   console.log(`  Product:  ${readVersion(VERSION_FILES.product)}`);
   console.log(`  Agent:    ${readVersion(VERSION_FILES.agent)}`);
   console.log(`  Web:      ${readVersion(VERSION_FILES.web)}`);
-  console.log(`  Desktop:  ${readVersion(VERSION_FILES.desktopPkg)}`);
+  console.log(`  Desktop:  ${readVersion(VERSION_FILES.desktopPkg)} (package.json) / ${readCargoVersion(CARGO_TOMLS.desktop)} (Cargo.toml)`);
+  console.log(`  Host:     ${readCargoVersion(CARGO_TOMLS.host)} (agent/host/Cargo.toml)`);
   console.log('\n  Note: Firestore rules version is independent (tracks schema changes)\n');
 }
 
@@ -179,8 +192,11 @@ function syncVersions(newVersion) {
   writeVersion(VERSION_FILES.tauriConf, newVersion);
   console.log(`  ✅ Updated desktop/src-tauri/tauri.conf.json → ${newVersion}`);
 
-  writeCargoVersion(newVersion);
+  writeCargoVersion(CARGO_TOMLS.desktop, newVersion);
   console.log(`  ✅ Updated desktop/src-tauri/Cargo.toml → ${newVersion}`);
+
+  writeCargoVersion(CARGO_TOMLS.host, newVersion);
+  console.log(`  ✅ Updated agent/host/Cargo.toml → ${newVersion}`);
   console.log('     (Cargo.lock and package-lock.json follow on the next build/install)');
 
   if (updateDocVersion(DOC_FILES.readme, newVersion, oldVersion)) {

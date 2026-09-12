@@ -83,12 +83,17 @@ jest.mock('@/lib/hootStream.server', () => {
   };
 });
 
-const mockGetUserSiteIds = jest.fn();
-jest.mock('@/lib/apiHelpers.server', () => {
-  const actual = jest.requireActual('@/lib/apiHelpers.server');
+// Site scoping resolves from MEMBER ROWS, not the legacy `users/{uid}.sites[]`.
+// This mock used to target `getUserSiteIds` in apiHelpers; when the routes moved
+// to `listUserSiteIds` the old mock silently stopped intercepting, and these
+// tests failed loudly rather than passing against unmocked Firestore — which is
+// the outcome you want from a mock that has drifted.
+const mockListUserSiteIds = jest.fn();
+jest.mock('@/lib/membership.server', () => {
+  const actual = jest.requireActual('@/lib/membership.server');
   return {
     ...actual,
-    getUserSiteIds: (...a: unknown[]) => mockGetUserSiteIds(...a),
+    listUserSiteIds: (...a: unknown[]) => mockListUserSiteIds(...a),
   };
 });
 
@@ -196,7 +201,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockRequireChatAuth.mockResolvedValue(mockRequireChatAuthDefault());
   mockResolveAuth.mockResolvedValue({ userId: 'user-1', keyContext: null });
-  mockGetUserSiteIds.mockResolvedValue([SITE]);
+  mockListUserSiteIds.mockResolvedValue([SITE]);
   mockOwnedSitesGet.mockResolvedValue({ docs: [] });
   mockWithIdempotency.mockImplementation(async (_req, _ctx, _body, fn) => fn());
   mockGetConversation.mockResolvedValue(mockConversation());
@@ -261,7 +266,7 @@ describe('GET /api/hoot/conversations', () => {
   });
 
   it('returns empty list when caller has zero accessible sites', async () => {
-    mockGetUserSiteIds.mockResolvedValueOnce([]);
+    mockListUserSiteIds.mockResolvedValueOnce([]);
     mockOwnedSitesGet.mockResolvedValueOnce({ docs: [] });
     const res = await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     expect(res.status).toBe(200);
@@ -281,21 +286,21 @@ describe('GET /api/hoot/conversations', () => {
         isLegacy: false,
       },
     });
-    mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
+    mockListUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
     await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.siteIds.sort()).toEqual([SITE]);
   });
 
   it('filters by explicit siteId when provided', async () => {
-    mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
+    mockListUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
     await listGET(jsonReq(`http://localhost/api/hoot/conversations?siteId=${SITE}`, 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.siteIds).toEqual([SITE]);
   });
 
   it('returns an empty page for a siteId outside readable scope', async () => {
-    mockGetUserSiteIds.mockResolvedValueOnce([SITE]);
+    mockListUserSiteIds.mockResolvedValueOnce([SITE]);
     const res = await listGET(
       jsonReq('http://localhost/api/hoot/conversations?siteId=other-site', 'GET'),
     );

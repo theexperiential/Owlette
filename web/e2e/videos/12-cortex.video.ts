@@ -47,6 +47,7 @@ import {
   recordScene,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   clickWithCursor,
   centerInView,
@@ -76,7 +77,11 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
           page.getByText('03:14 incident', { exact: false }).first(),
         ).toBeVisible();
         await expect(page.getByText('access violation', { exact: false })).toBeVisible();
-        await narrate(page, 'b01 hoot chat — settle', 20);
+        await narrate(page, 'b01 hoot chat — settle', 6.0);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 hoot chat — settle - close', 6.0);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 hoot chat — settle - settle', 1.0);
 
         // [b02] one key, one place (~32.5s) — account settings → the hoot
         // section: provider, model, and the api key field with its "encrypted
@@ -92,26 +97,41 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         const hootTab = settingsDialog.getByRole('button', { name: /^hoot$/i }).first();
         await clickWithCursor(page, hootTab);
         await expect(settingsDialog.locator('#llmProvider')).toBeVisible();
-        await narrate(page, 'b02 provider + model', 14);
+        await narrate(page, 'b02 provider + model', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b02 provider + model - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 provider + model - settle', 1.0);
         await centerInView(page, settingsDialog.locator('#llmApiKey'));
         await highlight(page, settingsDialog.locator('#llmApiKey'), 2600);
-        await narrate(page, 'b02 the key, encrypted, server-side only', 19);
+        await narrate(page, 'b02 the key, encrypted, server-side only', 5.7);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b02 the key, encrypted, server-side only - close', 5.3);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b02 the key, encrypted, server-side only - settle', 1.0);
 
         await page.keyboard.press('Escape');
         await expect(settingsDialog).not.toBeVisible();
         await page.waitForTimeout(400);
 
-        // [b03] point it at something (~18.7s). Opening the selector is enough —
-        // switching the target here would reset the chat before b04 films it.
+        // [b03] point it at something (~18.7s). Opening the picker is enough —
+        // the master row is what the narration is about, and leaving the chat's
+        // target alone keeps b04's thread intact.
         const machineSelector = page.getByLabel('hoot target');
         await centerInView(page, machineSelector);
         await highlight(page, machineSelector, 1800);
         await clickWithCursor(page, machineSelector);
         await page.waitForTimeout(400);
-        const allMachinesOption = page.getByRole('option', { name: /All Machines/i }).first();
+        const allMachinesOption = page
+          .getByRole('menuitemcheckbox', { name: /^all machines/i })
+          .first();
         await expect(allMachinesOption).toBeVisible();
         await highlight(page, allMachinesOption, 1600);
-        await narrate(page, 'b03 all machines vs one machine', 14);
+        await narrate(page, 'b03 all machines vs one machine', 4.2);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b03 all machines vs one machine - close', 1.8);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 all machines vs one machine - settle', 1.0);
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
         await narrate(page, 'b03 close selector', 5);
@@ -171,18 +191,22 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         await highlight(page, approvalToggle, 2400);
         await narrate(page, 'b06 role ceiling + the site-wide approval gate', 12);
 
-        // The per-machine switch only renders for a SINGLE selected machine, so
-        // the target has to move off "all machines". Switching the target opens
-        // a FRESH conversation and empties the thread — that is the product
-        // behaviour b03 already narrated, so it reads as intentional here rather
-        // than as the chat losing its history.
+        // The per-machine switch only renders for a SINGLE targeted machine, so
+        // the target has to move off "all machines". A row's NAME selects only
+        // that machine (its checkbox column is what toggles within the set), and
+        // the cursor lands on the name — so one click gets there from any state.
+        // The conversation itself stays put now — re-aiming continues the open
+        // chat instead of starting another. (The b03/b06 narration still says
+        // switching opens a fresh conversation; Task 7.1 flags that line for the
+        // next render.)
         const machineSelectorAgain = page.getByLabel('hoot target');
         await clickWithCursor(page, machineSelectorAgain);
         await page.waitForTimeout(400);
         await clickWithCursor(
           page,
-          page.getByRole('option', { name: /media-server-stage/i }).first(),
+          page.getByRole('menuitemcheckbox', { name: /^media-server-stage/i }).first(),
         );
+        await page.keyboard.press('Escape');
         await page.waitForTimeout(600);
         const hootToggle = page.getByRole('button', { name: /hoot (active|inactive)/i });
         await expect(hootToggle).toBeVisible();

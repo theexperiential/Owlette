@@ -26,6 +26,7 @@ import {
 } from '@/lib/alerts/displayEventRouting';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 import { hootInternalSecret } from '@/lib/hootInternalSecret';
 import { sanitizeForLog } from '@/lib/logSanitize';
 
@@ -243,7 +244,7 @@ export const POST = withRateLimit(
               data: displayData,
               agentVersion: agentVersion || '',
               correlatedApplyId,
-              baseUrl: request.nextUrl.origin,
+              baseUrl: publicOrigin(request),
             });
           } else {
             await db.collection('pending_display_alerts').add({
@@ -409,7 +410,7 @@ export const POST = withRateLimit(
       }
 
       const subject = safeEmailSubject(`[ALERT] owlette agent error on ${machineId}`);
-      const baseUrl = request.nextUrl.origin;
+      const baseUrl = publicOrigin(request);
       let emailsSent = 0;
 
       for (const recipient of recipients) {

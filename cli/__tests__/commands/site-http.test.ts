@@ -161,3 +161,192 @@ describe('owlette site get', () => {
     expect(JSON.parse(out)).toEqual(detail);
   });
 });
+
+// ---------------------------------------------------------------------------
+// membership — per-site roles + ownership transfer
+// ---------------------------------------------------------------------------
+
+describe('owlette site members', () => {
+  it('GETs the members collection', async () => {
+    const calls = installFetchStub({ members: [] });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'members', 'site-1'], { from: 'user' });
+
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members');
+    expect(calls[0]!.init.method ?? 'GET').toBe('GET');
+  });
+});
+
+describe('owlette site add-member', () => {
+  it('POSTs uid + role with an auto Idempotency-Key', async () => {
+    const calls = installFetchStub({ uid: 'u-1', roleHonored: true, globalRole: 'admin' });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['site', 'add-member', 'site-1', '--uid', 'u-1', '--role', 'admin'],
+      { from: 'user' },
+    );
+
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ uid: 'u-1', role: 'admin' });
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toMatch(/^cli-add-member-/);
+  });
+
+  it('POSTs email instead of uid when --email is used', async () => {
+    const calls = installFetchStub({ uid: 'u-1', roleHonored: true });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['site', 'add-member', 'site-1', '--email', 'alice@example.com'],
+      { from: 'user' },
+    );
+
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      email: 'alice@example.com',
+      role: 'member',
+    });
+  });
+
+  it('refuses both --uid and --email without calling the API', async () => {
+    const calls = installFetchStub({});
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['site', 'add-member', 'site-1', '--uid', 'u-1', '--email', 'a@b.c'],
+      { from: 'user' },
+    );
+
+    // Validated client-side, mirroring the API's own 400 — no round trip spent.
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('WARNS when the admin role was not honored', async () => {
+    // The membership landed but the elevated role did not. Silence here would
+    // read as unqualified success, which is the whole point of the warning.
+    installFetchStub({ uid: 'u-1', roleHonored: false, globalRole: 'member' });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      writes.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['site', 'add-member', 'site-1', '--uid', 'u-1', '--role', 'admin'],
+      { from: 'user' },
+    );
+
+    const out = writes.join('');
+    expect(out).toContain('WARNING');
+    expect(out).toContain('NOT honored');
+  });
+});
+
+describe('owlette site set-role', () => {
+  it('PATCHes the member with the new per-site role', async () => {
+    const calls = installFetchStub({ siteId: 'site-1', uid: 'u-1', role: 'admin' });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'set-role', 'site-1', 'u-1', 'admin'], { from: 'user' });
+
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/members/u-1');
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ role: 'admin' });
+  });
+
+  it('refuses role=owner locally and points at transfer-ownership', async () => {
+    const calls = installFetchStub({});
+    const writes: string[] = [];
+    const errs: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((c: string) => {
+      writes.push(c);
+      return true;
+    });
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((c: string) => {
+      errs.push(c);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'set-role', 'site-1', 'u-1', 'owner'], { from: 'user' });
+
+    expect(calls).toHaveLength(0);
+    expect(errs.join('')).toContain('transfer-ownership');
+  });
+});
+
+describe('owlette site remove-member', () => {
+  it('DELETEs the member and passes a talon successor when given', async () => {
+    const calls = installFetchStub({ wasMember: true, talonCount: 0, reassignedTalonIds: [] });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['site', 'remove-member', 'site-1', 'u-1', '--talon-successor', 'u-2'],
+      { from: 'user' },
+    );
+
+    expect(calls[0]!.init.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe(
+      'https://dev.test/api/sites/site-1/members/u-1?talonSuccessorUid=u-2',
+    );
+  });
+
+  it('WARNS about talons left orphaned by the removal', async () => {
+    // The talons survive, but their author can no longer reach the site, so they
+    // start failing silently — worth saying out loud.
+    installFetchStub({ wasMember: true, talonCount: 3, reassignedTalonIds: [] });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((c: string) => {
+      writes.push(c);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'remove-member', 'site-1', 'u-1'], { from: 'user' });
+
+    const out = writes.join('');
+    expect(out).toContain('WARNING');
+    expect(out).toContain('3 talon(s)');
+  });
+});
+
+describe('owlette site transfer-ownership', () => {
+  it('POSTs successorUid to the site-level transfer endpoint', async () => {
+    const calls = installFetchStub({
+      siteId: 'site-1',
+      previousOwnerUid: 'u-old',
+      newOwnerUid: 'u-new',
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'transfer-ownership', 'site-1', 'u-new'], {
+      from: 'user',
+    });
+
+    // Deliberately NOT under /members: ownership belongs to the site.
+    expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/transfer-ownership');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ successorUid: 'u-new' });
+  });
+
+  it('surfaces a 403 not_owner refusal', async () => {
+    installFetchStub({ detail: 'transferring a site is the owner\'s decision' }, 403);
+    const errs: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((c: string) => {
+      errs.push(c);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['site', 'transfer-ownership', 'site-1', 'u-new'], {
+      from: 'user',
+    });
+
+    expect(errs.join('')).toContain('403');
+    expect(process.exitCode).toBe(1);
+  });
+});

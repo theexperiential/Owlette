@@ -20,6 +20,10 @@
 /e2e/.auth/
 /e2e/debug/
 
+# Live dev smoke suite (playwright.live.config.ts): signed-in role states, run output
+/e2e-live/.auth/
+/e2e-live/.output/
+
 # next.js — glob covers .next, .next-e2e, and any ad-hoc .next-* probe
 # dirs (e.g. .next-dev-probe used when debugging hydration in dev mode)
 /.next*/

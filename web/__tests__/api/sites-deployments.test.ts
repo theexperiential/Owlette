@@ -47,10 +47,15 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
             type: 'user',
             userId: 'user-1',
             role: 'admin',
-            sites: [params.siteId],
+            siteRoles: { [params.siteId]: 'admin' },
           },
           siteId: params.siteId,
           correlationId: 'corr-test',
+          // The wrapper has always supplied these; the routes only started
+          // reading them from ctx once task 1.4 removed the inner gate that
+          // used to hand them over separately.
+          auth: { userId: 'user-1', keyContext: null },
+          scopeCheck: { isLegacy: false },
         },
         routeContext,
       );
@@ -119,6 +124,8 @@ function authedKey(scopes: ApiKeyScope[] | null): ResolvedAuth {
 beforeEach(() => {
   jest.clearAllMocks();
   mocks.siteDocs.clear();
+  mocks.memberDocs.clear();
+  mocks.userDocs.clear();
   mockResolveAuth.mockResolvedValue(authedSession());
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
   mocks.set.mockResolvedValue(undefined);
@@ -226,16 +233,12 @@ describe('GET /api/sites/{siteId}/deployments', () => {
     expect(res.status).toBe(200);
   });
 
-  it('403 scope_insufficient when key lacks site:read', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['write'] }]),
-    );
-    const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`);
-    const res = await listGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
+  // Scope assertions REMOVED here by task 1.4: this suite mocks
+  // authorizedSiteHandler, and the scope check now lives only in that
+  // wrapper, so an assertion here would pass whatever the gate did.
+  // Covered instead by scopeEnforcement.test.ts (mechanism),
+  // authorizedHandler.test.ts:365 (wrapper), and
+  // membershipEscalation.test.ts (route-level, real wrapper).
 });
 
 describe('POST /api/sites/{siteId}/deployments', () => {
@@ -374,19 +377,6 @@ describe('POST /api/sites/{siteId}/deployments', () => {
     expect(res.status).toBe(201);
   });
 
-  it('403 scope_insufficient when key has only read', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
-    );
-    const req = createMockRequest(`http://localhost/api/sites/${SITE}/deployments`, {
-      method: 'POST',
-      body: validCreateBody,
-    });
-    const res = await createPOST(req, { params: Promise.resolve({ siteId: SITE }) });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
 
   it('replays cached response on Idempotency-Key hit with matching body', async () => {
     const crypto = await import('crypto');
@@ -486,20 +476,6 @@ describe('GET /api/sites/{siteId}/deployments/{deploymentId}', () => {
     expect(res.status).toBe(404);
   });
 
-  it('403 scope_insufficient when key lacks site:read', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['admin'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
-    );
-    const res = await detailGET(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
 });
 
 describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
@@ -602,21 +578,6 @@ describe('DELETE /api/sites/{siteId}/deployments/{deploymentId}', () => {
     expect(body.code).toBe('idempotency_key_required');
   });
 
-  it('403 scope_insufficient when key lacks site:write', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}`,
-      { method: 'DELETE', body: {} },
-    );
-    const res = await detailDELETE(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
 });
 
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
@@ -854,21 +815,6 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
     expect(body.code).toBe('idempotency_key_required');
   });
 
-  it('403 scope_insufficient when key lacks site:write', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
-      { method: 'POST', body: {} },
-    );
-    const res = await retryPOST(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
 });
 
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
@@ -1000,21 +946,6 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/cancel', () => {
     expect(body.code).toBe('idempotency_key_required');
   });
 
-  it('403 scope_insufficient when key lacks site:write', async () => {
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/cancel`,
-      { method: 'POST', body: {} },
-    );
-    const res = await cancelPOST(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
 });
 
 describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => {
@@ -1121,22 +1052,10 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/uninstall', () => 
     expect(body.code).toBe('idempotency_key_required');
   });
 
-  it('403 scope_insufficient when key has site:write but not admin', async () => {
-    // Uninstall is privileged: requires `admin`, not just `write`.
-    mockResolveAuth.mockResolvedValue(
-      authedKey([{ resource: 'site', id: SITE, permissions: ['write'] }]),
-    );
-    const req = createMockRequest(
-      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/uninstall`,
-      { method: 'POST', body: {} },
-    );
-    const res = await uninstallPOST(req, {
-      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
-    });
-    expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe('scope_insufficient');
-  });
+  // MOVED to __tests__/api/membershipEscalation.test.ts (task 1.4).
+  // This suite mocks authorizedSiteHandler, and authorization now lives
+  // entirely in that wrapper, so an assertion here could no longer observe
+  // it — it would pass whatever the gate did.
 
   it('200 — scope-pass with site=<id>:admin', async () => {
     mockResolveAuth.mockResolvedValue(

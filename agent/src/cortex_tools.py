@@ -133,10 +133,18 @@ def _execute_via_ipc_sync(tool_name: str, params: dict) -> dict:
     return _format_result(result)
 
 
-def _execute_via_ipc_sync_raw(tool_name: str, params: dict) -> dict:
-    """Execute a tool via IPC and return the raw result dict (no MCP formatting)."""
+def _execute_via_ipc_sync_raw(
+    tool_name: str, params: dict, timeout: float = IPC_TIMEOUT
+) -> dict:
+    """Execute a tool via IPC and return the raw result dict (no MCP formatting).
+
+    `timeout` exists for capture_screenshot, which genuinely takes ~55s (a
+    user-session poll plus the upload POST) and so cannot finish inside the
+    30s default. Keep any override under the 120s stale-file cutoff in
+    _cleanup_stale_ipc_files, or a live command is reaped out from under itself.
+    """
     cmd_id = _write_ipc_command(tool_name, params)
-    return _poll_ipc_result(cmd_id)
+    return _poll_ipc_result(cmd_id, timeout=timeout)
 
 
 async def _execute_direct(tool_name: str, params: dict, config: dict) -> dict:
@@ -277,8 +285,12 @@ def _make_tier2_tools() -> list:
           "combined (default), or monitor=1, 2, etc. for a specific display.",
           {"monitor": int})
     async def capture_screenshot(args: dict[str, Any]) -> dict[str, Any]:
+        # 60s, not the 30s default: the service side takes ~55s. Now that the
+        # pump runs off the 5s loop the wait is real rather than masked by the
+        # loop stalling anyway, so the default would just report a spurious
+        # timeout for a capture that was going to succeed.
         result = await asyncio.to_thread(
-            _execute_via_ipc_sync_raw, 'capture_screenshot', args
+            _execute_via_ipc_sync_raw, 'capture_screenshot', args, 60
         )
         # Build MCP content with image block if base64 is available
         content = []

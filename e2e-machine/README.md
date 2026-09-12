@@ -10,7 +10,7 @@ gate**, complementary to (not a replacement for) the fast emulator-backed web su
   silent-pairing flow was broken for two months (a placeholder `machine_id` claim → rules
   403'd everything) and no emulator/unit test could catch it — only a real agent with a
   real token against real Firestore rules manifests it. That's what this gate runs.
-- **Plan / tasks / context**: [`dev/active/full-machine-e2e/`](../dev/active/full-machine-e2e/)
+- **Plan / tasks / context**: [`dev/completed/full-machine-e2e/`](../dev/completed/full-machine-e2e/)
   (`plan.md`, `tasks.md`, `context.md`).
 - **Machine prep (canonical)**: [`docs/internal/gui-automation-machine-setup.md`](../docs/internal/gui-automation-machine-setup.md),
   with `scripts/bootstrap-gui-automation.ps1` as its executable validator.
@@ -22,7 +22,7 @@ gate**, complementary to (not a replacement for) the fast emulator-backed web su
 | **0** | Headless-auth spike (prove pairing needs no human/browser) | ✅ **done — 10/10** (`wave0/RESULTS.md`) |
 | **1** | Install + service + auth smoke (no GUI) | 🟡 **code built** (`wave1/run_wave1.py`) — awaiting first run on a clean, elevated box |
 | 1.5 | Upgrade-in-place leg | ⏳ not started |
-| 2 | GUI tier (pywinauto drives the real GUI) | ⏳ not started |
+| 2 | GUI tier | ✗ removed 2026-09-06 — drove the CustomTkinter GUI deleted in 3.0.0 (OWL-46); Tauri-app coverage is a future CDP-based fleet leg |
 | 3 | Dashboard observation + command round-trip | ⏳ not started |
 | 4 | CI advisory gate on release tags | ⏳ not started |
 | 5 | Promote to blocking + interactive-wizard leg | ⏳ not started |
@@ -119,7 +119,7 @@ e2e-machine/
                             pairing oracle -> bootstrap/heartbeat -> uninstall -> clean-removal
 ```
 
-Later waves add the GUI driver (Wave 2, pywinauto), Playwright dashboard specs (Wave 3), and
+Later waves add Playwright dashboard specs (Wave 3) and
 the CI gate (Wave 4) — all reusing `lib/`. See `RUNBOOK.md` Part C.
 
 ## Safety model

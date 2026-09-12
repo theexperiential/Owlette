@@ -6,6 +6,8 @@
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
+import { WEBHOOK_SECRETS_COLLECTION } from '@/lib/webhookSecrets.server';
+import logger from '@/lib/logger';
 import { DISPLAY_EVENT_ROUTING } from '@/lib/alerts/displayEventRouting';
 import crypto from 'crypto';
 
@@ -235,13 +237,34 @@ export async function fireWebhooks(
 ): Promise<number> {
   const db = getAdminDb();
 
+  // Liveness is filtered in memory, not by an equality on `enabled`.
+  //
+  // Firestore equality filters require the field to EXIST, and the creator
+  // (app/api/webhooks/route.ts) writes `paused: false, deletedAt: null` and no
+  // `enabled` at all — so `.where('enabled','==',true)` matched nothing rather
+  // than erroring, and every subscription created since that change delivered
+  // silently nothing while the dashboard showed it active with zero failures.
+  // The inverse also held: a legacy document still carrying `enabled: true` kept
+  // firing after being paused or soft-deleted, because neither field was read.
+  //
+  // This is the same predicate roostWebhooks.server.ts:75 and
+  // WebhookSettingsDialog already use; only this sender was left behind. A site
+  // has a handful of webhooks, so filtering after the array-contains costs
+  // nothing.
   const snapshot = await db
     .collection(`sites/${siteId}/webhooks`)
-    .where('enabled', '==', true)
     .where('events', 'array-contains', eventType)
     .get();
 
-  if (snapshot.empty) return 0;
+  const liveDocs = snapshot.docs.filter((doc) => {
+    const d = doc.data();
+    if (d.deletedAt) return false;
+    if (d.paused === true) return false;
+    if (d.enabled === false) return false;
+    return true;
+  });
+
+  if (liveDocs.length === 0) return 0;
 
   const payload: WebhookPayload = {
     event: eventType,
@@ -252,7 +275,31 @@ export async function fireWebhooks(
 
   let successCount = 0;
 
-  const deliveries = snapshot.docs.map(async (doc) => {
+  // Signing secrets live outside the webhook document (lib/webhookSecrets.server.ts),
+  // so they are fetched separately. One batched read for the whole fan-out; the
+  // legacy in-document `secret` / `signingSecret` remain the fallback for
+  // subscriptions that predate the migration.
+  const secretSnaps = await db.getAll(
+    ...liveDocs.map((doc) =>
+      db
+        .collection('sites')
+        .doc(siteId)
+        .collection(WEBHOOK_SECRETS_COLLECTION)
+        .doc(doc.id),
+    ),
+  );
+  const secretByWebhookId = new Map<string, string>();
+  liveDocs.forEach((doc, i) => {
+    const stored = secretSnaps[i]?.data();
+    const resolved =
+      (typeof stored?.signingSecret === 'string' && stored.signingSecret) ||
+      (typeof doc.data().signingSecret === 'string' && doc.data().signingSecret) ||
+      (typeof doc.data().secret === 'string' && doc.data().secret) ||
+      '';
+    if (resolved) secretByWebhookId.set(doc.id, resolved);
+  });
+
+  const deliveries = liveDocs.map(async (doc) => {
     const webhook = doc.data();
     try {
       const platform = detectPlatform(webhook.url);
@@ -265,8 +312,19 @@ export async function fireWebhooks(
       };
 
       if (platform === 'generic') {
+        const signingSecret = secretByWebhookId.get(doc.id);
+        if (!signingSecret) {
+          // No secret anywhere: skip rather than let createHmac throw, which the
+          // catch below would count as a delivery failure and eventually
+          // auto-disable a subscription whose only fault is a missing key.
+          logger.warn('webhook has no signing secret; skipping delivery', {
+            context: 'webhookSender',
+            data: { siteId, webhookId: doc.id, eventType },
+          });
+          return;
+        }
         const signature = crypto
-          .createHmac('sha256', webhook.secret)
+          .createHmac('sha256', signingSecret)
           .update(body)
           .digest('hex');
         headers['X-owlette-Signature'] = `sha256=${signature}`;

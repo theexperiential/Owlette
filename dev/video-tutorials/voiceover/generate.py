@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -61,10 +62,30 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SCRIPTS_DIR = (SCRIPT_DIR / ".." / "scripts").resolve()
 DEFAULT_OUT_DIR = SCRIPT_DIR / "out"
 DEFAULT_MODEL = "eleven_multilingual_v2"
-DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
-# Locked production settings (A/B sweep 2026-05, see README). CLI > manifest > these.
-DEFAULT_STABILITY = 0.30
-DEFAULT_STYLE = 0.0
+# pcm_44100: uncompressed 44.1kHz mono, wrapped into a WAV on the way out.
+# Credits are charged per CHARACTER, not per format, so this costs nothing extra
+# over mp3_44100_128. It buys three things: no MP3 encoder delay clipping the
+# first phoneme, no lossy re-encode when the lead-in is prepended, and PCM on
+# the Resolve timeline, which is what Resolve actually wants.
+# mp3_44100_192 is the best this account's tier allows: pcm_44100 is Pro-only
+# (403 output_format_not_allowed). Credits are per CHARACTER, not per format, so
+# 192kbps costs exactly the same as the 128 this used to use.
+DEFAULT_OUTPUT_FORMAT = "mp3_44100_192"
+# Locked production settings. CLI > manifest > these.
+#
+# style was 0.0 (the flat end of the range) from the 2026-05 A/B sweep, which
+# read as robotic on playback. Re-auditioned 2026-08-30 across style 0.00 / .15
+# / .25 / .35 / .40 / .65 on ep12-b01: 0.40 with stability 0.35 was picked, the
+# intermediate steps all sounded worse than either end.
+DEFAULT_STABILITY = 0.35
+DEFAULT_STYLE = 0.40
+
+# Silence prepended to every rendered beat, in milliseconds.
+#
+# ElevenLabs returns speech starting at 0.000 with no lead-in at all, so the
+# first phoneme sits on sample zero and gets clipped on a timeline - MP3
+# encoder delay eats into it too. Editors want air before the first word.
+HEAD_SILENCE_MS = 250
 SIMILARITY_BOOST = 0.75
 USE_SPEAKER_BOOST = True
 API_BASE = "https://api.elevenlabs.io/v1/text-to-speech"
@@ -219,7 +240,20 @@ def synthesize(
     output_format: str,
     stability: float,
     style: float,
-) -> bytes:
+    previous_text: Optional[str] = None,
+    next_text: Optional[str] = None,
+    previous_request_ids: Optional[List[str]] = None,
+) -> Tuple[bytes, Optional[str]]:
+    """Render one beat, and return its audio plus the request id.
+
+    REQUEST STITCHING. Each beat used to be generated cold, so the model
+    re-derived timbre and noise floor every call and consecutive beats sounded
+    like separate takes - which is exactly what they were. Passing the
+    surrounding text, and the ids of the preceding generations, conditions each
+    render on what came before so an episode reads as one sitting.
+
+    previous_request_ids is capped at 3 by the API.
+    """
     if requests is None:
         raise RuntimeError("the `requests` package is required — run `pip install -r requirements.txt`")
     resp = requests.post(
@@ -239,14 +273,17 @@ def synthesize(
                 "style": style,
                 "use_speaker_boost": USE_SPEAKER_BOOST,
             },
+            **({"previous_text": previous_text} if previous_text else {}),
+            **({"next_text": next_text} if next_text else {}),
+            **({"previous_request_ids": previous_request_ids[-3:]} if previous_request_ids else {}),
         },
-        timeout=120,
+        timeout=180,
     )
     if resp.status_code != 200:
         raise RuntimeError(
             f"ElevenLabs returned {resp.status_code}: {resp.text[:500]}"
         )
-    return resp.content
+    return resp.content, resp.headers.get("request-id")
 
 
 def credits_per_char(model_id: str) -> float:
@@ -290,6 +327,50 @@ def load_prior_manifest(out_dir: Path) -> Tuple[Dict[str, Dict[str, object]], Di
     }
     settings = data.get("voice_settings")
     return beats, settings if isinstance(settings, dict) else {}
+
+
+def write_wav(raw: bytes, dest: Path, rate: str) -> bool:
+    """Wrap raw mono PCM16 from the API in a WAV container."""
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(rate), "-ac", "1",
+             "-i", "pipe:0", "-c:a", "pcm_s16le", "-y", str(dest)],
+            input=raw, check=True, capture_output=True,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"    !! could not wrap PCM as WAV: {exc}")
+        return False
+
+
+def pad_head(path: Path, ms: int = HEAD_SILENCE_MS) -> bool:
+    """Prepend `ms` of silence to a rendered beat, in place.
+
+    Returns False (and leaves the file untouched) if ffmpeg is unavailable or
+    fails - a missing lead-in is a blemish, not a reason to lose a paid render.
+
+    This re-encodes once at the same bitrate. A concat of a pre-made silent MP3
+    would avoid that, but MP3 frame padding makes exact durations unreliable,
+    and the manifest reads the duration back to build the timeline grid - so a
+    predictable file is worth more here than one saved re-encode of speech.
+    """
+    if ms <= 0:
+        return False
+    tmp = path.with_suffix(".padded" + path.suffix)
+    try:
+        wav = path.suffix.lower() == ".wav"
+        codec = ["-c:a", "pcm_s16le"] if wav else ["-c:a", "libmp3lame", "-b:a", "192k"]
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path),
+             "-af", f"adelay={ms}:all=1"] + codec + ["-y", str(tmp)],
+            check=True, capture_output=True,
+        )
+        tmp.replace(path)
+        return True
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(f"    !! could not pad {path.name}: {exc}")
+        tmp.unlink(missing_ok=True)
+        return False
 
 
 def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
@@ -372,6 +453,17 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Full manifest every run, so targeted renders can't drop other beats' metadata.
     manifest: List[Dict[str, object]] = []
+
+    # Stitching state. The neighbours come from the SCRIPT order, not from what
+    # this run happens to render, so a targeted re-render still hears the same
+    # context the full run did. request ids can only reference generations from
+    # this session, so those accumulate as we go.
+    stitch = not model_id.lower().startswith("eleven_v3")
+    spoken_ids = [b.id for b in ep.beats if resolved[b.id]]
+    texts = [resolved[i] for i in spoken_ids]
+    pos = {bid: k for k, bid in enumerate(spoken_ids)}
+    req_ids: List[str] = []
+
     for b in ep.beats:
         text = resolved[b.id]
         if not text:
@@ -398,7 +490,11 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
                 }
             )
             continue
-        audio = synthesize(
+        # Stitch: give the model the neighbouring lines and the ids of what it
+        # just rendered, so the episode is generated as a continuous read
+        # instead of N independent takes.
+        idx = pos[b.id]
+        audio, req_id = synthesize(
             text=text,
             voice_id=voice_id,
             model_id=model_id,
@@ -406,9 +502,32 @@ def render_episode(ep: Episode, args: argparse.Namespace) -> Tuple[int, int]:
             output_format=args.output_format,
             stability=stability,
             style=style,
+            # eleven_v3 REJECTS both forms of stitching:
+            #   "Providing previous_text or next_text is not yet supported
+            #    with the 'eleven_v3' model."
+            # so only send them on a model that accepts them. For v3, the way
+            # to get a consistent read is render-continuous.py, which renders
+            # the whole episode in one request and splits it afterwards.
+            previous_text=(texts[idx - 1] if (stitch and idx > 0) else None),
+            next_text=(texts[idx + 1] if (stitch and idx + 1 < len(texts)) else None),
+            previous_request_ids=(req_ids if stitch else None),
         )
-        (out_dir / fname).write_bytes(audio)
-        print(f"    ok {fname}  ({len(audio):,} bytes)")
+        if req_id:
+            req_ids.append(req_id)
+        dest = out_dir / fname
+        if args.output_format.startswith("pcm_"):
+            # The API returns RAW PCM with no header; give it a WAV container.
+            dest = dest.with_suffix(".wav")
+            rate = args.output_format.split("_")[1]
+            if not write_wav(audio, dest, rate):
+                dest = out_dir / fname
+                dest.write_bytes(audio)
+        else:
+            dest.write_bytes(audio)
+        fname = dest.name
+        padded = pad_head(dest)
+        print(f"    ok {fname}  ({len(audio):,} bytes"
+              + (f", +{HEAD_SILENCE_MS}ms lead-in)" if padded else ", NOT padded)"))
         manifest.append(
             {"id": b.id, "title": b.title, "chars": len(text), "file": fname, "text": text}
         )

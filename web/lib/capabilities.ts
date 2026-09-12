@@ -12,9 +12,20 @@ export const Capability = {
   UNINSTALL_TRIGGER: 'UNINSTALL_TRIGGER',
   PRESET_MANAGE: 'PRESET_MANAGE',
   SITE_MEMBER_MANAGE: 'SITE_MEMBER_MANAGE',
+  // Deleting the site itself, as distinct from administering it. Site-scoped and
+  // deliberately ABSENT from SITE_ADMIN_CAPABILITIES: an admin manages a site's
+  // members, machines and deployments; only the OWNER destroys it. That is now a
+  // plain matrix entry on the owner row — the ownership short-circuits that used
+  // to stand in for it are gone.
+  SITE_DELETE: 'SITE_DELETE',
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
   SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
   TALON_MANAGE: 'TALON_MANAGE',
+  // Per-site alert-rule authoring (`sites/{siteId}/settings/alerts`). Site-scoped
+  // rather than global: the rules only ever govern one site's machines, so gating
+  // them on GLOBAL_SETTINGS_WRITE would have forced superadmin for a purely
+  // site-local setting.
+  ALERT_RULES_MANAGE: 'ALERT_RULES_MANAGE',
   // Per-site agent refresh-token revocation. Site-scoped rather than global:
   // MACHINE_REMOVE (already a site-admin capability) deletes the same
   // agent_refresh_tokens rows via the same siteId+machineId query — see
@@ -22,6 +33,13 @@ export const Capability = {
   // can already destroy its credential. This exposes the narrower action
   // without handing out GLOBAL_SETTINGS_WRITE.
   AGENT_TOKEN_REVOKE: 'AGENT_TOKEN_REVOKE',
+  // Enrolling a machine: setup tokens, installer generation, and authorising a
+  // device-code pairing phrase. The MIRROR of AGENT_TOKEN_REVOKE — all three mint
+  // an agent identity plus a refresh token that never expires, and revoking one
+  // is site-admin, so issuing one cannot be less. It was site MEMBERSHIP until
+  // the per-site-roles migration made `member` read-only, at which point a
+  // read-only user could mint credentials it could not then revoke.
+  MACHINE_ENROLL: 'MACHINE_ENROLL',
   USER_ROLE_MANAGE: 'USER_ROLE_MANAGE',
   USER_DELETE: 'USER_DELETE',
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
@@ -33,7 +51,16 @@ export const Capability = {
 
 export type Capability = (typeof Capability)[keyof typeof Capability];
 
+/**
+ * GLOBAL role. Only `superadmin` carries authority here; `admin` and `member`
+ * are indistinguishable, because a global role no longer confers anything on a
+ * site. Wave 5.2 narrows the stored values to `user` | `superadmin`; the parser
+ * accepts both spellings meanwhile.
+ */
 export type Role = 'member' | 'admin' | 'superadmin';
+
+/** PER-SITE role, from `sites/{siteId}/members/{uid}`. This is what grants. */
+export type SiteRole = 'owner' | 'admin' | 'member';
 
 export type SystemActorName =
   | 'cortex_autonomous'
@@ -47,7 +74,19 @@ export type UserActor = {
   /** Present when the user is acting through an API key. */
   apiKeyId?: string;
   role: Role;
-  sites: string[];
+  /**
+   * Per-site standing for the sites resolved for THIS request, keyed by site id.
+   *
+   * A site absent from the map means no active membership was found, and every
+   * site-scoped capability denies. That is the point: the previous shape carried
+   * `sites: string[]` and combined it with the GLOBAL role, so one global `admin`
+   * held site-admin on every site in the array. Membership now carries the role
+   * itself, so standing cannot leak from one site to another.
+   *
+   * Usually holds exactly one entry — the site the request names. Resolving the
+   * caller's full membership would cost a collection-group query per request.
+   */
+  siteRoles: Readonly<Record<string, SiteRole>>;
 };
 
 export type SystemActor = {
@@ -58,16 +97,24 @@ export type SystemActor = {
 
 export type Actor = UserActor | SystemActor;
 
-const MEMBER_CAPABILITIES: readonly Capability[] = [
+/**
+ * Held by every authenticated user, on no site in particular. Self-service only:
+ * anything a user does to their OWN account. A global role adds nothing to this
+ * list — superadmin short-circuits before any lookup, and every other global
+ * value grants exactly this.
+ */
+const SELF_CAPABILITIES: readonly Capability[] = [
   Capability.USER_SELF_PREFS,
   Capability.USER_SELF_DELETE,
-  // Members are read-only operators but may observe a machine's screen
-  // (screenshot / live view). Site-scoped: only on sites they're assigned to.
+];
+
+/** Per-site `member`: a read-only operator who may observe a machine's screen. */
+const SITE_MEMBER_CAPABILITIES: readonly Capability[] = [
   Capability.MACHINE_VIEW,
 ];
 
 const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
-  ...MEMBER_CAPABILITIES,
+  ...SITE_MEMBER_CAPABILITIES,
   Capability.MACHINE_EXEC_COMMAND,
   Capability.MACHINE_CONFIG_WRITE,
   // Site-scoped (see SITE_SCOPED_CAPABILITIES): admins can remove machines on their
@@ -82,9 +129,17 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.SITE_MEMBER_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.MACHINE_ENROLL,
+  Capability.ALERT_RULES_MANAGE,
+  // NOTE: SITE_DELETE is deliberately absent — see its definition above. It sits
+  // on the owner row below, and on nothing else but superadmin.
 ];
 
-const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability);
+/** Per-site `owner`: everything an admin holds, plus destroying the site. */
+const SITE_OWNER_CAPABILITIES: readonly Capability[] = [
+  ...SITE_ADMIN_CAPABILITIES,
+  Capability.SITE_DELETE,
+];
 
 const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.MACHINE_EXEC_COMMAND,
@@ -100,12 +155,28 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.SITE_LOGS_MANAGE,
   Capability.TALON_MANAGE,
   Capability.AGENT_TOKEN_REVOKE,
+  Capability.MACHINE_ENROLL,
+  Capability.ALERT_RULES_MANAGE,
+  Capability.SITE_DELETE,
 ]);
 
-export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {
-  member: MEMBER_CAPABILITIES,
+/** What each PER-SITE role grants on the site it is held for. */
+export const SiteRoleCapabilityMatrix: Readonly<Record<SiteRole, readonly Capability[]>> = {
+  member: SITE_MEMBER_CAPABILITIES,
   admin: SITE_ADMIN_CAPABILITIES,
-  superadmin: SUPERADMIN_CAPABILITIES,
+  owner: SITE_OWNER_CAPABILITIES,
+};
+
+/**
+ * What each GLOBAL role grants on its own. `member` and `admin` are identical
+ * and always will be — the entry exists so the exhaustiveness of `Role` is
+ * checked, not because the tiers differ. Superadmin never reaches this table;
+ * `hasCapability` short-circuits above it.
+ */
+export const GlobalRoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {
+  member: SELF_CAPABILITIES,
+  admin: SELF_CAPABILITIES,
+  superadmin: Object.values(Capability),
 };
 
 export const SystemCapabilityMatrix: Readonly<
@@ -142,14 +213,23 @@ export function hasCapability(
     return true;
   }
 
-  const granted = RoleCapabilityMatrix[actor.role];
-  if (!granted.includes(capability)) return false;
+  // Superadmin short-circuits BEFORE any lookup. It is a platform-wide role, not
+  // a per-site one, and superadmins deliberately hold no member rows — routing
+  // them through the site matrix would deny them everything.
+  if (actor.role === 'superadmin') return true;
 
   if (isSiteScopedCapability(capability)) {
-    if (actor.role === 'superadmin') return true;
     if (!siteId) return false;
-    return actor.sites.includes(siteId);
+    // Absent membership denies. The caller is responsible for populating
+    // `siteRoles` for the site it is asking about; an unresolved site must never
+    // read as a grant.
+    const siteRole = actor.siteRoles[siteId];
+    if (siteRole === undefined) return false;
+    return SiteRoleCapabilityMatrix[siteRole].includes(capability);
   }
 
-  return true;
+  // Not site-scoped: the global role grants self-service and nothing else.
+  // Platform capabilities (USER_ROLE_MANAGE, INSTALLER_MANAGE,
+  // GLOBAL_SETTINGS_WRITE …) are superadmin-only and were answered above.
+  return GlobalRoleCapabilityMatrix[actor.role].includes(capability);
 }

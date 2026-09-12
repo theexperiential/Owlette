@@ -7,7 +7,12 @@
   "scenario": "deploy-roost-rolling",
   "script": "scripts/11-distribute-with-roost.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 139.677,
+  "narration_s": 169.05,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/11-distribute-with-roost.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\11-distribute-with-roost.mp4",
       "exists": true,
-      "duration_s": 165.3,
+      "duration_s": 158.633,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -34,14 +39,15 @@
       "direction": {
         "SCREEN": "the roost page with the \"stage show\" roost and its version history."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b01.mp3",
       "mp3_name": "ep11-b01.mp3",
-      "duration_s": 22.204,
-      "duration_frames": 1332,
-      "status": "ok"
+      "duration_s": 23.353,
+      "duration_frames": 1401,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -50,14 +56,20 @@
       "direction": {
         "SCREEN": "click \"new roost\"; the dialog. Fill \"roost name\", optional \"description\" (\"what changed?\"), and the source toggle \"upload files\" vs \"by url\"."
       },
-      "start_s": 22.204,
-      "start_frame": 1332,
+      "start_s": 32.883,
+      "start_frame": 1973,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-b02.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b02.mp3",
       "mp3_name": "ep11-b02.mp3",
-      "duration_s": 17.633,
-      "duration_frames": 1058,
-      "status": "ok"
+      "duration_s": 18.495,
+      "duration_frames": 1110,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -66,14 +78,20 @@
       "direction": {
         "SCREEN": "drag a folder into the dropzone; show the progress — hashing, checking for duplicates, uploading with throughput/ETA. Then the \"extract to\" field with the amber allowed-roots warning for paths outside ~/Documents."
       },
-      "start_s": 39.837,
-      "start_frame": 2390,
+      "start_s": 55.433,
+      "start_frame": 3326,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-b03.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b03.mp3",
       "mp3_name": "ep11-b03.mp3",
-      "duration_s": 30.433,
-      "duration_frames": 1826,
-      "status": "ok"
+      "duration_s": 31.06,
+      "duration_frames": 1864,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -82,14 +100,20 @@
       "direction": {
         "SCREEN": "the target machines checklist; click \"upload and distribute\"; show per-target status pills: queued → downloading → assembling → synced (the agent's committed state), with the rollup pill (synced / syncing / partial)."
       },
-      "start_s": 70.269,
-      "start_frame": 4216,
+      "start_s": 90.517,
+      "start_frame": 5431,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b04.mp3",
       "mp3_name": "ep11-b04.mp3",
-      "duration_s": 22.674,
-      "duration_frames": 1360,
-      "status": "ok"
+      "duration_s": 22.518,
+      "duration_frames": 1351,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -98,14 +122,20 @@
       "direction": {
         "SCREEN": "open the existing roost; click \"+ new version\"; note name / extract path / targets are locked; just drop a new folder + write a description."
       },
-      "start_s": 92.944,
-      "start_frame": 5577,
+      "start_s": 117.1,
+      "start_frame": 7026,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-b05.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b05.mp3",
       "mp3_name": "ep11-b05.mp3",
-      "duration_s": 19.566,
-      "duration_frames": 1174,
-      "status": "ok"
+      "duration_s": 17.92,
+      "duration_frames": 1075,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -114,14 +144,20 @@
       "direction": {
         "SCREEN": "the version history rows (number, time, description, current marked with an emerald dot); open a row's three-dot menu: edit description, rollback to this version, copy version id, view files, diff against current."
       },
-      "start_s": 112.509,
-      "start_frame": 6751,
+      "start_s": 139.083,
+      "start_frame": 8345,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\11-distribute-with-roost-b06.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\11-distribute-with-roost\\ep11-b06.mp3",
       "mp3_name": "ep11-b06.mp3",
-      "duration_s": 27.167,
-      "duration_frames": 1630,
-      "status": "ok"
+      "duration_s": 29.362,
+      "duration_frames": 1762,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }

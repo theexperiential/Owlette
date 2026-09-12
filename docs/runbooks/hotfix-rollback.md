@@ -282,8 +282,9 @@ After publish or deprecation:
 - Confirm `npm view @owlette/cli versions`.
 - Confirm the bad version shows the deprecation message.
 - Confirm install resolves to the intended fixed version.
-### docs site
-Rollback model: revert docs commit on `main`, push, and `deploy-docs` workflow re-runs.
+### published docs
+Rollback model: revert the docs commit on `main` and push — the Railway web
+deploy rebuilds and republishes `/docs`.
 ```bash
 git status
 git checkout main
@@ -292,7 +293,7 @@ git revert <bad-docs-sha>
 git push origin main
 ```
 After push:
-- Watch `deploy-docs`.
+- Watch the Railway prod deploy.
 - Confirm the published docs page reverted.
 - Confirm support or customer links resolve.
 ## things that have gone wrong before (case studies)
@@ -478,7 +479,7 @@ Maintainer input needed:
 - [/docs/runbooks/production-deploy.md](production-deploy.md)
 - [/docs/runbooks/agent-installer-release.md](agent-installer-release.md)
 - [/docs/runbooks/dev-to-prod-workflow.md](dev-to-prod-workflow.md)
-- [/docs/agent/troubleshooting.md](../agent/troubleshooting.md)
+- [agent troubleshooting (published docs)](../../web/content/docs/agent/troubleshooting.mdx)
 - [/docs/changelog.md](../changelog.md)
-- [/CLAUDE.md](../../CLAUDE.md)
+- [/.claude/CLAUDE.md](../../.claude/CLAUDE.md)
 - [/agent/CLAUDE.md](../../agent/CLAUDE.md)

@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
 import { mintApiKey, revokeApiKey, authHeaders, type MintedApiKey } from '../../helpers/apiKey';
 import { getAdminDb } from '../../helpers/emulator';
+import { seedMemberRow, releaseFixtureSite } from '../../helpers/seed';
 
 const SUFFIX = crypto.randomBytes(4).toString('hex');
 const SITE_ID = `e2e-members-${SUFFIX}`;
@@ -39,12 +40,18 @@ test.beforeAll(async () => {
     timezone: 'UTC',
     createdAt: new Date(),
   });
+  // The declared owner needs the row that now carries ownership — the
+  // cannot_remove_owner guard resolves from it, not from the field above.
+  await seedMemberRow(SITE_ID, OWNER_UID, 'owner');
   // The route handler needs `sites: [SITE_ID]` for membership access; the
   // api-key path enforces the `admin` scope on top.
   await db
     .collection('users')
     .doc('admin-uid')
     .update({ sites: [...new Set(['site-A', SITE_ID])] });
+  // Ownership is a member row since wave 5.1; the `owner` field above grants
+  // nothing, so without this the api key cannot reach its own site.
+  await seedMemberRow(SITE_ID, 'admin-uid', 'admin');
 
   adminKey = await mintApiKey({
     ownerUid: 'admin-uid',
@@ -67,6 +74,7 @@ test.afterAll(async () => {
     db.collection('users').doc(MEMBER_UID).delete().catch(() => undefined),
     db.collection('sites').doc(SITE_ID).delete().catch(() => undefined),
   ]);
+  await releaseFixtureSite(SITE_ID);
 });
 
 test('GET /api/sites/{siteId}/members — lists members + owner', async ({ request }) => {

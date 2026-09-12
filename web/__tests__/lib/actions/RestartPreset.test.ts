@@ -71,7 +71,7 @@ import { deleteRestartPreset } from '@/lib/actions/deleteRestartPreset.server';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
 
 const ctx: SiteHandlerContext = {
-  actor: { type: 'user', userId: 'uid_alice', role: 'admin', sites: ['site-a'] },
+  actor: { type: 'user', userId: 'uid_alice', role: 'admin', siteRoles: { ['site-a']: 'admin' } },
   siteId: 'site-a',
   correlationId: 'cid_1',
   auth: { userId: 'uid_alice', keyContext: null },

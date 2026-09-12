@@ -357,7 +357,7 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         # does its own has_chunk() check and skips what's present.
         # `chunks_to_fetch` is reporting-only — what's NEW vs the prior
         # version, not what this agent actually needs.
-        url_provider = _make_chunk_url_provider(service, site_id)
+        url_provider = _make_chunk_url_provider(service)
         # Throttled: a firestore write per chunk would be a cost and
         # rate-limit problem on a 3739-chunk upload. At most once per ~2s or
         # per 5% change; the first call always goes through so the UI gets a
@@ -584,13 +584,23 @@ def _state_for(service: Any) -> SyncState:
     return state
 
 
+class _NullReader:
+    """Fail-open stand-in for the pre-client boot window."""
+
+    def get_site_doc(self, _site_id: str):
+        return None
+
+
 def _firestore_reader_for(service: Any) -> Any:
     """
-    wrap the service's firestore client so `roost_kill_switch.check_enabled`
-    sees the minimal `get_site_doc(site_id)` surface. lazy-cached on the
-    service instance — the real firestore client lives on `service.firebase_client`
-    (set up by owlette_service), but for tests the service is often a
-    plain object that already exposes `get_site_doc` directly.
+    Wrap the service's firebase client so `roost_kill_switch.check_enabled` sees
+    the minimal `get_site_doc(site_id)` surface. Lazy-cached on the service
+    instance; for tests the service is often a plain object that already exposes
+    `get_site_doc` directly.
+
+    The site doc arrives through GET /agent/site, not Firestore. Agents cannot
+    read `sites/{siteId}` — firestore.rules scopes them to their machine subtree —
+    so the server-mediated projection is the only way to see `roostEnabled`.
     """
     reader = getattr(service, '_roost_site_reader', None)
     if reader is not None:
@@ -604,23 +614,29 @@ def _firestore_reader_for(service: Any) -> Any:
     client = getattr(service, 'firebase_client', None)
     if client is None:
         # No client yet (early boot) — a None-returning stub is fail-open.
-        class _NullReader:
-            def get_site_doc(self, _site_id: str):
-                return None
-        reader = _NullReader()
-    else:
-        class _FirebaseSiteReader:
-            def __init__(self, fc: Any) -> None:
-                self._fc = fc
+        # Deliberately NOT memoized: caching it here would pin the kill switch
+        # open for the life of the process because the real client attaches a
+        # moment later and would never be consulted.
+        return _NullReader()
 
-            def get_site_doc(self, site_id: str):
-                try:
-                    return self._fc.get_document(f'sites/{site_id}')
-                except Exception:
-                    # check_enabled catches higher up, but None is cleaner.
-                    return None
-        reader = _FirebaseSiteReader(client)
+    class _FirebaseSiteReader:
+        def __init__(self, fc: Any) -> None:
+            self._fc = fc
 
+        def get_site_doc(self, _site_id: str):
+            # No try/except. This used to call `self._fc.get_document(...)`, a
+            # method FirebaseClient does not have, and swallow the AttributeError
+            # into None — which is_enabled_from_doc reads as "enabled" and
+            # check_enabled then CACHED, defeating its own documented "read
+            # errors are not cached" contract. The kill switch had therefore
+            # never been observed by an agent. Letting a real failure propagate
+            # restores the uncached fail-open path.
+            #
+            # The site is implied by the agent's own token claim, so the id
+            # argument is unused.
+            return self._fc.get_site_metadata()
+
+    reader = _FirebaseSiteReader(client)
     service._roost_site_reader = reader
     return reader
 
@@ -744,7 +760,7 @@ def _report_target_state(
         )
 
 
-def _make_chunk_url_provider(service: Any, site_id: str):
+def _make_chunk_url_provider(service: Any):
     """
     return a BATCH callback that issues fresh signed download urls for
     chunk hashes. signature: `Callable[[list[str]], dict[str, str]]`.

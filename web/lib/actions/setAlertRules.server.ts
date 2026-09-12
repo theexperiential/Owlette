@@ -3,11 +3,9 @@
  * `sites/{siteId}/settings/alerts`. Whole-document semantics (the client
  * fetches, mutates and re-uploads the array); no field-level rule edits.
  *
- * KNOWN capability mis-classification (route-audit.md §3.11): this writes a
- * SITE-scoped doc but is gated by `authorizedPlatformHandler` +
- * `GLOBAL_SETTINGS_WRITE` (superadmin) and takes `siteId` in the BODY, not the
- * URL — the only place that does. Follow-up: a per-site `ALERT_RULES_MANAGE`
- * capability, or split into `/api/sites/{siteId}/alerts`.
+ * Reached via `PUT /api/sites/{siteId}/alerts` under `authorizedSiteHandler` +
+ * the site-scoped `ALERT_RULES_MANAGE` — resolving the capability
+ * mis-classification recorded in route-audit.md §3.11.
  */
 
 import type { DocumentReference } from 'firebase-admin/firestore';
@@ -15,11 +13,11 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 import type { UserActor } from '@/lib/capabilities';
+import { SITE_ID_RE } from '@/lib/sitePolicy.server';
 
 const VALID_OPERATORS = new Set(['>', '<', '>=', '<=']);
 const VALID_SEVERITIES = new Set(['info', 'warning', 'critical']);
 const VALID_CHANNELS = new Set(['email', 'webhook']);
-const SITE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface AlertRuleInput {
   id: string;

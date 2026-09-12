@@ -69,7 +69,7 @@ describe('GET /api/agent/site', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
+    expect(body).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles', roostEnabled: null });
     // The site is the token's, not the caller's to choose.
     expect(mockCollection).toHaveBeenCalledWith('sites');
     expect(mockDoc).toHaveBeenCalledWith('site-a');
@@ -96,7 +96,7 @@ describe('GET /api/agent/site', () => {
           owner: 'user-1',
           billingState: 'active',
         }),
-      ).toEqual({ name: 'TEC', timezone: null });
+      ).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
     });
 
     // NEGATIVE CONTROL — the touring escape hatch. An explicit decline is as
@@ -108,7 +108,7 @@ describe('GET /api/agent/site', () => {
           timezone: 'America/Los_Angeles',
           schedulesFollowSiteTime: false,
         }),
-      ).toEqual({ name: 'TEC', timezone: null });
+      ).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
     });
 
     it('returns the timezone once the site opted in (flag true)', async () => {
@@ -118,19 +118,19 @@ describe('GET /api/agent/site', () => {
           timezone: 'America/Los_Angeles',
           schedulesFollowSiteTime: true,
         }),
-      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
+      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles', roostEnabled: null });
     });
 
     it('returns timezone: null when the site opted in but has no timezone', async () => {
       expect(
         await bodyForSite({ name: 'TEC', schedulesFollowSiteTime: true }),
-      ).toEqual({ name: 'TEC', timezone: null });
+      ).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
     });
 
     it('treats a blank timezone as no timezone rather than shipping an empty string', async () => {
       expect(
         await bodyForSite({ name: 'TEC', timezone: '   ', schedulesFollowSiteTime: true }),
-      ).toEqual({ name: 'TEC', timezone: null });
+      ).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
     });
 
     it('trims surrounding whitespace off the opted-in timezone', async () => {
@@ -140,7 +140,7 @@ describe('GET /api/agent/site', () => {
           timezone: '  America/Los_Angeles  ',
           schedulesFollowSiteTime: true,
         }),
-      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles' });
+      ).toEqual({ name: 'TEC', timezone: 'America/Los_Angeles', roostEnabled: null });
     });
 
     // Only the boolean `true` opens the gate: a truthy string from a hand-edited
@@ -152,7 +152,58 @@ describe('GET /api/agent/site', () => {
           timezone: 'America/Los_Angeles',
           schedulesFollowSiteTime: 'true',
         }),
-      ).toEqual({ name: 'TEC', timezone: null });
+      ).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
+    });
+  });
+
+  describe('the roost kill switch', () => {
+    async function bodyForSite(site: Record<string, unknown>) {
+      mockVerifyIdToken.mockResolvedValueOnce({ role: 'agent', site_id: 'site-a' });
+      mockSiteGet.mockResolvedValueOnce({ exists: true, data: () => site });
+      const res = await GET(request({ Authorization: 'Bearer agent-token' }));
+      expect(res.status).toBe(200);
+      return res.json();
+    }
+
+    const BASE = { name: 'TEC', owner: 'user-1', billingState: 'active' };
+
+    // The whole reason this field is on the projection. An agent cannot read
+    // `sites/{siteId}` — the rules scope it to its machine subtree — so before
+    // this it read the switch through a method that did not exist, swallowed the
+    // error, and cached the fail-open. The switch had never once been observed.
+    it('passes an engaged kill switch through to the agent', async () => {
+      expect(await bodyForSite({ ...BASE, roostEnabled: false })).toEqual({
+        name: 'TEC',
+        timezone: null,
+        roostEnabled: false,
+      });
+    });
+
+    it('passes an explicitly enabled switch through as true', async () => {
+      expect(await bodyForSite({ ...BASE, roostEnabled: true })).toEqual({
+        name: 'TEC',
+        timezone: null,
+        roostEnabled: true,
+      });
+    });
+
+    // Absent must stay distinguishable from false: the agent's helper fails OPEN
+    // on a missing field, so collapsing null to false here would halt roost work
+    // on every site that has never touched the switch.
+    it('reports null, not false, when the site has never set the flag', async () => {
+      expect(await bodyForSite(BASE)).toEqual({
+        name: 'TEC',
+        timezone: null,
+        roostEnabled: null,
+      });
+    });
+
+    it('ignores a truthy non-boolean flag value', async () => {
+      expect(await bodyForSite({ ...BASE, roostEnabled: 'yes' })).toEqual({
+        name: 'TEC',
+        timezone: null,
+        roostEnabled: null,
+      });
     });
   });
 
@@ -178,7 +229,7 @@ describe('GET /api/agent/site', () => {
     const res = await GET(request({ Authorization: 'Bearer agent-token' }));
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ name: null, timezone: null });
+    expect(await res.json()).toEqual({ name: null, timezone: null, roostEnabled: null });
   });
 
   it('trims surrounding whitespace off the stored name', async () => {
@@ -187,7 +238,7 @@ describe('GET /api/agent/site', () => {
 
     const res = await GET(request({ Authorization: 'Bearer agent-token' }));
 
-    expect(await res.json()).toEqual({ name: 'TEC', timezone: null });
+    expect(await res.json()).toEqual({ name: 'TEC', timezone: null, roostEnabled: null });
   });
 
   it('returns 401 when the Authorization header is missing', async () => {

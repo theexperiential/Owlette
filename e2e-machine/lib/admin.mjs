@@ -17,7 +17,14 @@ import path from 'node:path';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO = path.resolve(HERE, '..', '..');
 const require = createRequire(path.join(REPO, 'web', 'package.json'));
-const admin = require('firebase-admin');
+// Modular entry points, not the `firebase-admin` root namespace: since v14 the
+// root exports only initializeApp/getApp/getApps/deleteApp/applicationDefault/
+// cert/refreshToken, so `admin.credential.cert` and `admin.firestore()` are
+// both undefined. Ported 2026-09-07 — the firebase-admin 14 sweep in a454e4cd
+// touched only web/ and functions/, leaving every script here broken.
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
 
 export const EXPECTED_PROJECT = 'owlette-dev-3838a';
 export const API_BASE = 'https://dev.owlette.app';
@@ -48,8 +55,8 @@ export function init() {
   const apiKey = (readFileSync(envLocalPath, 'utf8').match(/NEXT_PUBLIC_FIREBASE_API_KEY\s*=\s*"?([^"\r\n]+)"?/) || [])[1];
   if (!apiKey) throw new Error('NEXT_PUBLIC_FIREBASE_API_KEY not found in web/.env.local');
 
-  admin.initializeApp({ credential: admin.credential.cert(sa), projectId: EXPECTED_PROJECT });
-  _state = { db: admin.firestore(), auth: admin.auth(), apiKey };
+  const app = initializeApp({ credential: cert(sa), projectId: EXPECTED_PROJECT });
+  _state = { db: getFirestore(app), auth: getAuth(app), apiKey };
   return _state;
 }
 

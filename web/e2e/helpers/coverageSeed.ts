@@ -5,6 +5,12 @@ import {
   type CollectionReference,
   type DocumentData,
 } from 'firebase-admin/firestore';
+import type { ChatShareDoc } from '@/lib/hoot/shareStore.server';
+import {
+  SHARE_TOKEN_PATTERN,
+  type SharedMessage,
+  type ShareSnapshot,
+} from '@/lib/hoot/shareTypes';
 import { getAdminDb } from './emulator';
 import { seedMachine, seedUser, type TestUser } from './seed';
 
@@ -147,6 +153,30 @@ export async function seedLiveViewFixture(
     );
 }
 
+/** The online machine `seedHootFixture` seeds; the single-machine affordances render for it. */
+export const HOOT_FIXTURE_MACHINE_ID = 'e2e-cortex-machine';
+
+/** Its offline sibling — ticked alongside it by the multi-machine chat below. */
+export const HOOT_FIXTURE_OFFLINE_MACHINE_ID = 'e2e-cortex-offline';
+
+/**
+ * The chat that carries the MULTI-machine shape: `targetType:'machines'` with
+ * two ids, and a last turn whose own target is narrower than the chat's.
+ * Keyed by user like the legacy one, so `clearHootFixture` retires it too.
+ */
+export const hootMachinesChatId = (userId: string): string => `e2e-cortex-machines-${userId}`;
+
+/**
+ * Pin a user's saved site (`users/{uid}.lastSiteId`), which every page restores
+ * the header from. A spec that switches sites has to start from a known one —
+ * the field outlives the run, so whichever site the previous spec left behind
+ * would otherwise decide which conversations and machines are on screen — and
+ * has to put it back afterwards.
+ */
+export async function setLastSite(userId: string, siteId: string): Promise<void> {
+  await getAdminDb().collection('users').doc(userId).set({ lastSiteId: siteId }, { merge: true });
+}
+
 export async function clearHootFixture(userId: string, siteId = 'site-A'): Promise<void> {
   const db = getAdminDb();
   await db.collection('users').doc(userId).collection('settings').doc('llm').delete();
@@ -154,6 +184,7 @@ export async function clearHootFixture(userId: string, siteId = 'site-A'): Promi
   await Promise.all([
     db.collection('chats').doc(`e2e-cortex-user-${userId}`).delete(),
     db.collection('chats').doc(`e2e-cortex-auto-${siteId}`).delete(),
+    db.collection('chats').doc(hootMachinesChatId(userId)).delete(),
   ]);
 }
 
@@ -164,11 +195,11 @@ export async function seedHootFixture(opts: {
   hasUserKey?: boolean;
 }): Promise<void> {
   const siteId = opts.siteId ?? 'site-A';
-  const machineId = opts.machineId ?? 'e2e-cortex-machine';
+  const machineId = opts.machineId ?? HOOT_FIXTURE_MACHINE_ID;
   const db = getAdminDb();
   await seedMachine(siteId, machineId, { displayName: machineId });
-  await seedMachine(siteId, 'e2e-cortex-offline', {
-    displayName: 'e2e-cortex-offline',
+  await seedMachine(siteId, HOOT_FIXTURE_OFFLINE_MACHINE_ID, {
+    displayName: HOOT_FIXTURE_OFFLINE_MACHINE_ID,
     heartbeatOffsetSec: 600,
   });
   if (opts.hasUserKey ?? true) {
@@ -213,6 +244,68 @@ export async function seedHootFixture(opts: {
     createdAt: Timestamp.fromDate(new Date(now.getTime() - 120_000)),
     updatedAt: Timestamp.fromDate(new Date(now.getTime() - 60_000)),
   });
+  // A chat aimed at TWO machines, whose last turn ran on only one of them.
+  //
+  // The target fields are exactly what `chatTargetFields` writes for a two-machine
+  // selection (web/lib/hoot/target.ts): the authoritative `targetMachineIds`, plus
+  // the legacy trio narrowed to the FIRST id so an old tab reading
+  // `targetMachineId || '__site__'` narrows instead of widening to the site.
+  //
+  // The assistant turn carries `metadata.hoot` — the per-turn record a mention
+  // narrowed to one machine. It differs from the chat's stored selection ON
+  // PURPOSE: the header adopts the chat's two machines when this conversation
+  // loads, so an approval card that named the selector rather than the turn would
+  // credit a privileged call to a machine it never reached, which is the bug
+  // Task 5.3 fixed. `state:'approval-requested'` + `approval.id` is what
+  // ChatWindow.tsx reads to hand ToolCallCard `approvalState:'requested'`.
+  await db.collection('chats').doc(hootMachinesChatId(opts.userId)).set({
+    userId: opts.userId,
+    siteId,
+    title: 'Cache cleanup',
+    category: 'Operations',
+    targetType: 'machines',
+    targetMachineIds: [machineId, HOOT_FIXTURE_OFFLINE_MACHINE_ID],
+    targetMachineId: machineId,
+    machineName: `${machineId}, ${HOOT_FIXTURE_OFFLINE_MACHINE_ID}`,
+    source: 'user',
+    messages: [
+      {
+        id: 'm-machines-user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: `@${machineId} clear the render cache` }],
+      },
+      {
+        id: 'm-machines-assistant-1',
+        role: 'assistant',
+        metadata: {
+          hoot: {
+            turnId: 'e2e-cortex-machines-turn-1',
+            machineIds: [machineId],
+            via: 'mention',
+            skipped: { offline: [], disabled: [] },
+          },
+        },
+        parts: [
+          {
+            type: 'text',
+            text: 'the cache is outside the paths my file tools reach, so this needs a shell command.',
+          },
+          {
+            type: 'tool-run_powershell',
+            toolCallId: 'tool-machines-1',
+            state: 'approval-requested',
+            approval: { id: 'approval-machines-1' },
+            args: {
+              machineId,
+              script: "Remove-Item 'C:\\Owlette\\cache' -Recurse -Force",
+            },
+          },
+        ],
+      },
+    ],
+    createdAt: Timestamp.fromDate(new Date(now.getTime() - 300_000)),
+    updatedAt: Timestamp.fromDate(new Date(now.getTime() - 30_000)),
+  });
   await db.collection('chats').doc(`e2e-cortex-auto-${siteId}`).set({
     siteId,
     title: 'Nightly auto investigation',
@@ -232,6 +325,109 @@ export async function seedHootFixture(opts: {
     createdAt: Timestamp.fromDate(new Date(now.getTime() - 240_000)),
     updatedAt: Timestamp.fromDate(new Date(now.getTime() - 180_000)),
   });
+}
+
+/**
+ * Collection name mirrors `CHAT_SHARES_COLLECTION` in `lib/hoot/shareStore.server.ts`.
+ * Copied rather than imported as a value: that module pulls in `lib/firebase-admin`,
+ * which calls `initializeApp()` at import time and would race `helpers/emulator.ts`
+ * for the default Admin app. The `ChatShareDoc` TYPE import above is erased at
+ * compile time, so it costs nothing at runtime while still pinning the shape.
+ */
+const CHAT_SHARES_COLLECTION = 'chat_shares';
+
+const DAY_MS = 86_400_000;
+
+const DEFAULT_SHARE_MESSAGES: SharedMessage[] = [
+  { id: 'seeded-user-1', role: 'user', parts: [{ type: 'text', text: 'Why did deployment fail?' }] },
+  {
+    id: 'seeded-assistant-1',
+    role: 'assistant',
+    parts: [
+      { type: 'text', text: 'The installer exited with a retryable warning.' },
+      { type: 'tool', toolName: 'checkLogs', outcome: 'completed' },
+    ],
+  },
+];
+
+export interface SeedChatShareOptions {
+  /** `shr_` + 24 url-safe chars — see `SHARE_TOKEN_PATTERN`. Caller-supplied so the spec can address it. */
+  token: string;
+  chatId: string;
+  createdBy: string;
+  siteId?: string;
+  /**
+   * `null` never expires; a Date in the past seeds an already-expired link.
+   * Defaults to 30 days out — the same default the dialog offers.
+   */
+  expiresAt?: Date | null;
+  revokedAt?: Date | null;
+  title?: string;
+  targetLabel?: string | null;
+  messages?: SharedMessage[];
+  createdAt?: Date;
+}
+
+/**
+ * Write a `chat_shares/{token}` document directly, bypassing the create route.
+ *
+ * The collection has no client rules by design — every read and write goes
+ * through the server — so an expiry case can only be set up with the Admin SDK.
+ * `set()` rather than `create()`: re-seeding the same token in a `beforeEach`
+ * must be idempotent.
+ */
+export async function seedChatShare(opts: SeedChatShareOptions): Promise<string> {
+  // `getPublicChatShare` rejects a non-matching token before it touches Firestore,
+  // so a typo here would seed a document nothing could ever serve — and the spec
+  // would read that as the page being broken.
+  if (!SHARE_TOKEN_PATTERN.test(opts.token)) {
+    throw new Error(`seedChatShare: "${opts.token}" does not match SHARE_TOKEN_PATTERN`);
+  }
+
+  const messages = opts.messages ?? DEFAULT_SHARE_MESSAGES;
+  const title = opts.title ?? 'Deployment triage';
+  const targetLabel = opts.targetLabel === undefined ? null : opts.targetLabel;
+  const createdAt = opts.createdAt ?? new Date(Date.now() - 60_000);
+  const expiresAt =
+    opts.expiresAt === undefined ? new Date(Date.now() + 30 * DAY_MS) : opts.expiresAt;
+
+  const snapshot: ShareSnapshot = {
+    version: 1,
+    title,
+    targetLabel,
+    messages,
+    omitted: { images: 0, systemMessages: 0 },
+    collapsedToolCalls: messages.reduce(
+      (total, message) => total + message.parts.filter((part) => part.type === 'tool').length,
+      0,
+    ),
+  };
+
+  const doc: ChatShareDoc = {
+    token: opts.token,
+    chatId: opts.chatId,
+    siteId: opts.siteId ?? 'site-A',
+    createdBy: opts.createdBy,
+    createdAt: Timestamp.fromDate(createdAt),
+    expiresAt: expiresAt === null ? null : Timestamp.fromDate(expiresAt),
+    revokedAt: opts.revokedAt ? Timestamp.fromDate(opts.revokedAt) : null,
+    title,
+    targetLabel,
+    messageCount: messages.length,
+    snapshot,
+  };
+
+  await getAdminDb().collection(CHAT_SHARES_COLLECTION).doc(opts.token).set(doc);
+  return opts.token;
+}
+
+/** Delete every share a chat owns — expired and revoked ones included. */
+export async function clearChatShares(chatId: string): Promise<void> {
+  const snap = await getAdminDb()
+    .collection(CHAT_SHARES_COLLECTION)
+    .where('chatId', '==', chatId)
+    .get();
+  await Promise.all(snap.docs.map((docSnap) => docSnap.ref.delete()));
 }
 
 export async function seedCliDeviceCode(

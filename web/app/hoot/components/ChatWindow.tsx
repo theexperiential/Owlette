@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowUp, X, Pencil } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserAvatar } from '@/components/UserAvatar';
+import { Button } from '@/components/ui/button';
 import { ToolCallCard } from './ToolCallCard';
 import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
@@ -15,6 +16,49 @@ import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { useScrollFade } from '@/hooks/useScrollFade';
+import { ADVISOR_MODEL_NAME, ADVISOR_TOOL_NAME } from '@/lib/llmModels';
+import { formatTargetLabel, readHootTurnMetadata, type HootTurnMetadata } from '@/lib/hoot/target';
+
+type MessagePart = UIMessage['parts'][number];
+
+function isToolPart(part: MessagePart): boolean {
+  return part.type.startsWith('tool-') || part.type === 'dynamic-tool';
+}
+
+/**
+ * Whether a message has anything to render. Claude Sonnet 5 and Opus 5 think before
+ * they answer, so an assistant message can hold nothing but an empty-text thinking
+ * part for a while.
+ */
+function hasVisibleContent(message: UIMessage): boolean {
+  return message.parts.some(
+    (part) =>
+      (part.type === 'text' && part.text.trim().length > 0) ||
+      part.type === 'file' ||
+      isToolPart(part),
+  );
+}
+
+/** Set comparison: the resolver's order follows the site listing, not the intent. */
+function sameMachines(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const known = new Set(a);
+  return b.every((id) => known.has(id));
+}
+
+/**
+ * Whether the server stamped a target on this turn AT ALL — true even when
+ * `readHootTurnMetadata` then rejects the blob (a forged re-send, or a list past
+ * the reader's cap, which a site-wide turn on a large site produces today). Such
+ * a turn must not borrow the fallback label: that one follows the live header
+ * selector, and naming the wrong machines on a tier-3 approval is worse than
+ * naming none.
+ */
+function hasHootStamp(metadata: unknown): boolean {
+  if (typeof metadata !== 'object' || metadata === null) return false;
+  const hoot = (metadata as { hoot?: unknown }).hoot;
+  return typeof hoot === 'object' && hoot !== null;
+}
 
 function pickYouTranslation(messageId: string) {
   let hash = 0;
@@ -31,7 +75,12 @@ interface ChatWindowProps {
   onToolApproval?: (approvalId: string, approved: boolean) => void;
   /** Edit a prior user message and re-send, branching from that point. */
   onEditMessage?: (messageId: string, newText: string) => void;
-  /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
+  /**
+   * Where tool calls run, shown in the approval prompt (machine / "all machines")
+   * — the FALLBACK only, and only for turns carrying NO stamp at all. Each turn
+   * is labelled from its own `metadata.hoot`; this label follows the live
+   * selector, so it is right only for turns that predate per-turn targeting.
+   */
   approvalTargetLabel?: string;
   /** Dispatched agent commands keyed by toolCallId → machineId → { commandId } — the cancel index. */
   toolCommands?: Record<string, Record<string, { commandId: string }>>;
@@ -41,9 +90,18 @@ interface ChatWindowProps {
   cancelPendingCommandIds?: Set<string>;
   /** The active turn's runner died (server restarted) — show the interrupted notice. */
   turnStale?: boolean;
+  /**
+   * A turn is live per the stream doc. Approve/deny is suppressed while set: after a
+   * reload during an approval-resume, the persisted part can still read
+   * `approval-requested` although the approved tool is already executing — re-arming
+   * the buttons there is the OWL-47 double-execution window.
+   */
+  turnRunning?: boolean;
+  /** The last turn failed. The error banner explains it, so its empty reply is not shown. */
+  turnErrored?: boolean;
 }
 
-export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale, turnRunning, turnErrored }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -56,7 +114,32 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
+
+  // Each assistant turn carries the machines it actually ran on. Read once per
+  // render — `readHootTurnMetadata` validates an untrusted blob, and both the
+  // approval cards and the retarget captions need the result — and flag the turns
+  // that moved, since a chat now aims at a different set from one turn to the next.
+  const turnTargets = useMemo(() => {
+    const byMessageId = new Map<string, HootTurnMetadata>();
+    const stamped = new Set<string>();
+    const retargeted = new Set<string>();
+    let previous: string[] | null = null;
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      if (hasHootStamp(message.metadata)) stamped.add(message.id);
+      const meta = readHootTurnMetadata(message.metadata);
+      // An unstamped turn (an old chat, or one mid-deploy) is passed over rather
+      // than treated as a change: the comparison is against the last turn whose
+      // target is actually known.
+      if (!meta) continue;
+      byMessageId.set(message.id, meta);
+      if (previous && !sameMachines(previous, meta.machineIds)) retargeted.add(message.id);
+      previous = meta.machineIds;
+    }
+    return { byMessageId, stamped, retargeted };
+  }, [messages]);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -98,6 +181,36 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     return () => window.removeEventListener('keydown', handleKey);
   }, [expandedImage]);
 
+  // Grow the edit box with its text, as the composer does: collapse to the
+  // 3-row floor, then take the content height. A layout effect, so the box
+  // never paints at the floor first. Under border-box `height` counts the
+  // borders and scrollHeight does not — left out, the box comes up 2px short
+  // and shows a scrollbar. `max-h-[40vh]` caps it; past that it scrolls.
+  // Unlike the composer, this box sits inside the chat's scroller: the collapse
+  // shortens the scroller for the measuring layout, one resting near its bottom
+  // is clamped, and regrowing the box does not give the position back.
+  useLayoutEffect(() => {
+    const textarea = editTextareaRef.current;
+    if (!textarea) return;
+    const scroller = containerRef.current;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight}px`;
+    if (scroller) scroller.scrollTop = scrollTop;
+  }, [editingId, editText]);
+
+  // Open the edit with the caret after the text, where an edit usually starts.
+  // Focus alone leaves it before the first character; the scroll keeps it in
+  // view when the text overflows the cap.
+  useLayoutEffect(() => {
+    const textarea = editTextareaRef.current;
+    if (!textarea) return;
+    const end = textarea.value.length;
+    textarea.focus();
+    textarea.setSelectionRange(end, end);
+    textarea.scrollTop = textarea.scrollHeight;
+  }, [editingId]);
+
   if (messages.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -135,6 +248,11 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
       </div>
     );
   }
+
+  const lastMessage = messages[messages.length - 1];
+  // A reply is in flight while this tab streams it — or, after a reload, while the
+  // stream doc says its turn is live and not stale.
+  const inFlight = isLoading || (Boolean(turnRunning) && !turnStale);
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">
@@ -179,9 +297,20 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </div>
       )}
 
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isUser = message.role === 'user';
         const isEditing = isUser && editingId === message.id;
+        const emptyReply = !isUser && !hasVisibleContent(message);
+        const turnMeta = turnTargets.byMessageId.get(message.id);
+        // A stamped turn owns its label outright, so the header's fallback is
+        // withheld even when the stamp turned out to be unreadable.
+        const turnTargetLabel = turnTargets.stamped.has(message.id) ? undefined : approvalTargetLabel;
+        // The newest reply with nothing to show yet is the model thinking: the
+        // indicator below stands in for it — or, once the turn is stale or has failed,
+        // the interrupted notice or the error banner does.
+        if (emptyReply && index === messages.length - 1 && (inFlight || turnStale || turnErrored)) {
+          return null;
+        }
         return (
         <div key={message.id} className="max-w-3xl mx-auto">
           <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
@@ -195,8 +324,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
               </div>
             )}
 
-            {/* Content */}
-            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+            {/* Content. A user bubble shrinks to fit under a 75% cap, but the
+                edit form takes the whole row — shrink-to-fit left the textarea
+                at its intrinsic ~20-column width. */}
+            <div className={`min-w-0 ${isUser && !isEditing ? 'max-w-[75%]' : 'flex-1'}`}>
               <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
                 {/*
                   Three tooltip triggers stand shoulder to shoulder in this row.
@@ -261,7 +392,8 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
               {isEditing ? (
                 <div className="flex flex-col gap-2">
                   <textarea
-                    autoFocus
+                    ref={editTextareaRef}
+                    aria-label="edit message"
                     value={editText}
                     onChange={(e) => setEditText(e.target.value)}
                     onKeyDown={(e) => {
@@ -272,29 +404,32 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                         cancelEdit();
                       }
                     }}
-                    rows={2}
-                    className="w-full resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm leading-normal text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
+                    rows={3}
+                    className="w-full max-h-[40vh] resize-none rounded-lg border border-border bg-secondary px-4 py-3 text-sm leading-relaxed text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
                   />
                   <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={cancelEdit}
-                      className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
-                    >
+                    <Button type="button" variant="ghost" size="sm" onClick={cancelEdit}>
                       cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
+                      size="sm"
                       onClick={() => saveEdit(message.id)}
                       disabled={!editText.trim()}
-                      className="text-xs px-3 py-1.5 rounded-md bg-accent-cyan text-gray-900 font-medium hover:bg-accent-cyan/90 disabled:opacity-50 transition-colors cursor-pointer"
                     >
                       save &amp; resend
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
               <div className={isUser ? 'opacity-80 text-right' : ''}>
+              {/* Where this turn went, noted only when it moved: a transcript that
+                  reads as one conversation can have gone to different machines. */}
+              {turnMeta && turnTargets.retargeted.has(message.id) && (
+                <p className="mb-1.5 text-xs text-muted-foreground">
+                  targets changed — {formatTargetLabel(turnMeta.machineIds)}
+                </p>
+              )}
               {/* Render parts (text + images + tool calls) */}
               {message.parts.map((part, i) => {
               if (part.type === 'text') {
@@ -351,11 +486,32 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 //   approval-requested            → show approve/deny
                 //   approval-responded (denied) / output-denied → declined
                 //   approval-responded (approved) → resuming → loading until output
-                const awaitingApproval = state === 'approval-requested';
+                // With a live turn, an `approval-requested` part is stale UI state
+                // (the resume is already executing server-side) — render it as
+                // running instead of re-arming approve/deny.
+                const awaitingApproval = state === 'approval-requested' && !turnRunning;
                 const denied = state === 'output-denied'
                   || (state === 'approval-responded' && toolPart.approval?.approved === false);
                 const approvalId = toolPart.approval?.id;
                 const running = !hasResult && !awaitingApproval && !denied;
+
+                // hoot consulting a stronger model mid-answer. The advice is
+                // encrypted and nothing ran on a machine, so a note, not a card. A
+                // consultation is only under way while its reply is in flight; one a
+                // stop or an error cut off never gets its result.
+                if (toolName === ADVISOR_TOOL_NAME) {
+                  const consulting = running && inFlight && index === messages.length - 1;
+                  return (
+                    <p key={i} className="flex items-center gap-2 my-2 text-xs text-muted-foreground">
+                      {consulting && <SynapticIndicator />}
+                      {consulting
+                        ? `consulting ${ADVISOR_MODEL_NAME}...`
+                        : running || state === 'output-error'
+                          ? `couldn't consult ${ADVISOR_MODEL_NAME}`
+                          : `consulted ${ADVISOR_MODEL_NAME}`}
+                    </p>
+                  );
+                }
 
                 // Cancel only for a running tool that actually dispatched agent
                 // commands (toolCallId present in toolCommands with ≥1 machine).
@@ -374,7 +530,9 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                     result={hasResult ? result : undefined}
                     isLoading={running}
                     approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
-                    approvalTargetLabel={approvalTargetLabel}
+                    approvalTargetLabel={turnTargetLabel}
+                    approvalTargetMachineIds={turnMeta?.machineIds}
+                    approvalTargetDynamic={turnMeta?.dynamic}
                     onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
                     onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
                     onCancel={cancellable && toolCallId && onCancelTool ? () => onCancelTool(toolCallId) : undefined}
@@ -385,6 +543,11 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
 
               return null;
               })}
+              {emptyReply && (
+                <p className="text-xs text-muted-foreground border-l-2 border-border pl-3">
+                  no reply came back. if you didn&apos;t stop this turn, the model may have declined the request — try rephrasing it.
+                </p>
+              )}
               </div>
               )}
             </div>
@@ -411,8 +574,8 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </div>
       )}
 
-      {/* Loading indicator */}
-      {isLoading && messages[messages.length - 1]?.role === 'user' && (
+      {/* Loading indicator — up until the reply has something to show */}
+      {inFlight && lastMessage && (lastMessage.role === 'user' || !hasVisibleContent(lastMessage)) && (
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
             <div className="flex-shrink-0">

@@ -15,26 +15,36 @@ test.describe('/admin/users — stats row', () => {
 
     const labels = ['total users', 'members', 'site admins', 'superadmins'];
     for (const label of labels) {
-      await expect(page.getByText(label, { exact: true })).toBeVisible();
+      // Scoped to main: the admin nav now carries a "members" link too
+      // (e6e99cbf opened the panel to site admins), so the bare text match
+      // resolves to two elements and trips strict mode.
+      await expect(page.getByRole('main').getByText(label, { exact: true })).toBeVisible();
     }
 
-    // DOM order must match ascending privilege.
+    // DOM order must match ascending privilege. Scoped to main for the same
+    // reason as above — the nav's "manage site members" description also
+    // matches the regex.
     const texts = await page
+      .getByRole('main')
       .locator('p.text-xs.text-muted-foreground')
       .filter({ hasText: /total users|members|site admins|superadmins/ })
       .allTextContents();
     expect(texts).toEqual(labels);
   });
 
-  test('counts reflect seeded fleet (1 super, 1 admin, 1 member)', async ({ page }) => {
+  test('counts reflect seeded fleet (1 super, 1 admin, 2 members)', async ({ page }) => {
     await page.goto('/admin/users');
 
     // Chip = `.bg-card.rounded-lg` around a p.text-lg count and p.text-xs label.
     const card = (label: string) =>
       page.locator('div.bg-card.rounded-lg').filter({ hasText: label });
 
-    await expect(card('total users').locator('p.text-lg')).toHaveText('3');
-    await expect(card('members').locator('p.text-lg')).toHaveText('1');
+    // Four fixtures, and TWO of them are global `member`: the plain member and
+    // the `owner` fixture. Owner is a per-site standing, not a global role — a
+    // self-serve customer owns a site while remaining a global member — so this
+    // chip counts it under members, which is what the column actually measures.
+    await expect(card('total users').locator('p.text-lg')).toHaveText('4');
+    await expect(card('members').locator('p.text-lg')).toHaveText('2');
     await expect(card('site admins').locator('p.text-lg')).toHaveText('1');
     await expect(card('superadmins').locator('p.text-lg')).toHaveText('1');
   });

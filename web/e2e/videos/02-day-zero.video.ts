@@ -9,8 +9,12 @@
  * creates a real site.
  *
  * Rendered VO (voiceover/out/02-day-zero/, ffprobe):
- *   b01 20.7s · b02 21.9s · b03 24.5s · b04 27.1s · b05 18.2s
- *   b06 18.4s · b07 20.9s · b08 26.7s · b09 26.7s
+ *   b01 22.9s · b02 22.5s · b03 20.3s · b04 27.6s · b05 19.9s
+ *   b06 21.2s · b07 20.2s · b08 31.2s · b09 26.9s
+ *   b01–b07, b09 are cut from the 2026-08-31 continuous take; b08 alone is a
+ *   2026-09-06 per-beat re-render (`generate.py --only-beat b08`, wave 3b) —
+ *   see the b08 block for why, and expect its read to sit ~13% slower than its
+ *   neighbours', which is what a cold single-beat render costs.
  *
  * ── THREE PRECONDITIONS ─────────────────────────────────────────────────────
  *
@@ -66,6 +70,7 @@ import {
   VIDEO_OUT_DIR,
   openForCapture,
   narrate,
+  slowPush,
   highlight,
   centerInView,
   clickWithCursor,
@@ -174,6 +179,15 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
       try {
         // ── [b02] signing up (~21.9s) ────────────────────────────────────────
         await openForCapture(page, '/register');
+        // [b01] cold open (2026-08-31 rewrite): a clean hold on the sign-up
+        // page, where a new account actually begins. The old cold open
+        // bounced /dashboard -> /setup-2fa, which showed the setup screen
+        // before b02 ever reached the sign-up form - rosco flagged it.
+        await narrate(page, 'b01 the sign-up page, held', 5.7);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 48, seconds: 4.0 });
+        await narrate(page, 'b01 the sign-up page, held - close', 5.3);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b01 the sign-up page, held - settle', 1.0);
 
         // Google first — framed, never clicked (see precondition 3).
         const googleButton = page.getByRole('button', { name: /continue with google/i });
@@ -204,17 +218,6 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         });
         await narrate(page, 'b02 lands on setup, not the dashboard', 8);
 
-        // ── [b01] cold open — SHOT OUT OF ORDER (~20.7s) ─────────────────────
-        // An unauthenticated visitor typing /dashboard goes to /login
-        // (proxy.ts:148-158). The setup bounce this beat is about only fires for
-        // a signed-in session with ZERO factors — which is exactly what we have
-        // for the next few seconds, and never again once b04 enrolls.
-        await page.goto(url('/dashboard'), { waitUntil: 'domcontentloaded' });
-        await expect(page).toHaveURL(/\/setup-2fa/, { timeout: 20_000 });
-        await expect(
-          page.getByText('set up two-factor authentication', { exact: false }),
-        ).toBeVisible();
-        await narrate(page, 'b01 /dashboard bounces to /setup-2fa', 21);
 
         // ── [b03] passkey or authenticator (~24.5s) ──────────────────────────
         await expect(page.getByText(/choose your second factor/i)).toBeVisible();
@@ -225,7 +228,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await narrate(page, 'b03 passkey card', 12);
         await centerInView(page, authenticatorCard);
         await highlight(page, authenticatorCard, 3000);
-        await narrate(page, 'b03 authenticator card', 13);
+        await narrate(page, 'b03 authenticator card', 3.9);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 42, seconds: 4.0 });
+        await narrate(page, 'b03 authenticator card - close', 1.1);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b03 authenticator card - settle', 1.0);
 
         // ── [b04a] enroll the passkey (~27.1s, first half) ───────────────────
         await clickWithCursor(page, passkeyCard);
@@ -250,7 +257,7 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, page.getByRole('button', { name: /continue to dashboard/i }));
         await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
 
-        // ── [b07] your first site (~20.9s) ───────────────────────────────────
+        // ── [b07] your first site (~20.2s) ───────────────────────────────────
         // This account owns no sites, so the dashboard renders the getting-
         // started card at step 1. That empty state exists only here.
         await page.waitForTimeout(1200);
@@ -274,7 +281,19 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         // tick share one flex line (:210-213).
         const siteIdPreview = siteDialog.getByText('site ID:', { exact: true }).locator('..');
         await highlight(page, siteIdPreview, 2400);
-        await narrate(page, 'b07 name + generated id', 7);
+        await narrate(page, 'b07 name + generated id', 4.5);
+        // The dialog also carries the site's CLOCK now (wave 3b,
+        // CreateSiteDialog.tsx:299-343): the browser's timezone, read-only with
+        // "change timezone" under it, written with `schedulesFollowSiteTime:
+        // true`. b08 is entirely about that value, so it has to be on camera
+        // here — and inside b07's 20.2s, since the conform trims what runs past
+        // the narration. Frame the read-only value row (the testid span's flex
+        // parent: label, value, "(from your browser)"), not the collapsed
+        // disclosure below it.
+        const timezoneRow = siteDialog.getByTestId('create-site-timezone').locator('..');
+        await centerInView(page, timezoneRow);
+        await highlight(page, timezoneRow, 2600);
+        await narrate(page, 'b07 the clock the dialog detected', 3);
         await clickWithCursor(page, siteDialog.getByRole('button', { name: /^create site$/i }));
         await expect(siteDialog).not.toBeVisible({ timeout: 20_000 });
         await narrate(page, 'b07 site created', 7);
@@ -287,22 +306,44 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         ).toBeVisible({ timeout: 20_000 });
         await narrate(page, 'b09 tail — card advances to the download step', 10);
 
-        // ── [b08] the site's clock (~26.7s) ──────────────────────────────────
-        // The create dialog never asks for a timezone; it takes the browser's.
+        // ── [b08] the site's clock (~31.2s) ──────────────────────────────────
+        // The beat is now the OTHER half of b07's dialog: the clock it set is
+        // already on the site (wave 3b — the create dialog writes the browser's
+        // timezone together with `schedulesFollowSiteTime: true`), and manage
+        // sites is where it is CHANGED, not where it is first set. Nothing is
+        // edited on camera; the escape ladder below cancels the editor.
         await clickWithCursor(page, page.getByTestId('site-switcher-trigger'));
         await clickWithCursor(page, page.getByRole('menuitem', { name: /manage sites/i }));
         const manageDialog = page.getByRole('dialog');
         await expect(manageDialog).toBeVisible();
+        // The zone the create dialog detected, now persisted on the site row
+        // (ManageSitesDialog.tsx:391 prints the raw IANA name). Reading it back
+        // off the browser rather than hardcoding a zone keeps this scene
+        // portable, and makes the row assertion the proof of the claim b08's
+        // narration makes — if the create dialog ever stops writing the
+        // timezone, this fails here instead of shipping a lie.
+        const siteZone = await page.evaluate(
+          () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+        );
+        const zoneCell = manageDialog.getByText(siteZone, { exact: true }).first();
+        await expect(zoneCell).toBeVisible();
+        await centerInView(page, zoneCell);
+        await highlight(page, zoneCell, 2600);
+        await narrate(page, 'b08 the row already carries the detected clock', 6);
         // The site list is a CSS grid of divs, not a table — no row role to
         // target. The per-site pencil carries `aria-label="edit {site.name}"`,
         // which is the only stable handle on a given site's line.
         const editSiteButton = manageDialog.getByRole('button', { name: 'edit NYC Office' });
         await centerInView(page, editSiteButton);
         await highlight(page, editSiteButton, 2400);
-        await narrate(page, 'b08 timezone column, before', 8);
+        await narrate(page, 'b08 the pencil is where it changes', 4);
         await clickWithCursor(page, editSiteButton);
         await page.waitForTimeout(600);
-        await narrate(page, 'b08 timezone picker open', 18);
+        await narrate(page, 'b08 timezone picker open', 6.5);
+        await slowPush(page, { scale: 1.04, originXPct: 50, originYPct: 50, seconds: 4.0 });
+        await narrate(page, 'b08 timezone picker open - close', 5.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b08 timezone picker open - settle', 1.0);
         // ManageSitesDialog's Esc is a ladder (ManageSitesDialog.tsx:241-250):
         // cancel edit → clear filter → close. The inline editor is open, so one
         // Esc only cancels it; a second closes the dialog. Assert it, or
@@ -369,7 +410,11 @@ test('episode 2 — day zero: sign up, 2fa, and your first site', async ({ brows
         await clickWithCursor(page, resetItem);
         const confirmDialog = page.getByRole('dialog');
         await expect(confirmDialog).toBeVisible();
-        await narrate(page, 'b09 confirm dialog — never confirmed on camera', 15);
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera', 4.5);
+        await slowPush(page, { scale: 1.05, originXPct: 50, originYPct: 45, seconds: 4.0 });
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera - close', 2.5);
+        await slowPush(page, { scale: 1.0, seconds: 3.0 });
+        await narrate(page, 'b09 confirm dialog — never confirmed on camera - settle', 1.0);
         await page.keyboard.press('Escape');
       } finally {
         // A leaked authenticator would answer the next scene's ceremonies.

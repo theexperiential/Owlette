@@ -14,7 +14,7 @@
 #   MinIO Web  : http://localhost:9001   (admin console)
 #   Credentials: minioadmin / minioadmin (dev-only, never used in prod)
 #
-# Buckets created match the production R2 layout (storage/r2-bucket-policy.json):
+# Buckets created match the production R2 layout (infra/r2/r2-bucket-policy.json):
 #   owlette-dev-content      — chunk objects at project-content/{siteId}/{hash[:2]}/{hash}
 #   owlette-dev-manifests    — manifest bodies at project-manifests/{siteId}/{folderId}/{manifestId}.json
 #
@@ -23,7 +23,12 @@
 
 services:
   minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    # quay.io, not Docker Hub: MinIO put their Hub images behind authentication
+    # some time between 2026-09-09 and 2026-09-12, and an anonymous pull of
+    # either image now 401s -- which killed the roost-sync CI job before it ran
+    # a single test. Quay is MinIO's own mirror and still serves these exact
+    # pinned tags anonymously. Same versions; only the host changed.
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
     container_name: roost-minio
     ports:
       - "9000:9000"   # s3 API
@@ -48,11 +53,12 @@ services:
 
   # One-shot container that uses the `mc` CLI to create the buckets and
   # apply the same deny-anonymous / signed-only policies as production
-  # R2 (from storage/r2-bucket-policy.json). Exits 0 on success — run
+  # R2 (from infra/r2/r2-bucket-policy.json). Exits 0 on success — run
   # it explicitly with `docker compose run init-buckets` to re-apply
   # after a volume reset.
   init-buckets:
-    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    # quay.io for the same reason as the minio service above.
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
     container_name: roost-minio-init
     depends_on:
       minio:
@@ -63,7 +69,7 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init.sh"]
     volumes:
       - ./minio/init.sh:/scripts/init.sh:ro
-      - ../../storage/r2-bucket-policy.json:/scripts/r2-bucket-policy.json:ro
+      - ../../infra/r2/r2-bucket-policy.json:/scripts/r2-bucket-policy.json:ro
 
   agent-runner:
     build:

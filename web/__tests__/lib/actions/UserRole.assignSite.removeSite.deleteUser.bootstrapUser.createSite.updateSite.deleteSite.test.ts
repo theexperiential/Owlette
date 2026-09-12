@@ -26,6 +26,9 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     arrayUnion: (...items: unknown[]) => ({ __op: 'arrayUnion', items }),
     arrayRemove: (...items: unknown[]) => ({ __op: 'arrayRemove', items }),
+    // deleteSite writes its record to the platform audit sink before the delete,
+    // and that row is server-timestamped.
+    serverTimestamp: () => ({ __op: 'serverTimestamp' }),
   },
 }));
 
@@ -58,6 +61,32 @@ class FakeDb {
   }
 
   /**
+   * Batched multi-document read, as used by `removeSiteFromUser` to check every
+   * named site for ownership in one round trip. Real `getAll` preserves argument
+   * order and returns a non-existent snapshot for a missing doc rather than
+   * omitting it — both are relied on by the caller's `.filter(exists)`.
+   */
+  async getAll(...refs: FakeDoc[]) {
+    return Promise.all(refs.map((ref) => ref.get()));
+  }
+
+  /**
+   * Recursive delete — the document and EVERY descendant, which is what makes
+   * `deleteSite` a cascade. Firestore does not remove subcollections with their
+   * parent, so a fake that deleted only the named key would let the cascade tests
+   * pass while production leaked every member row and machine under the site.
+   */
+  async recursiveDelete(ref: FakeDoc) {
+    const prefix = `${ref.path}/`;
+    for (const key of [...this.docs.keys()]) {
+      // null, not a key removal: that is how the rest of this fake models a
+      // deleted document, and mixing the two would make assertions inconsistent
+      // depending on which delete path happened to run.
+      if (key === ref.path || key.startsWith(prefix)) this.docs.set(key, null);
+    }
+  }
+
+  /**
    * Write batch — the talon store's all-or-nothing reassign, and createSite's
    * site-doc + owner-membership pair.
    *
@@ -70,23 +99,38 @@ class FakeDb {
     const ops: Array<{
       ref: FakeDoc;
       patch: Record<string, unknown>;
-      mode: 'set' | 'update';
+      mode: 'set' | 'update' | 'create' | 'delete';
     }> = [];
     return {
       set: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'set' }),
       update: (ref: FakeDoc, patch: Record<string, unknown>) =>
         ops.push({ ref, patch, mode: 'update' }),
+      // create() differs from set(): it FAILS on an existing document. Modelling
+      // that is what lets addMember's owner-overwrite refusal be tested at all.
+      create: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'create' }),
+      delete: (ref: FakeDoc) => ops.push({ ref, patch: {}, mode: 'delete' }),
       commit: async () => {
         for (const op of ops) {
-          if (op.mode !== 'update') continue;
-          const snap = await op.ref.get();
-          if (!snap.exists) {
-            throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+          if (op.mode === 'update') {
+            const snap = await op.ref.get();
+            if (!snap.exists) {
+              throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+            }
+          }
+          if (op.mode === 'create') {
+            const snap = await op.ref.get();
+            if (snap.exists) {
+              const err = new Error('Document already exists') as Error & { code: number };
+              err.code = 6;
+              throw err;
+            }
           }
         }
         for (const op of ops) {
-          if (op.mode === 'set') await op.ref.set(op.patch);
+          if (op.mode === 'set' || op.mode === 'create') await op.ref.set(op.patch);
+          else if (op.mode === 'delete') await op.ref.delete();
           else await op.ref.update(op.patch);
         }
       },
@@ -102,7 +146,9 @@ class FakeDb {
     return callback({
       get: (ref) => ref.get(),
       update: (ref, patch) => ref.update(patch),
-    });
+      set: (ref: FakeDoc, patch: Record<string, unknown>) => ref.set(patch),
+      delete: (ref: FakeDoc) => ref.delete(),
+    } as never);
   }
 
   seed(path: string, data: Record<string, unknown>): void {
@@ -115,7 +161,10 @@ class FakeDb {
 }
 
 interface FakeQuerySnapshot {
-  docs: Array<{ id: string; data: () => Record<string, unknown> }>;
+  /** `ref` is present because a real QueryDocumentSnapshot has one, and callers
+   *  that batch-delete query results reach for it. Omitting it made a cascade
+   *  look untestable when it was the fake that was incomplete. */
+  docs: Array<{ id: string; data: () => Record<string, unknown>; ref: FakeDoc }>;
   empty: boolean;
 }
 
@@ -155,6 +204,7 @@ class FakeCollection {
       .map(([path, data]) => ({
         id: path.slice(prefix.length),
         data: () => ({ ...(data as Record<string, unknown>) }),
+        ref: new FakeDoc(this.db, path, path.slice(prefix.length)),
       }));
     if (this.max !== null) docs = docs.slice(0, this.max);
     return { docs, empty: docs.length === 0 };
@@ -228,11 +278,19 @@ class FakeDoc {
     return new FakeCollection(this.db, `${this.path}/${name}`);
   }
 
-  async get(): Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }> {
+  async get(): Promise<{
+    exists: boolean;
+    data: () => Record<string, unknown> | undefined;
+    ref: FakeDoc;
+  }> {
     const data = this.db.docs.get(this.path);
     return {
       exists: data !== undefined && data !== null,
       data: () => (data ? { ...data } : undefined),
+      // A real DocumentSnapshot carries `ref`, and callers that read then write
+      // the surviving subset reach for it. Omitting it made `deleteSite`'s
+      // exists-filter look broken when it was the fake that was incomplete.
+      ref: this,
     };
   }
 
@@ -281,7 +339,7 @@ const ctx = {
   auditActor: 'user:admin',
   // `deleteUser` needs the caller for the talon store's audit context; other
   // action cores ignore the extra field.
-  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
+  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, siteRoles: {} },
   endpoint: '/test',
   method: 'POST',
 };
@@ -394,6 +452,15 @@ describe('deleteUser', () => {
   function talonDb(): FakeDb {
     const db = new FakeDb();
     db.seed('users/bob', { role: 'admin', sites: ['site-a'] });
+    // Bob's authority to inherit the talons is his membership on site-a. The
+    // global `admin` above grants nothing on a site.
+    db.seed('sites/site-a/members/bob', {
+      uid: 'bob',
+      role: 'admin',
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:test',
+    });
     db.seed('sites/site-a/talons/t1', {
       name: 'nightly restart',
       enabled: true,
@@ -561,7 +628,6 @@ describe('bootstrapUser', () => {
     expect(db.docs.get('users/uid-1')).toMatchObject({
       email: 'user@example.com',
       role: 'member',
-      sites: [],
       mfaEnrolled: false,
       requiresMfaSetup: true,
       // Seeded at creation so a new account is never "legacy", i.e. never needs
@@ -572,6 +638,11 @@ describe('bootstrapUser', () => {
         timezone: 'America/Los_Angeles',
       },
     });
+    // The legacy `sites[]` field must NOT be seeded. toMatchObject ignores extra
+    // keys, so without this explicit check the assertion above would pass either
+    // way — and re-seeding it is precisely what stopped wave 6.1's "field is
+    // gone" gate from ever converging.
+    expect(db.docs.get('users/uid-1')).not.toHaveProperty('sites');
   });
 
   it('is idempotent when the user doc already exists', async () => {
@@ -645,6 +716,17 @@ describe('site CRUD actions', () => {
     // by owner. The membership assertion is the point — an owner-only write
     // passes every other assertion here.
     expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
+
+    // ...and the NEW shape, in the SAME batch. This was written as a helper in
+    // wave 2 and never actually called, so site creation kept minting owners
+    // with no member document. That makes the wave 3 backfill target MOVE —
+    // every site created after it would need repairing again — and leaves
+    // wave 4's fallback counter unable to reach the zero wave 6 waits on.
+    expect(db.docs.get('sites/site-a/members/owner-1')).toMatchObject({
+      uid: 'owner-1',
+      role: 'owner',
+      status: 'active',
+    });
   });
 
   it('createSite preserves memberships the creator already had', async () => {
@@ -874,18 +956,106 @@ describe('site CRUD actions', () => {
     });
   });
 
-  it('deleteSite deletes only the top-level site document', async () => {
+  it('deleteSite cascades: subcollections, member rows and agent credentials', async () => {
     const db = new FakeDb();
-    db.seed('sites/site-a', { name: 'a' });
+    db.seed('sites/site-a', { name: 'a', owner: 'alice' });
     db.seed('sites/site-a/machines/machine-1', { online: true });
+    db.seed('sites/site-a/members/alice', { uid: 'alice', role: 'owner', status: 'active' });
+    db.seed('sites/site-a/members/bob', { uid: 'bob', role: 'member', status: 'active' });
+    db.seed('users/alice', { sites: ['site-a', 'site-z'] });
+    db.seed('users/bob', { sites: ['site-a'] });
+    db.seed('agent_refresh_tokens/tok-1', { siteId: 'site-a', machineId: 'machine-1' });
+    db.seed('agent_refresh_tokens/tok-other', { siteId: 'site-other' });
 
-    const result = await deleteSite(ctx, {
-      siteId: 'site-a',
-      db: db.asFirestore(),
-    });
+    const result = await deleteSite(ctx, { siteId: 'site-a', db: db.asFirestore() });
 
     expect(result).toEqual({ kind: 'deleted', siteId: 'site-a' });
     expect(db.docs.get('sites/site-a')).toBeNull();
-    expect(db.docs.get('sites/site-a/machines/machine-1')).toEqual({ online: true });
+    // Subcollections go with it — Firestore would otherwise leave these orphaned
+    // under an id nobody can reach.
+    expect(db.docs.get('sites/site-a/machines/machine-1')).toBeNull();
+    expect(db.docs.get('sites/site-a/members/alice')).toBeNull();
+
+    // The credential is revoked, and only for THIS site.
+    expect(db.docs.get('agent_refresh_tokens/tok-1')).toBeNull();
+    expect(db.docs.get('agent_refresh_tokens/tok-other')).toEqual({ siteId: 'site-other' });
+
+    // Every member's legacy pointer is cleared, and their other sites survive.
+    // A dead id left here strands `membership_fallback` drift forever.
+    expect((db.docs.get('users/alice') as { sites: string[] }).sites).toEqual(['site-z']);
+    expect((db.docs.get('users/bob') as { sites: string[] }).sites).toEqual([]);
+
+    // The tombstone still lands, so the slug cannot be re-registered.
+    expect(db.docs.get('site_ids/site-a')).toBeTruthy();
+
+    // The cascade makes the site invisible to the chunk GC, which enumerates with
+    // listDocuments() and so previously still found a site that had only
+    // subcollections left. Without this record the R2 prefix is unreachable forever.
+    const orphan = db.docs.get('deleted_sites/site-a') as {
+      r2PrefixesToReclaim: string[];
+      reclaimed: boolean;
+    };
+    expect(orphan.r2PrefixesToReclaim).toEqual([
+      'project-content/site-a',
+      'project-manifests/site-a',
+    ]);
+    expect(orphan.reclaimed).toBe(false);
+  });
+
+  it('deleteSite survives a member row whose user document is gone', async () => {
+    // A member row can outlive its user: a hard-deleted account, or a site whose
+    // declared owner was never a real user. `update()` on a missing document
+    // fails the whole batch with NOT_FOUND, which aborted the delete and left the
+    // site half-dismantled. Caught by e2e, where site fixtures are owned by a
+    // 'someone-else' uid that has no user document.
+    const db = new FakeDb();
+    db.seed('sites/site-a', { name: 'a', owner: 'someone-else' });
+    db.seed('sites/site-a/members/someone-else', {
+      uid: 'someone-else',
+      role: 'owner',
+      status: 'active',
+    });
+    db.seed('sites/site-a/members/alice', { uid: 'alice', role: 'member', status: 'active' });
+    db.seed('users/alice', { sites: ['site-a'] });
+
+    const result = await deleteSite(ctx, { siteId: 'site-a', db: db.asFirestore() });
+
+    expect(result).toEqual({ kind: 'deleted', siteId: 'site-a' });
+    expect(db.docs.get('sites/site-a')).toBeNull();
+    // The real member is still cleaned up; the phantom one is simply skipped
+    // rather than resurrected as a user document.
+    expect((db.docs.get('users/alice') as { sites: string[] }).sites).toEqual([]);
+    expect(db.docs.get('users/someone-else')).toBeUndefined();
+  });
+
+  it('deleteSite revokes agent credentials BEFORE removing the site', async () => {
+    // Ordering is the point: a refresh token outlives the site document, so
+    // revoking last leaves a window where the site is gone and an agent can still
+    // mint access tokens against it.
+    const db = new FakeDb();
+    db.seed('sites/site-a', { name: 'a' });
+    db.seed('agent_refresh_tokens/tok-1', { siteId: 'site-a' });
+
+    const order: string[] = [];
+    const real = db.recursiveDelete.bind(db);
+    db.recursiveDelete = async (ref: FakeDoc) => {
+      order.push('site-deleted');
+      return real(ref);
+    };
+    const realBatch = db.batch.bind(db);
+    db.batch = () => {
+      const b = realBatch();
+      const commit = b.commit;
+      b.commit = async () => {
+        order.push('batch-committed');
+        return commit();
+      };
+      return b;
+    };
+
+    await deleteSite(ctx, { siteId: 'site-a', db: db.asFirestore() });
+
+    expect(order[0]).toBe('batch-committed');
+    expect(order[order.length - 1]).toBe('site-deleted');
   });
 });

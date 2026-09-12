@@ -18,6 +18,11 @@ const mockInnerDoc = jest.fn();
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminAuth: () => ({ verifyIdToken: mockVerifyIdToken }),
   getAdminDb: () => ({
+    // Batched read used by lib/sitePolicy.server.ts. Real getAll preserves
+    // argument order and yields a non-existent snapshot for a missing doc,
+    // so delegating to each ref's own get() matches its observable shape.
+    getAll: (...refs: Array<{ get: () => Promise<unknown> }>) =>
+      Promise.all(refs.map((r) => r.get())),
     collection: (colName: string) => ({
       doc: (docId: string) => {
         mockDoc(colName, docId);
@@ -27,6 +32,9 @@ jest.mock('@/lib/firebase-admin', () => ({
             doc: (innerDocId: string) => {
               mockInnerDoc(innerCol, innerDocId);
               return {
+                // Site access reads `sites/{id}/members/{uid}` now, so a
+                // subcollection doc has to answer reads and not just writes.
+                get: () => mockDocGet(innerCol, innerDocId),
                 update: mockDocUpdate,
               };
             },
@@ -470,10 +478,15 @@ describe('assertActiveUser', () => {
 });
 
 describe('assertUserHasSiteAccess', () => {
-  it('allows access when user is site owner', async () => {
+  it('allows access when the user holds an owner membership', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites')
         return Promise.resolve({ exists: true, data: () => ({ owner: 'user-1', name: 'Site A' }) });
+      if (col === 'members')
+        return Promise.resolve({
+          exists: true,
+          data: () => ({ uid: 'user-1', role: 'owner', status: 'active' }),
+        });
       if (col === 'users')
         return Promise.resolve({
           exists: true,
@@ -503,10 +516,15 @@ describe('assertUserHasSiteAccess', () => {
     expect(result.siteId).toBe('site-2');
   });
 
-  it('allows access when user is assigned to site', async () => {
+  it('allows access when the user holds a member membership', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites')
         return Promise.resolve({ exists: true, data: () => ({ owner: 'other', name: 'Site C' }) });
+      if (col === 'members')
+        return Promise.resolve({
+          exists: true,
+          data: () => ({ uid: 'user-3', role: 'member', status: 'active' }),
+        });
       if (col === 'users')
         return Promise.resolve({
           exists: true,

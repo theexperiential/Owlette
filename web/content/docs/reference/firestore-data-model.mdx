@@ -20,6 +20,7 @@ These paths are explicitly matched in `firestore.rules`.
 ```
 firestore/
 |-- sites/{siteId}
+|   |-- members/{uid}
 |   |-- machines/{machineId}
 |   |   |-- commands/pending
 |   |   |-- commands/completed
@@ -30,7 +31,6 @@ firestore/
 |   |-- deployments/{deploymentId}
 |   |-- installer_templates/{templateId}
 |   |-- project_templates/{templateId}
-|   |-- project_distributions/{distributionId}
 |   |-- roosts/{roostId}
 |   |   |-- versions/{versionId}
 |   |   `-- target_state/{machineId}
@@ -65,11 +65,31 @@ create, update, and delete are service-account only.
 | field | type | notes |
 | --- | --- | --- |
 | `name` | string | Site display name. |
-| `owner` | string | UID of the user who created or owns the site. |
+| `owner` | string | UID of the user who created or owns the site. **Legacy**: still written on site creation, but no security rule consults it — access comes from `sites/{siteId}/members/{uid}`. |
 | `createdAt` | timestamp | Site creation time. |
 | `timezone` | string | IANA timezone used by site-scoped scheduling surfaces. |
+| `schedulesFollowSiteTime` | boolean | Whether process launch windows are evaluated in `timezone` rather than each machine's own clock. Three-state: missing means the site was never asked, `false` that it declined; both behave as machine-local. See [timezones](/docs/dashboard/timezones#process-schedules). |
 | `tier` / `plan` | string | Pricing or quota tier, depending on caller generation. |
 | `roostEnabled` | boolean | Site-level roost kill switch. Missing or `true` means enabled. |
+
+### `sites/{siteId}/members/{uid}`
+
+The document that grants site access. `canAccessSite()` and `isSiteAdmin()`
+resolve entirely from this row; `sites/{siteId}.owner` and `users/{uid}.sites[]`
+are legacy and are read by no rule.
+
+Clients may read only their own rows
+(`collectionGroup('members').where('uid','==',me)`); the full roster is served by
+the API under `SITE_MEMBER_MANAGE`. All writes are server-only —
+`web/lib/membership.server.ts` is the single writer.
+
+| field | type | notes |
+|-------|------|-------|
+| `uid` | string | Duplicated as a field, not only as the document id, so the collection-group query can prove the rule |
+| `role` | string | `owner` \| `admin` \| `member`. `owner` is written only by ownership transfer |
+| `status` | string | `active` |
+| `addedAt` | timestamp | |
+| `addedBy` | string | uid of the actor who granted access |
 
 ### `sites/{siteId}/machines/{machineId}`
 
@@ -338,7 +358,7 @@ denied; server handlers write through audit helpers.
 
 ### `sites/{siteId}/webhooks/{webhookId}`
 
-Site-scoped webhook configuration. Site members can read. All writes go
+Site-scoped webhook configuration. Site admins (`owner`/`admin`) can read; plain members are denied, because the document may still carry a legacy in-document signing secret. All writes go
 through server APIs.
 
 | field | type | notes |
@@ -400,7 +420,7 @@ Server APIs manage roles, site assignments, and deletion.
 | `email` | string | User email. |
 | `displayName` | string | Optional display name. |
 | `role` | string | `member`, `admin`, or `superadmin`. |
-| `sites` | string[] | Site IDs assigned to members/admins. |
+| `sites` | string[] | **Legacy**: still maintained on membership changes, but no rule reads it and no access decision consults it. Site access comes from `sites/{siteId}/members/{uid}`. |
 | `createdAt` | timestamp | Creation time. |
 | `mfaSecret`, `backupCodes` | string/array | Encrypted TOTP secret and hashed backup codes. Server-written only. |
 | `mfaFactors` | map | `{ totp: boolean, passkeys: number }` — the authoritative second-factor tally. Server-maintained; `mfaEnrolled` is derived from it. |
@@ -489,17 +509,11 @@ should use the current public API storage models and routes instead.
 
 ### `sites/{siteId}/project_distributions/{distributionId}`
 
-Legacy project distribution records. They coexist with roost v2 during the
-cutover but are not the current project sync model.
-
-| field | type | notes |
-| --- | --- | --- |
-| `name` | string | Distribution name. |
-| `project_name`, `project_url` | string | Legacy package metadata. |
-| `extract_path` | string | Destination path. |
-| `targets` | array | Per-machine target rows. |
-| `status` | string | `pending`, `in_progress`, `completed`, `failed`, `partial`, or `cancelled`. |
-| `createdAt`, `createdBy`, `updatedAt` | timestamp/string | Metadata. |
+Retired. The v1 by-URL distribution system was removed — its API routes, agent
+command, and security-rules block are gone. Documents written before the
+removal remain at rest but are unreachable from any client or server route, and
+they carry no fields the current model reads. roost v2 is the only project sync
+model.
 
 ### `sites/{siteId}/project_templates/{templateId}`
 
@@ -514,21 +528,36 @@ flows and built-in preset overrides.
 ### `chats/{chatId}` and `chats/{chatId}/messages/{messageId}`
 
 Legacy hoot conversation storage. Rules still expose this collection to the
-owning user, and older hoot categorization paths still read/write it.
+owning user, and older hoot categorization paths still read/write it. It is also
+the dashboard chat's live storage — the *public* conversations API uses
+`chat_conversations` instead.
 
 | field | type | notes |
 | --- | --- | --- |
 | `userId` | string | Conversation owner. |
 | `siteId` | string | Site context. |
-| `targetType` | string | `machine` or `site`. |
-| `targetMachineId`, `machineName` | string/null | Target context. |
+| `targetType` | string | `machine` (one machine), `machines` (an explicit set of two or more), or `site` (every machine in the site). |
+| `targetMachineIds` | string[]/null | The chat's machines. `null` is site-wide and stays dynamic — a machine added later joins it. Absent on documents written before multi-machine targeting, where the legacy pair below is read instead. |
+| `targetMachineId`, `machineName` | string/null | Legacy target context, still written. For a set, `targetMachineId` is its **first** id, so a client that reads only this field narrows to one machine rather than widening to the site. `machineName` is the server-built label (`All Machines`, a machine name, or `kiosk-01, kiosk-02 +3`) and is what a share page shows. |
 | `title`, `category` | string | Conversation label and LLM category. |
 | `source` | string | `user` or `autonomous`. |
 | `eventId`, `autonomousSummary` | string/null | Autonomous event linkage. |
 | `createdAt`, `updatedAt` | timestamp | Timestamps. |
 
+Only a user-sent turn rewrites the target fields: an approval resume, a fired
+follow-up, and a talon turn leave the stored selection as it was.
+
 Messages under `messages/{messageId}` contain `role`, `content`, and
 `createdAt`.
+
+A turn in flight is tracked at `chats/{chatId}/stream/current`, written by the
+server and read-only to clients. Alongside the turn lock it records what that
+turn targeted — the requested `target`, the `resolvedMachineIds` it actually
+dispatched to, and whether it fanned out — plus, when the turn ends waiting on
+an approval, the `pendingApprovals` tool-call ids. That record is what binds an
+approval to the turn that requested it: a resume whose message id or tool-call
+ids no longer match it is refused as `approval_stale` rather than re-aimed at
+some other set of machines.
 
 ### legacy/local hoot bridge paths
 

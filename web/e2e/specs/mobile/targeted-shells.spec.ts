@@ -36,7 +36,7 @@ test.describe('mobile authenticated shells', () => {
     await seedHootFixture({ userId: TEST_USERS.admin.uid });
     await page.goto('/hoot');
     await expect(page.getByLabel(/hoot target/i)).toBeVisible();
-    await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
+    await expect(page.getByLabel('chat message')).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
 });

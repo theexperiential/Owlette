@@ -27,6 +27,7 @@ import {
 import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
 import { deleteUser } from '@/lib/actions/deleteUser.server';
+import { MIN_SUPERADMINS } from '@/lib/actions/setUserRole.server';
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -165,6 +166,47 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
 
         if (result.kind === 'not_found') {
           return problemNotFound(`user ${uid} not found`);
+        }
+
+        // Mirrors the demote route's refusal verbatim, code included, so a client
+        // handles one `last_superadmin` conflict shape rather than two. The floor
+        // is a hard invariant — an Owlette deployment must always keep at least
+        // MIN_SUPERADMINS active superadmins — and deleting the last one is
+        // unrecoverable: USER_ROLE_MANAGE lives only in SUPERADMIN_CAPABILITIES,
+        // so nobody would be left able to appoint a replacement.
+        if (result.kind === 'last_superadmin') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'cannot delete last superadmin',
+            status: 409,
+            detail: `cannot delete: only ${result.activeSuperadmins} active superadmin(s) remain; floor is ${MIN_SUPERADMINS}. Promote a replacement first.`,
+            instance: `/api/users/${uid}`,
+            code: 'last_superadmin',
+            minSuperadmins: MIN_SUPERADMINS,
+            currentActiveCount: result.activeSuperadmins,
+          });
+        }
+
+        // The delete ABORTED before anything destructive ran, because an
+        // ownership transfer did not land. Previously this case warned to the
+        // console and carried on, soft-deleting the account and leaving the site
+        // owned by it — reachable by nobody, since a deleted principal is
+        // rejected by both resolveSiteAccess and firestore.rules.
+        if (result.kind === 'transfer_failed') {
+          return problem({
+            type: ProblemType.Conflict,
+            title: 'ownership transfer failed; user not deleted',
+            status: 409,
+            detail: `could not transfer site ${result.siteId} to the successor (${result.reason}); the account was left untouched. Fix the successor and retry with a new Idempotency-Key.`,
+            instance: `/api/users/${uid}`,
+            code: 'transfer_failed',
+            siteId: result.siteId,
+            reason: result.reason,
+            // Sites that DID move before the failure. Not rolled back and not
+            // in need of it — each moved atomically, and a retry re-queries
+            // owned sites, so these simply will not appear again.
+            transferredSites: result.transferredSites,
+          });
         }
 
         if (result.kind === 'orphan_sites') {

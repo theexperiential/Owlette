@@ -33,7 +33,7 @@ The safest assumption is:
 - `dev` is the integration branch
 - `main` is the production branch
 - Railway handles web deploys after branch pushes
-- Firebase Functions, Firestore rules, Storage rules, and docs site deploys remain manual
+- Firebase Functions, Firestore rules, and Storage rules deploys remain manual
 
 Per-surface deploy mechanics live in sibling runbooks:
 
@@ -134,7 +134,7 @@ Conflicts are expected to be rare, but they matter because `main` may contain
 hotfix or doc-only commits that are not in `dev`.
 
 After pushing `main`, Railway auto-deploys the production web service.
-That does not deploy Firebase Functions, Firestore rules, Storage rules, or the docs site.
+That does not deploy Firebase Functions, Firestore rules, or Storage rules.
 Use [production-deploy.md](production-deploy.md) for the full release procedure.
 
 ## pre-promotion checklist
@@ -378,7 +378,6 @@ These surfaces are manual:
 - Firebase Functions
 - Firestore rules
 - Storage rules
-- docs site
 - agent installer release
 
 Manual means a merge to `main` does not automatically publish them.

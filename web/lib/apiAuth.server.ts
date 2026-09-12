@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { resolveSiteAccess } from '@/lib/sitePolicy.server';
+import { type Actor, type Capability, hasCapability } from '@/lib/capabilities';
 import {
   type ApiKeyEnvironment,
   type ApiKeyLookup,
@@ -407,30 +409,69 @@ export async function assertActiveUser(
   return userData;
 }
 
+/**
+ * Thin adapter over the decision core in `lib/sitePolicy.server.ts`.
+ *
+ * The decision itself moved to `resolveSiteAccess` in Wave 1 Task 1.2 so one
+ * implementation could serve both wrappers. This function keeps its signature
+ * and its throw behaviour exactly, because two routes call it directly
+ * (`app/api/cli/device-code/authorize`, `app/api/keys/_shared`) and much of the
+ * suite mocks it. The three enrolment routes that used to call it —
+ * setup/generate-token, agent/generate-installer, agent device-code authorize —
+ * moved to `assertUserHasSiteCapability` in 77edefde. Preserve both when touching
+ * this: the statuses and messages below are asserted across the suite, and
+ * `code: 'user_inactive'` is specifically what lets `authorizedSiteHandler`
+ * answer 403 instead of collapsing to 404.
+ */
 export async function assertUserHasSiteAccess(
   userId: string,
   siteId: string
 ): Promise<{ siteId: string; siteData: Record<string, unknown> | null }> {
-  const db = getAdminDb();
+  const outcome = await resolveSiteAccess(userId, siteId);
 
-  const siteDoc = await db.collection('sites').doc(siteId).get();
-  if (!siteDoc.exists) {
-    throw new ApiAuthError(404, 'Site not found');
+  if (!outcome.ok) {
+    switch (outcome.reason) {
+      case 'site_not_found':
+        throw new ApiAuthError(404, 'Site not found');
+      case 'user_inactive':
+        throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+          code: 'user_inactive',
+        });
+      case 'no_access':
+        throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
+    }
   }
 
-  const siteData = siteDoc.data() || null;
-  const isOwner = siteData?.owner === userId;
+  return { siteId, siteData: outcome.facts.siteData };
+}
 
-  const userDoc = await db.collection('users').doc(userId).get();
-  const userData = userDoc.exists ? userDoc.data() ?? null : null;
-  assertUserDataActive(userData);
-  const isSuperadmin = userData?.role === 'superadmin';
-  const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
-  const isAssigned = assignedSites.includes(siteId);
-
-  if (!isSuperadmin && !isOwner && !isAssigned) {
-    throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
+/**
+ * Site access AND a capability, for routes outside the `authorizedSiteHandler`
+ * stack that still need a role check.
+ *
+ * `assertUserHasSiteAccess` alone stopped being sufficient when the per-site-roles
+ * migration made `member` read-only: every route gating on bare membership
+ * silently became a grant to a read-only tier. Reuses the same decision core and
+ * the same capability matrix as the wrappers, so there is one answer to
+ * "may this user do this here", not two.
+ */
+export async function assertUserHasSiteCapability(
+  userId: string,
+  siteId: string,
+  capability: Capability,
+): Promise<{ siteId: string; siteData: Record<string, unknown> | null }> {
+  const result = await assertUserHasSiteAccess(userId, siteId);
+  const outcome = await resolveSiteAccess(userId, siteId);
+  const actor: Actor = {
+    type: 'user',
+    userId,
+    role: outcome.facts.globalRole,
+    siteRoles: outcome.facts.membershipRole
+      ? { [siteId]: outcome.facts.membershipRole }
+      : {},
+  };
+  if (!hasCapability(actor, capability, siteId)) {
+    throw new ApiAuthError(403, 'Forbidden: capability not granted');
   }
-
-  return { siteId, siteData };
+  return result;
 }

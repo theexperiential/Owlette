@@ -212,11 +212,21 @@ export function ManageUserSitesDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {/* Admin Notice */}
+          {/* Superadmins reach every site by global role. A global `admin` does
+              NOT — since the per-site-roles migration it grants nothing on a site
+              it holds no membership row for, and this callout previously told
+              operators the opposite. */}
+          {userRole === 'superadmin' && (
+            <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
+              <p className="text-accent-cyan text-sm">
+                <strong className="font-semibold">superadmin:</strong> this user reaches <strong>every site</strong> by their platform role, regardless of the assignments below.
+              </p>
+            </div>
+          )}
           {userRole === 'admin' && (
             <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
               <p className="text-accent-cyan text-sm">
-                <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The &quot;Assigned Sites&quot; list only controls which sites appear in this user&apos;s site dropdown for convenience.
+                <strong className="font-semibold">note:</strong> the account-level admin role grants nothing on a site on its own. access comes from the site assignments below, and a per-site role is set from that site&apos;s members page.
               </p>
             </div>
           )}

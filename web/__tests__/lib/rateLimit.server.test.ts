@@ -126,14 +126,14 @@ const userActor: Actor = {
   type: 'user',
   userId: 'user-1',
   role: 'admin',
-  sites: ['site-1'],
+  siteRoles: { ['site-1']: 'admin' },
 };
 
 const otherUserActor: Actor = {
   type: 'user',
   userId: 'user-2',
   role: 'admin',
-  sites: ['site-1'],
+  siteRoles: { ['site-1']: 'admin' },
 };
 
 const apiKeyActorA: Actor = {
@@ -141,7 +141,7 @@ const apiKeyActorA: Actor = {
   userId: 'user-1',
   apiKeyId: 'key-a',
   role: 'admin',
-  sites: ['site-1'],
+  siteRoles: { ['site-1']: 'admin' },
 };
 
 const apiKeyActorB: Actor = {
@@ -149,7 +149,7 @@ const apiKeyActorB: Actor = {
   userId: 'user-1',
   apiKeyId: 'key-b',
   role: 'admin',
-  sites: ['site-1'],
+  siteRoles: { ['site-1']: 'admin' },
 };
 
 const systemActor: Actor = {

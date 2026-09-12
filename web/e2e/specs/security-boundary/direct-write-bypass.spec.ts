@@ -4,6 +4,7 @@ import { type FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
   doc,
+  getDoc,
   getFirestore,
   setDoc,
   updateDoc,
@@ -47,6 +48,25 @@ async function expectPermissionDenied(
   }
 }
 
+async function expectAllowed(
+  name: string,
+  operation: () => Promise<unknown>,
+  checks: CheckResult[],
+): Promise<void> {
+  try {
+    await operation();
+    checks.push({ name, ok: true });
+  } catch (err) {
+    checks.push({
+      name,
+      ok: false,
+      code: errorCode(err),
+      message: errorMessage(err),
+    });
+    expect(`${name} was denied with ${errorCode(err)}`).toBe('');
+  }
+}
+
 test('live dev rejects direct browser control-plane writes post-lockdown', async () => {
   loadLocalEnv();
 
@@ -77,6 +97,26 @@ test('live dev rejects direct browser control-plane writes post-lockdown', async
       mfaEnrolled: false,
       requiresMfaSetup: false,
     });
+    // The member ROW is what grants site access; `users/{uid}.sites[]` above is
+    // the legacy mirror and grants nothing. Seeding only the mirror left this
+    // user with no access to the site AT ALL, so all four denials below fired
+    // because the site was unreachable rather than because the control-plane
+    // lockdown works — the drill would have passed against wide-open rules.
+    // `member` is deliberate: the read-only tier is exactly the actor this drill
+    // is about, someone with legitimate access who must still be refused direct
+    // writes.
+    await adminDb
+      .collection('sites')
+      .doc(ids.siteId)
+      .collection('members')
+      .doc(ids.uid)
+      .set({
+        uid: ids.uid,
+        role: 'member',
+        status: 'active',
+        addedAt: FieldValue.serverTimestamp(),
+        addedBy: 'security-boundary-drill',
+      });
     await adminDb
       .collection('sites')
       .doc(ids.siteId)
@@ -107,11 +147,24 @@ test('live dev rejects direct browser control-plane writes post-lockdown', async
 
     const clientDb = getFirestore(clientApp);
 
-    await setDoc(doc(clientDb, 'users', ids.uid, 'settings', 'security-boundary-smoke'), {
-      provider: 'none',
-      updatedAt: Date.now(),
-    });
-    checks.push({ name: 'preference write remains allowed', ok: true });
+    // POSITIVE CONTROL, and it has to come first: it proves the access is real.
+    // Without it a denial below cannot be distinguished from having no access,
+    // which is the precise way this drill was passing vacuously.
+    await expectAllowed(
+      'positive control — member can read the site it belongs to',
+      () => getDoc(doc(clientDb, 'sites', ids.siteId)),
+      checks,
+    );
+
+    await expectAllowed(
+      'preference write remains allowed',
+      () =>
+        setDoc(doc(clientDb, 'users', ids.uid, 'settings', 'security-boundary-smoke'), {
+          provider: 'none',
+          updatedAt: Date.now(),
+        }),
+      checks,
+    );
 
     await expectPermissionDenied(
       'deployment create direct write denied',
@@ -194,6 +247,7 @@ test('live dev rejects direct browser control-plane writes post-lockdown', async
         .collection('commands')
         .doc('pending')
         .delete(),
+      adminDb.collection('sites').doc(ids.siteId).collection('members').doc(ids.uid).delete(),
       adminDb.collection('sites').doc(ids.siteId).collection('machines').doc(ids.machineId).delete(),
       adminDb.collection('config').doc(ids.siteId).collection('machines').doc(ids.machineId).delete(),
       adminDb.collection('users').doc(ids.uid).delete(),

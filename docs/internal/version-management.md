@@ -17,7 +17,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 ### product version (`/VERSION`)
 
-**Current:** 3.2.3
+**Current:** 3.3.3
 
 **Tracks:** User-visible releases that bundle all components together.
 
@@ -30,7 +30,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 #### agent version (`agent/VERSION`)
 
-**Current:** 3.2.3
+**Current:** 3.3.3
 
 **Tracks:** Windows service agent code.
 
@@ -44,7 +44,7 @@ owlette uses **independent component versioning** for flexibility while maintain
 
 #### web version (`web/package.json`)
 
-**Current:** 3.2.3
+**Current:** 3.3.3
 
 **Tracks:** Next.js web dashboard code.
 
@@ -97,10 +97,9 @@ node scripts/sync-versions.js
 node scripts/sync-versions.js 2.1.0
 ```
 
-> **Use the .js script only.** `scripts/sync_versions.py` predates the desktop
-> app and writes just 3 of the 9 version surfaces — it misses
-> `desktop/package.json`, `tauri.conf.json`, `Cargo.toml`, `README.md`, and
-> the docs, so the shipped desktop binary would report the old version.
+> `sync-versions.js` is the only version-sync script. (A legacy
+> `sync_versions.py` that wrote just 3 of the 9 surfaces was removed in the
+> 2026-09 repo cleanup — if instructions elsewhere mention it, use the .js.)
 
 ### option 2: manual update (discouraged — see the file list sync-versions.js maintains)
 
@@ -312,8 +311,8 @@ git tag v2.0.5-agent
 
 - [changelog](../changelog.md) - Release history
 - Development guide: root `.claude/CLAUDE.md`
-- [firestore security rules](../setup/firestore-rules.md) - Security rules
+- [firestore security rules](../../web/content/docs/setup/firestore-rules.mdx) - Security rules
 
 ---
 
-**Last Updated:** 2026-08-30
+**Last Updated:** 2026-09-12

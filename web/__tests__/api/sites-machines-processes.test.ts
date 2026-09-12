@@ -89,7 +89,7 @@ function mockAuthorizedSiteHandler(options: Record<string, unknown>) {
   return handler(
     request,
       {
-        actor: { type: 'user', userId: auth.userId, role: 'admin', sites: [params.siteId] },
+        actor: { type: 'user', userId: auth.userId, role: 'admin', siteRoles: { [params.siteId]: 'admin' } },
         siteId: params.siteId,
         correlationId: `corr-${options.targetKind ?? 'site'}`,
         auth: auth.auth,

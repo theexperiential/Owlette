@@ -588,25 +588,47 @@ export interface TalonReassignResult {
 }
 
 /**
- * Resolve a uid to a capability-matrix actor. Reads `users/{uid}` rather than
- * trusting a caller-supplied role — the successor is named in a request body.
+ * Resolve a uid to a capability-matrix actor for a specific site. Reads
+ * `users/{uid}` and the successor's membership rather than trusting a
+ * caller-supplied role — the successor is named in a request body.
+ *
+ * `siteId` is required: the successor's authority is per-site, so an actor built
+ * without it would carry no standing and reject every candidate.
  */
 async function loadSuccessorActor(
   db: Firestore,
   uid: string,
+  siteId: string,
 ): Promise<{ ok: true; actor: UserActor } | { ok: false; reason: TalonSuccessorRejection }> {
-  const snapshot = await db.collection('users').doc(uid).get();
+  const [snapshot, memberSnapshot] = await db.getAll(
+    db.collection('users').doc(uid),
+    db.collection('sites').doc(siteId).collection('members').doc(uid),
+  );
   const data = snapshot.exists ? snapshot.data() : undefined;
   if (!data) return { ok: false, reason: 'not_found' };
   // Soft-deleted accounts keep their user doc, so `deletedAt` is the liveness test.
   if (data.deletedAt != null) return { ok: false, reason: 'soft_deleted' };
 
+  // `'user'` and anything unrecognised are the `member` tier — no global
+  // privilege. Standing on the site comes from the membership row below.
   const role = data.role === 'admin' || data.role === 'superadmin' ? data.role : 'member';
-  const sites = Array.isArray(data.sites)
-    ? (data.sites as unknown[]).filter((site): site is string => typeof site === 'string')
-    : [];
 
-  return { ok: true, actor: { type: 'user', userId: uid, role, sites } };
+  const memberData = memberSnapshot.exists ? memberSnapshot.data() : undefined;
+  const rawSiteRole = memberData?.status === 'active' ? memberData.role : undefined;
+  const siteRole =
+    rawSiteRole === 'owner' || rawSiteRole === 'admin' || rawSiteRole === 'member'
+      ? rawSiteRole
+      : undefined;
+
+  return {
+    ok: true,
+    actor: {
+      type: 'user',
+      userId: uid,
+      role,
+      siteRoles: siteRole ? { [siteId]: siteRole } : {},
+    },
+  };
 }
 
 /**
@@ -769,7 +791,7 @@ export async function reassignTalons(
     );
   }
 
-  const successor = await loadSuccessorActor(db, toUid);
+  const successor = await loadSuccessorActor(db, toUid, ctx.siteId);
   if (!successor.ok) {
     throw new TalonStoreError(
       400,

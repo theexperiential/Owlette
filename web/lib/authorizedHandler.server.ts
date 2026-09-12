@@ -3,7 +3,8 @@
  * authorization pipeline every api route runs before its handler:
  *
  *   1. resolveAuth → UserActor (api-key or session/id-token)
- *   2. site access (site wrapper only) — assertUserHasSiteAccess
+ *   2. site access + actor (site wrapper only) — resolveSiteAccess, the shared
+ *      decision core in lib/sitePolicy.server.ts, in one batched read
  *   3. securityConfig.read() for kill-switch state
  *   4. api-key scope — ALWAYS runs, never bypassed: it is the resilient line
  *      against a downgraded key gaining rights while capability enforcement
@@ -25,12 +26,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   ApiAuthError,
+  auditApiKeyUse,
   resolveAuth,
   requireScope,
-  assertUserHasSiteAccess,
   type ResolvedAuth,
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
+import { checkRoostVersion } from '@/lib/versionHeader';
+import {
+  resolveSiteAccess,
+  SITE_ID_RE,
+  type SiteAccessOutcome,
+} from '@/lib/sitePolicy.server';
 import {
   problem,
   problemForbidden,
@@ -39,12 +46,14 @@ import {
   problemScopeInsufficient,
   problemTokenExpired,
   problemUnauthorized,
+  problemValidation,
   ProblemType,
 } from '@/lib/apiErrors';
 import {
   type Actor,
   type Capability,
   type Role,
+  type SiteRole,
   type UserActor,
   hasCapability,
 } from '@/lib/capabilities';
@@ -96,10 +105,15 @@ export interface SiteHandlerOptions {
    */
   targetIdParam?: string;
   /**
-   * Permission an api-key caller needs (sessions/id-tokens bypass scope).
+   * Permission(s) an api-key caller needs (sessions/id-tokens bypass scope).
    * Default `'write'`; read-class routes must pass `'read'`.
+   *
+   * A LIST means ALL of them are required. Permissions are not hierarchical, so
+   * `['write', 'admin']` is a real requirement and not a redundant one — it is
+   * how the formerly double-gated routes keep the conjunction they always
+   * enforced.
    */
-  apiKeyPermission?: ApiKeyPermission;
+  apiKeyPermission?: ApiKeyPermission | ApiKeyPermission[];
   /**
    * Scope to enforce, default `site={siteId}:<permission>`. Nested public
    * routes can keep their pre-migration contract, e.g. `machine={id}:write`.
@@ -108,8 +122,25 @@ export interface SiteHandlerOptions {
     resource: ApiKeyResource;
     idParam?: string;
     id?: string;
-    permission?: ApiKeyPermission;
+    /** A list means ALL are required — see `apiKeyPermission`. */
+    permission?: ApiKeyPermission | ApiKeyPermission[];
   };
+  /**
+   * OPT IN to the roost version contract: reject an unsupported `Roost-Version`
+   * with 400, and flag a missing one so the route can advise.
+   *
+   * Opt-in rather than automatic, because `checkRoostVersion` REJECTS. It
+   * currently reaches 43 route files via the `_shared` gates; making it
+   * universal would extend a 400 to presets, talons, agent-tokens, api-keys and
+   * the platform surface, none of which has ever parsed the header. Routes set
+   * this only when they already had the behaviour — which means the 13 formerly
+   * double-gated routes, as their inner gate is removed.
+   *
+   * The check runs FIRST, ahead of auth, to preserve `_shared`'s ordering: a
+   * request with an unsupported version gets 400 there today even when
+   * unauthenticated, and moving it after auth would turn those into 401.
+   */
+  roostVersioned?: boolean;
 }
 
 export interface PlatformHandlerOptions {
@@ -140,13 +171,30 @@ export type PlatformRouteHandler<TParams = Record<string, string | undefined>> =
   routeContext?: { params: Promise<TParams> },
 ) => Promise<NextResponse> | NextResponse;
 
-function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
+/** One permission or many; callers may write either and mean "all of these". */
+function toPermissionList(
+  p: ApiKeyPermission | ApiKeyPermission[],
+): ApiKeyPermission[] {
+  return Array.isArray(p) ? p : [p];
+}
+
+/**
+ * `siteRoles` carries the caller's standing on the site this request names, and
+ * is `{}` on platform routes where no site was resolved. An empty map denies
+ * every site-scoped capability, which is the correct default: a route that never
+ * resolved membership must not be able to act on a site.
+ */
+function authToActor(
+  auth: ResolvedAuth,
+  role: Role,
+  siteRoles: Record<string, SiteRole>,
+): UserActor {
   return {
     type: 'user',
     userId: auth.userId,
     ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
     role,
-    sites,
+    siteRoles,
   };
 }
 
@@ -160,11 +208,12 @@ async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
     });
   }
   const rawRole = data?.role;
+  // `'user'` and every other value fall to the same tier as `'member'` — see
+  // normaliseRole in lib/sitePolicy.server.ts for why that matters.
   const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
-  const sites = Array.isArray(data?.sites)
-    ? (data?.sites as unknown[]).filter((s): s is string => typeof s === 'string')
-    : [];
-  return authToActor(auth, role, sites);
+  // No site is in scope on this path, so no per-site standing is resolved and
+  // every site-scoped capability denies. Platform routes are the only callers.
+  return authToActor(auth, role, {});
 }
 
 function authErrorToResponse(err: ApiAuthError): NextResponse {
@@ -384,6 +433,17 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       const targetKind: AuditTargetKind = options.targetKind ?? 'site';
       const routeParamsPromise = (routeContext?.params ?? Promise.resolve({} as TParams)) as Promise<Record<string, string | undefined>>;
 
+      // 0. Roost version, for routes that opt in. Deliberately ahead of auth:
+      // the `_shared` gates check it before resolving auth, so an unsupported
+      // version answers 400 even unauthenticated. Running it later would turn
+      // those into 401 and change a shipped contract.
+      let missingVersion = false;
+      if (options.roostVersioned) {
+        const versionCheck = checkRoostVersion(request);
+        if (!versionCheck.ok) return versionCheck.response;
+        missingVersion = versionCheck.missing === true;
+      }
+
       // 1. Resolve auth.
       let auth: ResolvedAuth;
       try {
@@ -399,6 +459,23 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         options.siteIdParam,
         routeParamsPromise,
       );
+      // SHAPE, not just presence (Wave 1 task 1.3). Without this the raw value
+      // went straight to Firestore: a non-site-shaped id simply MISSED, so the
+      // caller got 404 "site not found or no access" for input that was never a
+      // valid id — and for ids the SDK rejects client-side (containing '/', or
+      // the reserved __.*__ form) the read THREW and the wrapper answered 503.
+      // Three different answers for one class of bad input. `_shared` has always
+      // answered 400; both paths now do.
+      //
+      // Placed after auth on purpose. `_shared` validates first, so an
+      // unauthenticated caller learns whether an id is well-formed before
+      // proving anything; this order refuses them at 401 instead, and `_shared`
+      // is moved to match.
+      if (resolvedSiteId && !SITE_ID_RE.test(resolvedSiteId)) {
+        return problemValidation('invalid siteId format', {
+          siteId: ['must be 1-128 chars: letters, digits, underscore, hyphen'],
+        });
+      }
       if (!resolvedSiteId) {
         return problem({
           type: ProblemType.ValidationFailed,
@@ -436,47 +513,83 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         });
       }
 
-      // 3. Site access check.
+      // 3+4. Site access AND the actor's role/sites, from ONE round trip
+      // (lib/sitePolicy.server.ts). These were two steps and three document
+      // reads: assertUserHasSiteAccess read sites/{id} + users/{uid}, then
+      // loadUserActor read users/{uid} AGAIN. The decision core reads both
+      // once via getAll and hands back everything both steps needed.
+      //
+      // The response mapping below is deliberately still this wrapper's own —
+      // it answers 403 for an inactive user where _shared collapses to 404.
+      // Wave 1 Task 1.3 unifies the two mappings; keeping them separate here
+      // is what lets the parity matrix stay green across this extraction.
+      let outcome: SiteAccessOutcome;
       try {
-        await assertUserHasSiteAccess(auth.userId, siteId);
+        outcome = await resolveSiteAccess(auth.userId, siteId);
       } catch (err) {
-        if (err instanceof ApiAuthError) {
-          if (err.code === 'user_inactive') {
-            return authErrorToResponse(err);
-          }
-          // Don't leak existence: 403/404 both collapse to "not found or no access".
-          if (err.status === 404 || err.status === 403) {
-            return problemNotFound('site not found or no access');
-          }
-          return authErrorToResponse(err);
-        }
-        throw err;
-      }
-
-      // 4. Build user actor (role + sites).
-      try {
-        actor = await loadUserActor(auth);
-      } catch (err) {
-        if (err instanceof ApiAuthError) return authErrorToResponse(err);
-        logger.error('[authorizedSiteHandler] failed to load user actor', {
+        logger.error('[authorizedSiteHandler] failed to resolve site access', {
           context: 'authorizedHandler',
           data: { err: err instanceof Error ? err.message : String(err) },
         });
         return serviceUnavailable('could not load user record');
       }
 
+      if (!outcome.ok) {
+        if (outcome.reason === 'user_inactive') {
+          return authErrorToResponse(
+            new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+              code: 'user_inactive',
+            }),
+          );
+        }
+        // Don't leak existence: missing site and no access answer identically.
+        return problemNotFound('site not found or no access');
+      }
+
+      actor = authToActor(
+        auth,
+        outcome.facts.globalRole,
+        // Reached only when the outcome is ok, so a superadmin may legitimately
+        // have no membership; their capabilities short-circuit on global role.
+        outcome.facts.membershipRole
+          ? { [siteId]: outcome.facts.membershipRole }
+          : {},
+      );
+
       // 5. Read kill-switch config.
       const config = await securityConfig.read();
 
       // 6. API-key scope check — ALWAYS runs (never bypassed).
+      //
+      // A LIST of permissions, ALL of which must be held. API-key permissions are
+      // NOT hierarchical — `scopeMatches` (lib/apiKeyTypes.ts) is exact
+      // membership, so `admin` does not imply `write`, nor `write` `read`. The
+      // double-gated routes therefore enforced a CONJUNCTION (the wrapper's
+      // permission AND the inner helper's), and collapsing them to one
+      // permission would have widened access for any custom-scoped key holding
+      // one but not the other. Task 1.4 keeps that conjunction and states it
+      // here, once, instead of leaving it an accident of two gates.
       let scopeCheck: ScopeCheckResult;
+      const requiredPermissions = toPermissionList(
+        options.apiKeyScope?.permission ?? options.apiKeyPermission ?? 'write',
+      );
       try {
-        scopeCheck = requireScope(
-          auth,
-          options.apiKeyScope?.resource ?? 'site',
-          apiKeyScopeId,
-          options.apiKeyScope?.permission ?? options.apiKeyPermission ?? 'write',
-        );
+        scopeCheck = { isLegacy: false };
+        for (const permission of requiredPermissions) {
+          scopeCheck = requireScope(
+            auth,
+            options.apiKeyScope?.resource ?? 'site',
+            apiKeyScopeId,
+            permission,
+          );
+        }
+        // Only ever true for a route that opted in, so routes without the roost
+        // version contract cannot start emitting X-Roost-Version-Missing.
+        if (missingVersion) scopeCheck = { ...scopeCheck, missingVersion: true };
+        // The api-key audit event. `_shared` emits this on every gate; the
+        // wrapper never did, so api-key use went unaudited on every
+        // wrapper-only route. No-ops for session/id-token callers.
+        auditApiKeyUse(auth, siteId, request);
       } catch (err) {
         if (err instanceof ApiAuthError) {
           denyAudit(siteId, {
@@ -498,6 +611,12 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         ? 'capability'
         : undefined;
       if (config.capability_enforcement) {
+        // No ownership short-circuit. It existed because self-serve owners are
+        // created with global role `member` (lib/actions/bootstrapUser.server.ts),
+        // so a matrix keyed on the GLOBAL role locked an owner out of their own
+        // site. The matrix is keyed on per-site standing now, and `owner` is a
+        // row in it — so ownership is granted by the matrix rather than routed
+        // around it, and `sites/{siteId}.owner` is no longer read here at all.
         const ok = hasCapability(actor as Actor, options.capability, siteId);
         if (!ok) {
           denyAudit(siteId, {

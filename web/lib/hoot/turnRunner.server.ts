@@ -5,6 +5,11 @@
  * stream immediately and keeps running server-side even if the response dies
  * (proxy idle timeout, page reload, network drop).
  *
+ * - The machines it talks to are decided by the CALLER (route, follow-up sweep,
+ *   talon) and handed over resolved. The runner may only narrow that set against
+ *   what is online and hoot-enabled at turn start — it never re-derives it from
+ *   what was requested, so an approved tool call can't be re-aimed by anything
+ *   that changed between the request and the dispatch.
  * - The chunk stream is teed: one branch to the route, the other pumped via
  *   `readUIMessageStream` into throttled `writeSnapshot` calls on
  *   `chats/{chatId}/stream/current`, so a reattaching client can render the
@@ -41,37 +46,53 @@ import {
 } from 'ai';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
-  buildSystemPrompt,
+  buildHootSystemPrompt,
   createCheapModel,
   createModel,
+  type HootPromptMode,
   type ProcessSummary,
 } from '@/lib/llm';
 import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
 import {
   buildExecutableTools,
   getHootRequireTier3Approval,
-  getOnlineMachines,
+  listSiteMachines,
   resolveHootMaxTier,
   resolveLlmConfig,
   type SiteAccessLevel,
+  type SiteMachineSummary,
 } from '@/lib/hoot-utils.server';
 import {
+  applyApprovalConsumption,
+  reapplyConsumedParts,
   repairDanglingToolParts,
   STILL_RUNNING_ERROR,
+  type ApprovalConsumptionResult,
   type LostResultResolution,
 } from '@/lib/hoot/repairMessages';
+import { claimApproval } from '@/lib/hoot/approvalLedger.server';
+import { advisorCallsIn, modelHistoryFor, withAdvisor } from '@/lib/hoot/advisor';
+import { ADVISOR_TOOL_NAME } from '@/lib/llmModels';
 import {
+  approvalRequestedIds,
   finishTurn,
+  recordResolvedMachines,
   recordToolCommand,
   touch,
   writeSnapshot,
 } from '@/lib/hoot/turnStore.server';
+import {
+  SITE_TARGET_ID,
+  chatTargetFields,
+  type HootTarget,
+  type HootTurnMetadata,
+  type PriorTurn,
+  type ResolvedTargets,
+  type TurnTargetRecord,
+} from '@/lib/hoot/target';
 import { categorizeNewChat } from '@/lib/hoot/categorizeChat.server';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
 import { sanitizeForLog } from '@/lib/logSanitize';
-
-/** Sentinel machineId for site-wide mode (mirrors /api/hoot). */
-const SITE_TARGET_ID = '__site__';
 
 /** Transient heartbeat cadence — keeps proxies from seeing an idle stream. */
 export const HEARTBEAT_INTERVAL_MS = 20_000;
@@ -89,11 +110,24 @@ export interface StartTurnParams {
   chatId: string;
   turnId: string;
   siteId: string;
-  machineId: string;
-  machineName: string;
   messages: UIMessage[];
   userId: string;
   access: SiteAccessLevel;
+  /**
+   * The machines this turn dispatches to, already resolved by the caller
+   * against the site's listing (and, for an approval resume, inherited from the
+   * turn that asked). The runner narrows it at turn start and never widens it.
+   */
+  resolved: ResolvedTargets;
+  /** What the turn ASKED for — the same record the claim wrote on the stream doc. */
+  turnTarget: TurnTargetRecord;
+  /**
+   * The chat's stored SELECTION, given ONLY for a non-resume, user-sent turn.
+   * Absent means "leave what is stored alone": a resume, follow-up or talon turn
+   * targets a set the user did not just pick, and writing it back would move the
+   * chat's selection behind their back.
+   */
+  chatTarget?: HootTarget;
   /**
    * Ceiling on this turn's tool tier, intersected with what `access` earns so
    * it can only LOWER the tool set. Omitted = whatever `access` earns.
@@ -101,13 +135,62 @@ export interface StartTurnParams {
    * access re-resolution still demotes a demoted author to tier 1.
    */
   maxToolTier?: ToolTier;
-  /** Prior turn's recovery index: `toolCallId → machineId → { commandId }`. */
-  priorToolCommands?: Record<string, Record<string, { commandId: string }>> | null;
+  /** The previous turn's record, read inside the claim transaction. */
+  priorTurn: PriorTurn | null;
+  /**
+   * Force the tier-3 in-chat approval gate on for this turn, whatever the site
+   * setting says. Raises the gate, never lowers it. Scheduled follow-ups set
+   * it: nobody is watching the instant one fires, so a tier-3 tool has to wait
+   * for a person rather than auto-executing.
+   */
+  forceTier3Approval?: boolean;
   source?: 'user' | 'followup' | 'talon';
 }
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The resolved set, re-checked against the site listing at turn start. Turns
+ * queue behind one another and a machine can drop off (or have hoot switched
+ * off) between the request and the dispatch, so what the caller resolved is a
+ * CEILING: ids only ever leave this set. A machine that is no longer in the
+ * listing at all counts as offline — it can receive nothing either way.
+ */
+function narrowToLiveMachines(
+  resolved: ResolvedTargets,
+  machines: SiteMachineSummary[],
+): ResolvedTargets {
+  const byId = new Map(machines.map((machine) => [machine.id, machine]));
+  const ids: string[] = [];
+  const offline = [...resolved.skipped.offline];
+  const disabled = [...resolved.skipped.disabled];
+
+  for (const id of resolved.ids) {
+    const machine = byId.get(id);
+    if (!machine || !machine.online) offline.push(id);
+    else if (!machine.hootEnabled) disabled.push(id);
+    else ids.push(id);
+  }
+
+  // `fanOut` follows what was REQUESTED and is decided before this: a two-machine
+  // turn with one machine gone still reports per machine.
+  return { ids, fanOut: resolved.fanOut, skipped: { offline, disabled } };
+}
+
+/** Why a turn has nowhere to run — the site-wide copy is the one e2e pins. */
+function noLiveMachinesError(target: TurnTargetRecord, resolved: ResolvedTargets): Error {
+  // The kill switch alone, whatever the target's shape: machines that ARE online
+  // must not be reported as asleep, or the fix ("turn hoot back on") is invisible.
+  if (resolved.skipped.offline.length === 0 && resolved.skipped.disabled.length > 0) {
+    return new Error('Hoot is disabled on every machine this turn targets.');
+  }
+  return new Error(
+    target.machineIds === null
+      ? 'No machines are currently online in this site.'
+      : 'None of the selected machines are online with hoot enabled.',
+  );
 }
 
 /** Process configs from Firestore, for system-prompt context. */
@@ -210,19 +293,24 @@ async function resolveMachineEntry(
  * aggregates every machine into `{ machines: [{ machine, ...result }] }` (a
  * failure contributes `{ machine, error }`, an absent entry is skipped).
  * `null` when nothing resolves — the repair then synthesizes a lost-result error.
+ *
+ * The shape follows the turn that DISPATCHED the call (`prior.fanOut`), not the
+ * one recovering it: a fan-out recovered under a later single-machine turn must
+ * still hand back every machine's result, tagged, and one machine's result
+ * recovered under a fan-out must stay unwrapped.
  */
 function buildResolveLostResult(
   db: FirebaseFirestore.Firestore,
   siteId: string,
-  priorToolCommands: Record<string, Record<string, { commandId: string }>> | null,
-  isSiteMode: boolean,
+  prior: PriorTurn | null,
 ): (toolCallId: string) => Promise<LostResultResolution | null> {
   return async (toolCallId) => {
-    const machineEntries = priorToolCommands?.[toolCallId];
+    if (prior === null) return null;
+    const machineEntries = prior.toolCommands?.[toolCallId];
     const entries = machineEntries ? Object.entries(machineEntries) : [];
     if (entries.length === 0) return null;
 
-    if (!isSiteMode) {
+    if (!prior.fanOut) {
       const [machineId, { commandId }] = entries[0];
       const outcome = await resolveMachineEntry(db, siteId, machineId, commandId);
       if (!outcome) return null;
@@ -264,6 +352,11 @@ function firstUserText(messages: UIMessage[]): string {
  * existence at turn start, NOT message count, so a superseded first turn can't
  * permanently skip the title/createdAt stamp. Title is a placeholder until the
  * LLM categorizer replaces it, and an LLM title is never overwritten.
+ *
+ * The chat's target fields are written ONLY for a turn that carries a
+ * `chatTarget` — a user-sent, non-resume turn. Every other turn merges without
+ * them, so a follow-up firing on one machine, a talon chat's friendly label and
+ * a resumed approval all leave the stored selection exactly as it was.
  */
 async function persistChatMessages(
   db: FirebaseFirestore.Firestore,
@@ -271,7 +364,6 @@ async function persistChatMessages(
   messages: UIMessage[],
   isNewConversation: boolean,
 ): Promise<void> {
-  const isSiteMode = params.machineId === SITE_TARGET_ID;
   const title = isNewConversation
     ? firstUserText(messages).slice(0, 100) || UNTITLED_CHAT_TITLE
     : undefined;
@@ -281,6 +373,10 @@ async function persistChatMessages(
     id: m.id,
     role: m.role,
     parts: m.parts.map((p) => JSON.parse(JSON.stringify(p))),
+    // Per-turn display context (`metadata.hoot`). The transcript labels each
+    // assistant message from it, so dropping it here would leave a reloaded
+    // chat naming the live selector's machines on every old turn.
+    ...(m.metadata === undefined ? {} : { metadata: JSON.parse(JSON.stringify(m.metadata)) }),
   }));
 
   await db
@@ -290,9 +386,7 @@ async function persistChatMessages(
       {
         userId: params.userId,
         siteId: params.siteId,
-        targetType: isSiteMode ? 'site' : 'machine',
-        targetMachineId: isSiteMode ? null : params.machineId,
-        machineName: isSiteMode ? 'All Machines' : params.machineName,
+        ...(params.chatTarget ? chatTargetFields(params.chatTarget) : {}),
         ...(title ? { title } : {}),
         messages: serializedMessages,
         updatedAt: FieldValue.serverTimestamp(),
@@ -332,6 +426,11 @@ export function startTurn(
 
   // The repaired history (not the raw client history) is what gets persisted.
   let repairedHistory: UIMessage[] | null = null;
+
+  // Consumed-approval rewrites (one-shot ledger). The SDK's final message is
+  // seeded from the RAW history, so these must be re-applied before the final
+  // persist or a consumed part resurfaces as a dangling approval.
+  let consumedParts: ApprovalConsumptionResult['consumedParts'] = new Map();
 
   // Drives new-conversation semantics. Captured before the turn-start persist
   // creates the doc.
@@ -381,20 +480,30 @@ export function startTurn(
         chatExistedAtStart = true;
       }
 
-      const { messages: repairedMessages, repairedToolCallIds } =
-        await repairDanglingToolParts(params.messages, {
-          resolveLostResult: buildResolveLostResult(
-            db,
-            params.siteId,
-            params.priorToolCommands ?? null,
-            params.machineId === SITE_TARGET_ID,
-          ),
-        });
+      const resolveLostResult = buildResolveLostResult(db, params.siteId, params.priorTurn);
+      const { messages: danglingRepaired, repairedToolCallIds } =
+        await repairDanglingToolParts(params.messages, { resolveLostResult });
       if (repairedToolCallIds.length > 0) {
         console.warn(
           `[hoot] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${sanitizeForLog(chatId)}: ${sanitizeForLog(repairedToolCallIds.join(', '))}`,
         );
       }
+
+      // One-shot approval enforcement: claim every answered approval on the
+      // in-flight segment BEFORE any dispatch. A duplicate resume (reload,
+      // second tab) loses the claim and gets a terminal part instead of a
+      // second execution of an already-approved tier-3 tool.
+      const consumption = await applyApprovalConsumption(danglingRepaired, {
+        claim: (toolCallId) => claimApproval(db, chatId, toolCallId, { turnId }),
+        resolveLostResult,
+      });
+      consumedParts = consumption.consumedParts;
+      if (consumedParts.size > 0) {
+        console.warn(
+          `[hoot] blocked re-execution of ${consumedParts.size} already-consumed approval(s) in chat ${sanitizeForLog(chatId)}: ${sanitizeForLog([...consumedParts.keys()].join(', '))}`,
+        );
+      }
+      const repairedMessages = consumption.messages;
       repairedHistory = repairedMessages;
 
       // Persist the repaired history now so the user's just-sent message is
@@ -409,38 +518,77 @@ export function startTurn(
         console.error(`[hoot] turn-start persist failed for chat ${sanitizeForLog(chatId)}:`, error);
       }
 
-      const isSiteMode = params.machineId === SITE_TARGET_ID;
-      const onlineMachines = isSiteMode ? await getOnlineMachines(db, params.siteId) : [];
-      if (isSiteMode && onlineMachines.length === 0) {
-        throw new Error('No machines are currently online in this site.');
+      // Re-check the caller's resolved set against the site as it is NOW. This
+      // only ever removes machines (see `narrowToLiveMachines`), so an approved
+      // tool call cannot reach a machine the approver never saw.
+      const resolved = narrowToLiveMachines(
+        params.resolved,
+        await listSiteMachines(db, params.siteId),
+      );
+      if (resolved.ids.length === 0) throw noLiveMachinesError(params.turnTarget, resolved);
+      // The record has to name what this turn actually dispatches to before it
+      // dispatches: the NEXT approval in this chat binds to that list. A resume
+      // always rewrites it — the claim copied the list of the turn that ASKED,
+      // which is wider than what this one reaches whenever a bound machine has
+      // dropped off (and, for a legacy prior, is not a list at all). Every other
+      // turn was claimed with the caller's list, so it only rewrites when the
+      // narrowing above actually removed something. A write that did not land
+      // means the turn was superseded (or Firestore failed), and either way it
+      // must not go on to queue commands.
+      const inheritedResolvedSet = params.turnTarget.source === 'resume';
+      if (inheritedResolvedSet || resolved.ids.length !== params.resolved.ids.length) {
+        if (!(await recordResolvedMachines(db, chatId, turnId, resolved.ids))) {
+          throw new Error('this turn no longer owns the chat');
+        }
       }
+
+      const fanOut = resolved.fanOut;
+      // A fan-out dispatches from the id LIST, so the positional id is only the
+      // single path's target; in a fan-out it is just the legacy "not one
+      // machine" view, and the `chatMachineId` default it feeds is always
+      // overridden by `followupTarget` below.
+      const dispatchMachineId = fanOut ? SITE_TARGET_ID : resolved.ids[0];
 
       const [llmConfig, requireTier3Approval, processes] = await Promise.all([
         resolveLlmConfig(db, params.userId),
-        getHootRequireTier3Approval(db, params.siteId),
-        isSiteMode
+        // A forced gate needs no site read: the setting could only turn it off,
+        // and this flag exists to say it must not.
+        params.forceTier3Approval === true
+          ? Promise.resolve(true)
+          : getHootRequireTier3Approval(db, params.siteId),
+        // Process context is a single machine's configuration — a fan-out has no
+        // one machine to describe.
+        fanOut
           ? Promise.resolve<ProcessSummary[]>([])
-          : fetchProcessSummaries(db, params.siteId, params.machineId),
+          : fetchProcessSummaries(db, params.siteId, resolved.ids[0]),
       ]);
 
       const earnedTier = resolveHootMaxTier(params.access);
-      const toolDefs = getToolsByTier(
+      // A caller cap can only lower what access earns. Resolved once: the tools
+      // are cut to it, and `schedule_followup` records it so a follow-up this
+      // turn promises fires under the same ceiling.
+      const effectiveTier: ToolTier =
         params.maxToolTier === undefined
           ? earnedTier
-          : (Math.min(params.maxToolTier, earnedTier) as ToolTier),
-      );
+          : (Math.min(params.maxToolTier, earnedTier) as ToolTier);
+      const toolDefs = getToolsByTier(effectiveTier);
       const tools = buildExecutableTools(
         db,
         params.siteId,
-        params.machineId,
+        dispatchMachineId,
         chatId,
         toolDefs,
-        isSiteMode,
-        onlineMachines,
+        fanOut,
+        resolved.ids,
         {
           userId: params.userId,
           userRole: params.access.role,
+          userSiteRole: params.access.siteRole,
+          maxToolTier: effectiveTier,
           requireTier3Approval,
+          // A follow-up fires where it was promised (D-D): this turn's target
+          // AFTER any mention narrowing, with `null` left as the dynamic "all".
+          followupTarget: { machineIds: params.turnTarget.machineIds },
           toolCallbacks: {
             onCommandQueued: (toolCallId: string, commandId: string, machineId: string) =>
               recordToolCommand(db, chatId, turnId, toolCallId, commandId, machineId),
@@ -449,21 +597,75 @@ export function startTurn(
         },
       );
 
+      // The Opus 5 advisor joins the agent tools when this model may consult it, capped
+      // per reply; a reply resumed after a tier-3 approval keeps counting what it already
+      // consulted. History that holds advisor results must not reach a request without
+      // the tool — the API rejects it — so it is stripped when this turn can't offer one;
+      // failed consultations are always left out (see modelHistoryFor).
+      const { tools: turnTools, prepareStep } = withAdvisor(
+        llmConfig,
+        tools,
+        advisorCallsIn(repairedMessages[repairedMessages.length - 1]),
+      );
+      const modelHistory = modelHistoryFor(repairedMessages, ADVISOR_TOOL_NAME in turnTools);
+
+      // Which machines this turn reached, stated in the top-level system string:
+      // Sonnet 5 rejects a system message mid-conversation, and the set changes
+      // from turn to turn. Validated ids only — no client-supplied names.
+      const promptMode: HootPromptMode = !fanOut
+        ? 'single'
+        : params.turnTarget.machineIds === null
+          ? 'site'
+          : 'subset';
+
       const result = streamText({
         model: createModel(llmConfig),
-        system: isSiteMode
-          ? buildSystemPrompt('', true)
-          : buildSystemPrompt(params.machineName || params.machineId, false, processes),
+        system: buildHootSystemPrompt({
+          mode: promptMode,
+          machineIds: resolved.ids,
+          skipped: resolved.skipped,
+          processes,
+          narrowedByMention: params.turnTarget.source === 'mention',
+        }),
         // Pass `tools` so per-tool toModelOutput hooks (e.g. capture_screenshot
         // → image-url) also project PRIOR-turn outputs into model content.
-        messages: await convertToModelMessages(repairedMessages, { tools }),
-        tools,
+        messages: await convertToModelMessages(modelHistory, { tools: turnTools }),
+        tools: turnTools,
+        prepareStep,
         stopWhen: stepCountIs(10),
         abortSignal: abortController.signal,
+        onFinish: ({ finishReason }) => {
+          // A safety-classifier refusal ends the turn with no answer. The chat shows a
+          // notice for the empty reply; the log records why.
+          if (finishReason === 'content-filter') {
+            console.warn(`[hoot] the model declined the turn in chat ${sanitizeForLog(chatId)} (content-filter)`);
+          }
+        },
       });
 
+      // Per-turn display context, stamped onto the assistant message as it
+      // streams and kept by the persist. The transcript labels approval cards
+      // and captions from it; it is never a dispatch input, because the client
+      // re-sends assistant messages verbatim and could forge it.
+      const hootMetadata: HootTurnMetadata = {
+        turnId,
+        machineIds: resolved.ids,
+        via: params.turnTarget.source,
+        skipped: resolved.skipped,
+        // What the turn ASKED for, not what it resolved to: `null` is the
+        // dynamic "all machines", and only the request can tell that apart from
+        // a list that happens to cover the site today. The approval prompt says
+        // "every online machine" on the strength of this.
+        dynamic: params.turnTarget.machineIds === null,
+      };
+
       // Model/tool-loop errors arrive as error CHUNKS, not rejections.
-      writer.merge(result.toUIMessageStream({ onError: noteError }));
+      writer.merge(
+        result.toUIMessageStream({
+          onError: noteError,
+          messageMetadata: () => ({ hoot: hootMetadata }),
+        }),
+      );
     },
     onError: noteError,
     onFinish: async ({ responseMessage }) => {
@@ -475,17 +677,38 @@ export function startTurn(
       const baseHistory = repairedHistory ?? params.messages;
       const hasResponseParts =
         Array.isArray(responseMessage?.parts) && responseMessage.parts.length > 0;
-      const mergedMessages = !hasResponseParts
-        ? baseHistory
-        : baseHistory.length > 0 && baseHistory[baseHistory.length - 1].id === responseMessage.id
-          ? [...baseHistory.slice(0, -1), responseMessage]
-          : [...baseHistory, responseMessage];
+      // The SDK seeds its state from the RAW history (`originalMessages`), so a
+      // consumed approval can resurface on the response message as a dangling
+      // `approval-responded` part — re-apply the terminal rewrites.
+      const mergedMessages = reapplyConsumedParts(
+        !hasResponseParts
+          ? baseHistory
+          : baseHistory.length > 0 && baseHistory[baseHistory.length - 1].id === responseMessage.id
+            ? [...baseHistory.slice(0, -1), responseMessage]
+            : [...baseHistory, responseMessage],
+        consumedParts,
+      );
+
+      // What this turn ended waiting on, written with the terminal status.
+      // Stored rather than derived on read: snapshots are throttled, so the
+      // final approval-requested part may never have been persisted — and the
+      // next turn's resume binds to exactly these ids.
+      const finalMessage = mergedMessages[mergedMessages.length - 1];
+      const pendingApprovals =
+        finalMessage?.role === 'assistant' ? approvalRequestedIds(finalMessage) : [];
 
       try {
         if (turnError !== null) {
           // Still persist the partial history so a provider error can't erase
           // a brand-new conversation.
-          const stillOwned = await finishTurn(db, chatId, turnId, 'error', turnError);
+          const stillOwned = await finishTurn(
+            db,
+            chatId,
+            turnId,
+            'error',
+            turnError,
+            pendingApprovals,
+          );
           if (stillOwned) {
             await persistChatMessages(db, params, mergedMessages, isNewConversation);
           }
@@ -495,7 +718,14 @@ export function startTurn(
         // finishTurn first — its turnId-guarded write is the supersede check.
         // `false` means a newer turn owns persistence; writing our final array
         // would clobber it.
-        const stillOwned = await finishTurn(db, chatId, turnId, 'complete');
+        const stillOwned = await finishTurn(
+          db,
+          chatId,
+          turnId,
+          'complete',
+          undefined,
+          pendingApprovals,
+        );
         if (!stillOwned) return;
 
         await persistChatMessages(db, params, mergedMessages, isNewConversation);

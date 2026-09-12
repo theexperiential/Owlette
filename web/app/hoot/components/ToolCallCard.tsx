@@ -1,10 +1,48 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Ban, Check } from 'lucide-react';
+import { ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Ban, Check } from 'lucide-react';
 import { getToolByName } from '@/lib/mcp-tools';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { CopyButton } from './CopyButton';
+
+/**
+ * How many machines an approval prompt spells out before it collapses the rest
+ * into a count. One or two are named outright; past that the count leads, so the
+ * reader sees the blast radius before the list.
+ */
+const APPROVAL_IDS_SHOWN = 5;
+
+/**
+ * `kiosk-01` | `kiosk-01 and kiosk-02` | `7 machines: a, b, c, d, e and 2 more`,
+ * or `every machine in this site (7 reachable)` when the turn asked for the
+ * dynamic "all machines" rather than a chosen list.
+ *
+ * That distinction is the point: a named seven and the whole site can resolve to
+ * the same seven ids, and "7 machines" reads like a selection either way. On a
+ * prompt authorising a privileged command, the reader needs to know the set was
+ * everything.
+ *
+ * NOT "every online machine (7)": `machineIds` is what the turn resolved to,
+ * which drops offline machines AND online ones with hoot switched off. On a site
+ * with eight machines online and hoot off on one, that phrasing asserts the seven
+ * ARE every online machine, which is false — and false in exactly the place this
+ * label exists to be precise. "reachable" is the honest word for the count, and
+ * naming the SITE (not "online") is what carries the whole-site scope.
+ *
+ * A dynamic target that resolves to ONE machine is still named — the turn ran the
+ * single-machine path, and the phrase would be a grander way of saying `kiosk-01`.
+ */
+function formatApprovalTargets(machineIds: string[], dynamic = false): string {
+  if (machineIds.length === 1) return machineIds[0];
+  if (dynamic) return `every machine in this site (${machineIds.length} reachable)`;
+  if (machineIds.length === 2) return `${machineIds[0]} and ${machineIds[1]}`;
+  const shown = machineIds.slice(0, APPROVAL_IDS_SHOWN);
+  const rest = machineIds.length - shown.length;
+  const names = rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+  return `${machineIds.length} machines: ${names}`;
+}
 
 interface ToolCallCardProps {
   toolName: string;
@@ -13,8 +51,21 @@ interface ToolCallCardProps {
   isLoading?: boolean;
   /** Tier-3 human-in-the-loop gate; absent for tier-1/2 and executed calls. */
   approvalState?: 'requested' | 'denied';
-  /** Where the tool will run, e.g. a machine name or "all machines". */
+  /**
+   * FALLBACK for where the tool will run, e.g. a machine name or "all machines" —
+   * used only for turns with no per-turn metadata (chats written before hoot
+   * recorded a target per turn). `approvalTargetMachineIds` wins over it.
+   */
   approvalTargetLabel?: string;
+  /**
+   * The machines THIS turn resolved to, from the assistant message's metadata.
+   * It wins because the label follows the live header selector, which a loaded
+   * chat can have pointed anywhere — approving on what the selector shows is how
+   * a tier-3 call ends up credited to the wrong machine.
+   */
+  approvalTargetMachineIds?: string[];
+  /** That turn asked for the dynamic "all machines" — see formatApprovalTargets. */
+  approvalTargetDynamic?: boolean;
   onApprove?: () => void;
   onDeny?: () => void;
   /** Only set while executing with >=1 agent command dispatched (cancels the
@@ -31,6 +82,8 @@ export function ToolCallCard({
   isLoading,
   approvalState,
   approvalTargetLabel,
+  approvalTargetMachineIds,
+  approvalTargetDynamic,
   onApprove,
   onDeny,
   onCancel,
@@ -41,9 +94,15 @@ export function ToolCallCard({
   const toolDef = getToolByName(toolName);
 
   const hasError = result != null && typeof result === 'object' && !!(result as Record<string, unknown>).error;
-  const tierLabel = toolDef ? `Tier ${toolDef.tier}` : '';
+  // Lowercase like every other label on this screen.
+  const tierLabel = toolDef ? `tier ${toolDef.tier}` : '';
   const awaitingApproval = approvalState === 'requested';
   const denied = approvalState === 'denied';
+  // An empty list falls back rather than erasing the target: a prompt that names
+  // no machine at all is worse than one naming the selector's.
+  const approvalTarget = approvalTargetMachineIds?.length
+    ? formatApprovalTargets(approvalTargetMachineIds, approvalTargetDynamic)
+    : approvalTargetLabel;
 
   // Prefer the uploaded Firebase URL; fall back to inline base64 if upload failed.
   let screenshotSrc: string | null = null;
@@ -69,7 +128,9 @@ export function ToolCallCard({
   );
 
   return (
-    <div
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
       className={`my-2 rounded-lg border overflow-hidden ${
         awaitingApproval ? 'border-amber-500/40 bg-amber-500/5' : 'border-border bg-secondary/50'
       }`}
@@ -77,33 +138,37 @@ export function ToolCallCard({
       {/* Cancel is a sibling of the expand toggle, never nested inside it —
           nested interactive controls are an axe violation. */}
       <div className="flex items-stretch">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer"
-        >
-          {statusIcon}
+        <CollapsibleTrigger asChild>
+          <button className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer">
+            {statusIcon}
 
-          <Wrench className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+            <Wrench className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
 
-          <span className="font-mono text-xs text-foreground truncate">{toolName}</span>
+            <span className="font-mono text-xs text-foreground truncate">{toolName}</span>
 
-          {tierLabel && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0">
-              {tierLabel}
-            </span>
-          )}
-
-          <span className="ml-auto flex items-center gap-1 text-muted-foreground flex-shrink-0">
-            {awaitingApproval && <span className="text-xs text-amber-400">awaiting approval</span>}
-            {denied && <span className="text-xs">denied</span>}
-            {isLoading && !awaitingApproval && <span className="text-xs">executing...</span>}
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
+            {tierLabel && (
+              /* `--muted-foreground` on `--accent` is 4.40:1 in the app's forced-dark
+                 theme — under the 4.5:1 axe enforces on /hoot, and this is 10px text,
+                 so it is held to the normal-text threshold with no large-text relief.
+                 `--accent-foreground` at 70% composites to rgb(178,194,208) for 6.22:1,
+                 while staying quieter than the tool name beside it — which is what keeps
+                 the chip reading as metadata. (Work that ratio in GAMMA-ENCODED sRGB, the
+                 space the browser actually blends in: computing the same blend in linear
+                 light flatters it to 7.87:1.) The accent fill stays — against the card it
+                 is what makes the chip a chip, where `--secondary` would all but vanish. */
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground/70 flex-shrink-0">
+                {tierLabel}
+              </span>
             )}
-          </span>
-        </button>
+
+            <span className="ml-auto flex items-center gap-1 text-muted-foreground flex-shrink-0">
+              {awaitingApproval && <span className="text-xs text-amber-400">awaiting approval</span>}
+              {denied && <span className="text-xs">denied</span>}
+              {isLoading && !awaitingApproval && <span className="text-xs">executing...</span>}
+              <ChevronRight className={`h-3.5 w-3.5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+            </span>
+          </button>
+        </CollapsibleTrigger>
 
         {isLoading && onCancel && (
           <button
@@ -129,7 +194,7 @@ export function ToolCallCard({
         <div className="border-t border-amber-500/30 px-3 py-2.5 space-y-2.5">
           <p className="text-xs text-foreground">
             hoot wants to run the privileged <span className="font-mono">{toolName}</span> tool
-            {approvalTargetLabel ? <> on <span className="font-medium">{approvalTargetLabel}</span></> : null}. approve to continue, or expand to inspect the input.
+            {approvalTarget ? <> on <span className="font-medium">{approvalTarget}</span></> : null}. approve to continue, or expand to inspect the input.
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -175,7 +240,10 @@ export function ToolCallCard({
         </a>
       )}
 
-      {expanded && (
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        {/* Border and padding live on this inner box: on the animated element
+            they would hold it padding-tall at `height: 0`, and the slide would
+            end in a jump. */}
         <div className="border-t border-border px-3 py-2 space-y-2">
           {Object.keys(args).length > 0 && (
             <div>
@@ -223,7 +291,7 @@ export function ToolCallCard({
             );
           })()}
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

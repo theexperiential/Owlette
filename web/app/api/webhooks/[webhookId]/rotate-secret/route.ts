@@ -22,12 +22,14 @@ import {
   problemValidation,
 } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { readWebhookSecrets, webhookSecretRef as secretRef } from '@/lib/webhookSecrets.server';
 import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
 
 import {
   auditActorIdentifier,
   applyAuthDeprecations,
   requireSiteAuthAndScope,
+  requireWebhookManageCapability,
   validateSiteIdBody,
 } from '../../../_shared';
 
@@ -62,6 +64,11 @@ export async function POST(
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
 
+    // Site-admin action: rotation both mints a secret the caller gets to read and
+    // breaks every receiver still on the old one after the grace window.
+    const capabilityError = await requireWebhookManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
+
     const rawBody = await request.text().catch(() => '');
     const idem = await checkIdempotency(
       request,
@@ -88,21 +95,39 @@ export async function POST(
       return problemNotFound(`webhook ${webhookId} not found on site ${site.siteId}`);
     }
 
+    // The current secret lives in the server-only sibling; the webhook document
+    // carries only rotation METADATA. Fall back to the legacy in-document field
+    // so a subscription that predates the migration can still rotate.
+    const stored = await readWebhookSecrets(site.siteId, webhookId);
     const currentSecret =
-      typeof existing.signingSecret === 'string' ? existing.signingSecret : null;
+      stored.signingSecret ??
+      (typeof existing.signingSecret === 'string' ? existing.signingSecret : null);
 
     const newSecret = generateSigningSecret();
     const rotatedAtMs = Date.now();
     const previousSecretValidUntilMs = rotatedAtMs + GRACE_PERIOD_MS;
 
-    await ref.update({
+    // Both writes in one batch: a failure between them would leave the
+    // subscription signing with a secret the caller was never handed, or the
+    // metadata pointing at a rotation that did not happen.
+    const batch = db.batch();
+    batch.set(secretRef(db, site.siteId, webhookId), {
       signingSecret: newSecret,
       previousSigningSecret: currentSecret,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    batch.update(ref, {
+      // Strip any legacy in-document secrets left by a pre-migration write, so a
+      // rotation also heals the leak for that subscription.
+      signingSecret: FieldValue.delete(),
+      previousSigningSecret: FieldValue.delete(),
+      secret: FieldValue.delete(),
       previousSecretValidUntil: previousSecretValidUntilMs,
       secretRotatedAt: FieldValue.serverTimestamp(),
       secretRotatedBy: auth.userId,
       updatedAt: FieldValue.serverTimestamp(),
     });
+    await batch.commit();
 
     emitMutation({
       kind: 'webhook_mutated',

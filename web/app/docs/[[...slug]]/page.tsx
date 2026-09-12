@@ -28,9 +28,43 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     notFound();
   }
 
+  const { title, description } = page.data;
+  const path = slug?.length ? `/docs/${slug.join("/")}` : "/docs";
+
+  // `openGraph` and `twitter` MUST be set here, not just `title`/`description`.
+  // Next merges metadata field by field, so a page that sets only `title`
+  // inherits the ROOT layout's whole `openGraph` object — which is why every
+  // docs page was sharing the marketing card instead of its own.
   return {
-    title: page.data.title,
-    description: page.data.description,
+    title,
+    description,
+    alternates: {
+      canonical: path,
+      // Re-declared because page-level `alternates` REPLACES the root's rather
+      // than merging; omitting this drops the /llms.txt hint on docs pages.
+      types: { "text/plain": "/llms.txt" },
+    },
+    openGraph: {
+      title,
+      description,
+      url: path,
+      siteName: "owlette",
+      type: "article",
+      images: [
+        {
+          url: `/docs-og${path.replace("/docs", "")}/image.png`,
+          width: 1200,
+          height: 630,
+          alt: title,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [`/docs-og${path.replace("/docs", "")}/image.png`],
+    },
   };
 }
 

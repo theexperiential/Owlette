@@ -30,16 +30,32 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { type UIMessage, type FileUIPart } from 'ai';
-import { SITE_TARGET_ID } from '@/app/hoot/components/MachineSelector';
 import { uploadChatImage } from '@/lib/chatImageUtils';
 import type { PendingImage } from '@/app/hoot/components/ChatInput';
 import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
+import {
+  buildHootRequestBody,
+  readTurnErrorCode,
+  type HootChatContext,
+} from '@/lib/hoot/requestBody';
+import {
+  chatTargetFields,
+  formatTargetLabel,
+  readChatTarget,
+  type ChatTargetFields,
+  type ChatTargetType,
+  type HootTarget,
+} from '@/lib/hoot/target';
+import { toast } from '@/lib/toast';
 
 export interface ChatConversation {
   id: string;
   title: string;
   siteId: string;
-  targetType: 'machine' | 'site';
+  targetType: ChatTargetType;
+  /** The chat's stored selection; `null` = all machines. Display only — the
+   *  authoritative read is `readChatTarget` in `loadChat`, which fails closed. */
+  targetMachineIds: string[] | null;
   targetMachineId: string | null;
   machineName: string | null;
   source?: 'user' | 'autonomous';
@@ -64,6 +80,27 @@ export interface TurnToolCommand {
 /** `toolCallId → machineId → { commandId }` — the per-chat cancel index. */
 export type TurnToolCommands = Record<string, Record<string, TurnToolCommand>>;
 
+/**
+ * A `scheduled` follow-up on the open chat, as the composer chip renders it.
+ * Mirrors `FollowupSummary` in web/lib/hoot/followupStore.server.ts (server-only
+ * module — not importable here).
+ */
+export interface ScheduledFollowup {
+  id: string;
+  note: string;
+  /** Null only if the doc landed before its server timestamp resolved. */
+  runAtMs: number | null;
+}
+
+/**
+ * Data at rest keeps its `cortex` spelling (WIRE_NAMES class A) — the same
+ * literal firestore.rules and followupStore.server.ts pin.
+ */
+const FOLLOWUPS_COLLECTION = 'cortex-followups';
+
+// A chat holds 0–2 scheduled follow-ups in practice; the cap is a guard, not a page size.
+const FOLLOWUPS_LIMIT = 10;
+
 // Mirrors TURN_STALE_MS in web/lib/hoot/turnStore.server.ts: a `running` doc whose
 // heartbeat is older is a dead runner (deploy-killed) — surfaced as `turnStale`.
 const TURN_STALE_MS = 45_000;
@@ -75,16 +112,34 @@ const TURN_STALE_RECHECK_MS = 15_000;
 // when its error callback fires). permission-denied is expected for brand-new chats.
 const STREAM_RESUBSCRIBE_MS = 15_000;
 
+/** What `loadChat` found, for a caller that adopts a loaded chat's selection. */
+export interface ChatLoadedTarget {
+  chatId: string;
+  /** The chat's own site; null when the doc doesn't name one (unsendable). */
+  siteId: string | null;
+  /** `'invalid'` when the stored target was unreadable — send stays refused. */
+  target: HootTarget | 'invalid';
+}
+
 interface UseChatOptions {
   siteId: string;
-  machineId: string;
-  machineName: string;
+  /** The chat's machine selection; `machineIds: null` = every machine, dynamically. */
+  selection: HootTarget;
+  /** Every machine id in `siteId` — the vocabulary `@mentions` resolve against. */
+  siteMachineIds: string[];
   onChatPersisted?: (chatId: string) => void;
+  onChatLoaded?: (result: ChatLoadedTarget) => void;
 }
 
 export type ChatLoadError = 'not_found';
 
-export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted }: UseChatOptions) {
+export function useOwletteChat({
+  siteId,
+  selection,
+  siteMachineIds,
+  onChatPersisted,
+  onChatLoaded,
+}: UseChatOptions) {
   const { user } = useAuth();
   const [chatId, setChatId] = useState<string>(() => generateChatId());
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
@@ -117,23 +172,35 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   // Async turn state mirrored from `chats/{chatId}/stream/current`.
   const [toolCommands, setToolCommands] = useState<TurnToolCommands>({});
   const [turnStale, setTurnStale] = useState(false);
+  // True while `stream/current` reports a running turn — the UI suppresses
+  // approve/deny then, so a reload during an approval-resume can't re-arm the
+  // buttons for a tool that is already executing (OWL-47 companion guard).
+  const [turnRunning, setTurnRunning] = useState(false);
   // Bumped to resubscribe after a listener error (Firestore kills it on error).
   const [streamSubAttempt, setStreamSubAttempt] = useState(0);
+  // Scheduled follow-ups on the open chat — the chips above the composer.
+  const [followups, setFollowups] = useState<ScheduledFollowup[]>([]);
 
   // Use refs so the transport closure always reads the latest values
   const siteIdRef = useRef(siteId);
-  const machineIdRef = useRef(machineId);
-  const machineNameRef = useRef(machineName);
+  const selectionRef = useRef(selection);
+  const siteMachineIdsRef = useRef(siteMachineIds);
   const chatIdRef = useRef(chatId);
   const onChatPersistedRef = useRef(onChatPersisted);
+  const onChatLoadedRef = useRef(onChatLoaded);
   siteIdRef.current = siteId;
-  machineIdRef.current = machineId;
-  machineNameRef.current = machineName;
+  selectionRef.current = selection;
+  siteMachineIdsRef.current = siteMachineIds;
   chatIdRef.current = chatId;
   onChatPersistedRef.current = onChatPersisted;
+  onChatLoadedRef.current = onChatLoaded;
 
   // Live "a turn is running" flag — read in the transport closure, where state is stale.
   const streamRunningRef = useRef(false);
+  // Per-chat site/machine pin, written when a chat is started or loaded. The transport
+  // reads the ISSUING chat's pin (by transport id), never the live UI refs, so an
+  // orphaned instance's send cannot be retargeted by a chat/site switch (OWL-48).
+  const chatContextRef = useRef(new Map<string, HootChatContext>());
   // Latest toolCommands; cancelTool reads a call's per-machine commandIds from it.
   const toolCommandsRef = useRef<TurnToolCommands>({});
   // One-shot supersede flag, consumed per request in prepareSendMessagesRequest.
@@ -152,22 +219,27 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         api: '/api/hoot',
         // Send full UIMessages; the server rebuilds ModelMessages via convertToModelMessages,
         // which is what lets a tier-3 approval round-trip resume streamText.
-        prepareSendMessagesRequest: ({ messages }) => {
+        prepareSendMessagesRequest: ({ id, messages }) => {
           // Supersede when this send races an in-flight turn: our own live stream, the 409
           // auto-retry, or a reattached client. The one-shot flag is consumed per request so an
           // automatic approval re-send doesn't inherit it.
           const supersede = forceSupersedeRef.current || streamRunningRef.current;
           forceSupersedeRef.current = false;
-          return {
-            body: {
-              messages,
+          // Throws StaleChatInstanceError for an orphaned instance (chat switched while
+          // its response was in flight) — the send dies here instead of retargeting the
+          // new conversation. The error lands on the unrendered old instance.
+          return buildHootRequestBody({
+            transportChatId: id,
+            activeChatId: chatIdRef.current,
+            pinnedContext: (id && chatContextRef.current.get(id)) || null,
+            liveContext: {
               siteId: siteIdRef.current,
-              machineId: machineIdRef.current,
-              machineName: machineNameRef.current,
-              chatId: chatIdRef.current,
-              ...(supersede ? { supersede: true } : {}),
+              target: selectionRef.current,
+              siteMachineIds: siteMachineIdsRef.current,
             },
-          };
+            messages,
+            supersede,
+          });
         },
       }),
     []
@@ -182,7 +254,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       // The server-side runner is the persist authority (turnRunner.server.ts) — persisting
       // here would race it, and used to persist aborted turns.
       turnActiveRetriedRef.current = false; // turn completed — re-arm the 409 auto-retry
-      onChatPersistedRef.current?.(chatIdRef.current);
+      // onChatPersisted deliberately NOT fired here: an orphaned instance finishing after
+      // a chat switch would route the URL to the *current* chat via the live ref. It fires
+      // from mergeAndSet when the draft's real doc lands (derived from actual persistence).
     },
   });
 
@@ -190,28 +264,73 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const chatRef = useRef(chat);
   chatRef.current = chat;
 
+  // Keep the open chat's mention vocabulary current, and ONLY that. The machines
+  // listing usually lands after the pin (a deep link loads the chat before the
+  // header's site resolves) and arrives as a fresh array on every heartbeat, so
+  // this effect runs constantly — which is exactly why it must not touch
+  // `target`: re-aiming on state identity would overwrite a loaded chat's
+  // stored target, and a fail-closed `'invalid'` one, with whatever the header
+  // happened to show. Moving a target is a user gesture — `retargetActiveChat`.
+  // A chat pinned to another site keeps its own (empty) vocabulary: this listing
+  // is the header's site, not that chat's (OWL-48).
+  useEffect(() => {
+    const pinned = chatContextRef.current.get(chatId);
+    if (!pinned || pinned.siteId !== siteId) return;
+    chatContextRef.current.set(chatId, { ...pinned, siteMachineIds });
+  }, [chatId, siteId, siteMachineIds]);
+
+  // Re-aim the ACTIVE chat at a new selection: ticking a machine retargets the
+  // conversation you are in, and never starts one. The pinned siteId is the
+  // whole point of OWL-48, so a chat pinned to another site is left alone, and
+  // an unpinned chat is the initial mount's, which the transport addresses from
+  // the live context anyway.
+  const retargetActiveChat = useCallback((target: HootTarget) => {
+    const activeChatId = chatIdRef.current;
+    const pinned = chatContextRef.current.get(activeChatId);
+    if (!pinned || pinned.siteId !== siteIdRef.current) return;
+    chatContextRef.current.set(activeChatId, { ...pinned, target });
+  }, []);
+
+  // Re-read the runner-persisted history for the open chat. Used when the server
+  // refuses a resume: the local transcript still offers approve/deny buttons for
+  // a turn that is no longer the chat's latest.
+  const reloadPersistedMessages = useCallback(async () => {
+    if (!db) return;
+    const forChatId = chatIdRef.current;
+    try {
+      const snap = await getDoc(doc(db, 'chats', forChatId));
+      if (!isMountedRef.current || chatIdRef.current !== forChatId) return;
+      const messages = snap.data()?.messages;
+      if (Array.isArray(messages)) chatRef.current.setMessages(messages as UIMessage[]);
+    } catch (error) {
+      console.error('Failed to reload chat history:', error);
+    }
+  }, []);
+
   // Auto-retry once when a send lost the turn-lock race (server 409 `turn_active`): force
   // supersede and re-send. The ref guard prevents loops; with supersede forced a second
   // turn_active is impossible, so one retry suffices.
   useEffect(() => {
     if (chat.status !== 'error' || !chat.error) return;
-    // Prefer the parsed `code`; fall back to substring for non-JSON bodies.
-    const rawMessage = String(chat.error.message ?? '');
-    let isTurnActive: boolean;
-    try {
-      isTurnActive = (JSON.parse(rawMessage) as { code?: string }).code === 'turn_active';
-    } catch {
-      isTurnActive = false;
+    const code = readTurnErrorCode(String(chat.error.message ?? ''));
+
+    if (code === 'approval_stale') {
+      // The approval bound to a turn that is no longer the chat's latest, so the
+      // server refused it BEFORE consuming it. It must not reach the supersede
+      // retry below — that would re-send a refused approval as a fresh turn.
+      void reloadPersistedMessages();
+      toast.error('that approval expired — another turn ran in this chat. ask again.');
+      return;
     }
-    if (!isTurnActive) isTurnActive = rawMessage.includes('turn_active');
-    if (!isTurnActive) return;
+
+    if (code !== 'turn_active') return;
     if (turnActiveRetriedRef.current) return;
     turnActiveRetriedRef.current = true;
     forceSupersedeRef.current = true;
     chatRef.current.regenerate().catch((error) => {
       console.error('Failed to retry superseding send:', error);
     });
-  }, [chat.status, chat.error]);
+  }, [chat.status, chat.error, reloadPersistedMessages]);
 
   // Live turn subscription — `chats/{chatId}/stream/current`, written by the server-side
   // runner. Powers cancel targets (`toolCommands`), reattach when we hold no HTTP stream
@@ -224,6 +343,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     toolCommandsRef.current = {};
     setToolCommands({});
     setTurnStale(false);
+    setTurnRunning(false);
 
     if (!user || !db) return;
 
@@ -281,6 +401,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         const running = data?.status === 'running';
 
         streamRunningRef.current = running;
+        setTurnRunning(running);
         // Track the running turn id for stop(); clear the user-stop guard once terminal.
         currentTurnIdRef.current =
           running && typeof data?.turnId === 'string' ? data.turnId : null;
@@ -343,6 +464,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           console.error('Failed to subscribe to turn stream:', error);
         }
         streamRunningRef.current = false;
+        setTurnRunning(false);
         currentTurnIdRef.current = null;
         userStoppedRef.current = false;
         runningUpdatedAtMs = null;
@@ -367,6 +489,65 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       if (resubscribeTimeout !== null) clearTimeout(resubscribeTimeout);
     };
   }, [user, chatId, streamSubAttempt]);
+
+  // Scheduled follow-ups for the open chat, live so a fired or cancelled one drops its
+  // chip without a refetch. The `userId` filter is not optional: firestore.rules grant a
+  // read only where `resource.data.userId` is the caller, and a query missing that clause
+  // is rejected wholesale. Composite index: (chatId, status, userId, runAt).
+  useEffect(() => {
+    setFollowups([]);
+    if (!user || !db) return;
+
+    const followupsQuery = query(
+      collection(db, FOLLOWUPS_COLLECTION),
+      where('chatId', '==', chatId),
+      where('userId', '==', user.uid),
+      where('status', '==', 'scheduled'),
+      orderBy('runAt', 'asc'),
+      limit(FOLLOWUPS_LIMIT),
+    );
+
+    return onSnapshot(
+      followupsQuery,
+      (snapshot) => {
+        setFollowups(
+          snapshot.docs.map((docSnap) => {
+            const data = docSnap.data();
+            return {
+              id: docSnap.id,
+              note: typeof data.note === 'string' ? data.note : '',
+              runAtMs:
+                typeof data.runAt?.toMillis === 'function'
+                  ? (data.runAt.toMillis() as number)
+                  : null,
+            };
+          }),
+        );
+      },
+      (error) => {
+        console.error('Failed to subscribe to scheduled follow-ups:', error);
+        setFollowups([]);
+      },
+    );
+  }, [user, chatId]);
+
+  // Cancel a scheduled follow-up. Deliberately not optimistic — the chip clears when the
+  // doc leaves `scheduled` in the subscription above, so a rejected cancel stays visible.
+  // Never throws; the caller owns the in-flight UI state.
+  const cancelFollowup = useCallback(async (followupId: string) => {
+    try {
+      const response = await fetch(
+        `/api/hoot/followups/${encodeURIComponent(followupId)}`,
+        { method: 'DELETE' },
+      );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error('Failed to cancel follow-up:', response.status, detail);
+      }
+    } catch (error) {
+      console.error('Failed to cancel follow-up:', error);
+    }
+  }, []);
 
   // Cancel a running tool call across every machine it dispatched to (the agent kills each
   // process tree; the card resolves to "cancelled by user"). Per-machine commandIds come
@@ -471,6 +652,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       if (draft) {
         if (seen.has(draft.id)) {
           draftConvoRef.current = null; // persisted now — the real doc supersedes it
+          // Fire the persisted callback from actual persistence, and only for the
+          // chat that is still active — never from an orphaned turn's live ref.
+          if (draft.id === chatIdRef.current) {
+            onChatPersistedRef.current?.(draft.id);
+          }
         } else {
           deduped.unshift(draft);
         }
@@ -483,19 +669,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       const data = docSnap.data();
       if (!data) return null;
       if (data.siteId !== siteId) return null;
-      return {
-        id: docSnap.id,
-        title: data.title || UNTITLED_CHAT_TITLE,
-        siteId: data.siteId,
-        targetType: data.targetType || 'machine',
-        targetMachineId: data.targetMachineId || null,
-        machineName: data.machineName || null,
-        source: data.source || 'user',
-        autonomousSummary: data.autonomousSummary || null,
-        category: data.category || undefined,
-        createdAt: data.createdAt?.toDate?.() || new Date(),
-        updatedAt: data.updatedAt?.toDate?.() || new Date(),
-      };
+      return parseConversation(docSnap.id, data);
     }
 
     const unsubUser = onSnapshot(
@@ -541,7 +715,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     };
   }, [user, siteId]);
 
-  const startNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
+  const startNewChat = useCallback((overrides?: { siteId?: string; selection?: HootTarget }) => {
     loadChatRequestRef.current += 1;
     const newId = generateChatId();
     setChatId(newId);
@@ -550,10 +724,18 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setPendingImages([]);
     setChatLoadError(null);
 
-    // Overrides cover the machine-selector-changed-in-the-same-handler race.
-    const effectiveMachineId = overrides?.machineId ?? machineIdRef.current;
-    const effectiveMachineName = overrides?.machineName ?? machineNameRef.current;
-    const isSiteMode = effectiveMachineId === SITE_TARGET_ID;
+    // Overrides cover the selector-changed-in-the-same-handler race (a site
+    // switch updates state and starts a chat in one handler, before the refs
+    // re-render).
+    const effectiveSiteId = overrides?.siteId ?? siteIdRef.current;
+    const effectiveSelection = overrides?.selection ?? selectionRef.current;
+
+    // Pin the new chat's context for the transport (OWL-48).
+    chatContextRef.current.set(newId, {
+      siteId: effectiveSiteId,
+      target: effectiveSelection,
+      siteMachineIds: siteMachineIdsRef.current,
+    });
 
     // Optimistic sidebar entry tracked by id so the snapshot listener preserves it; drop
     // only the previous draft by id, not every row titled "new conversation".
@@ -561,10 +743,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     const draft: ChatConversation = {
       id: newId,
       title: UNTITLED_CHAT_TITLE,
-      siteId: siteIdRef.current,
-      targetType: isSiteMode ? 'site' : 'machine',
-      targetMachineId: isSiteMode ? null : effectiveMachineId,
-      machineName: isSiteMode ? 'All Machines' : effectiveMachineName,
+      siteId: effectiveSiteId,
+      ...draftTargetFields(effectiveSelection),
       source: 'user',
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -597,19 +777,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         for (const docSnap of snapshot.docs) {
           const data = docSnap.data();
           if (data && data.siteId === siteId) {
-            newConvos.push({
-              id: docSnap.id,
-              title: data.title || UNTITLED_CHAT_TITLE,
-              siteId: data.siteId,
-              targetType: data.targetType || 'machine',
-              targetMachineId: data.targetMachineId || null,
-              machineName: data.machineName || null,
-              source: data.source || 'user',
-              autonomousSummary: data.autonomousSummary || null,
-              category: data.category || undefined,
-              createdAt: data.createdAt?.toDate?.() || new Date(),
-              updatedAt: data.updatedAt?.toDate?.() || new Date(),
-            });
+            newConvos.push(parseConversation(docSnap.id, data));
           }
         }
         lastUserDocRef.current = snapshot.docs.length > 0
@@ -631,19 +799,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         for (const docSnap of snapshot.docs) {
           const data = docSnap.data();
           if (data) {
-            newConvos.push({
-              id: docSnap.id,
-              title: data.title || UNTITLED_CHAT_TITLE,
-              siteId: data.siteId,
-              targetType: data.targetType || 'machine',
-              targetMachineId: data.targetMachineId || null,
-              machineName: data.machineName || null,
-              source: data.source || 'user',
-              autonomousSummary: data.autonomousSummary || null,
-              category: data.category || undefined,
-              createdAt: data.createdAt?.toDate?.() || new Date(),
-              updatedAt: data.updatedAt?.toDate?.() || new Date(),
-            });
+            newConvos.push(parseConversation(docSnap.id, data));
           }
         }
         lastAutoDocRef.current = snapshot.docs.length > 0
@@ -691,6 +847,27 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
           const data = chatDoc.data();
           setChatLoadError(null);
+          // Pin the loaded chat's own context for the transport (OWL-48) — a
+          // send into this conversation must target ITS site and ITS machines,
+          // not whatever the header shows by the time the request fires.
+          //
+          // FAIL CLOSED: a target that can't be read pins `'invalid'`, which
+          // refuses to build a body until the user picks machines. This used to
+          // default to the site sentinel, so a chat doc the client couldn't
+          // parse dispatched to EVERY machine in the site.
+          const chatSiteId = typeof data?.siteId === 'string' ? data.siteId : null;
+          const read = readChatTarget(data);
+          const target: HootTarget | 'invalid' =
+            chatSiteId !== null && read.ok ? read.target : 'invalid';
+          chatContextRef.current.set(conversationId, {
+            siteId: chatSiteId ?? siteIdRef.current,
+            target,
+            // Mentions resolve against the CHAT's site, and only the live site's
+            // listing is loaded here — a chat from elsewhere gets none until the
+            // header follows it there.
+            siteMachineIds: chatSiteId === siteIdRef.current ? siteMachineIdsRef.current : [],
+          });
+          onChatLoadedRef.current?.({ chatId: conversationId, siteId: chatSiteId, target });
           if (data?.messages && Array.isArray(data.messages)) {
             chat.setMessages(data.messages as UIMessage[]);
           } else {
@@ -912,6 +1089,13 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     cancelTool,
     // Running turn whose heartbeat is >45s old — runner likely killed by a deploy.
     turnStale,
+    // A turn is live per the stream doc — the UI suppresses approve/deny while set.
+    turnRunning,
+
+    // Scheduled follow-ups on this chat (`cortex-followups`, owner-read), soonest first.
+    followups,
+    // Cancel one by id — DELETE /api/hoot/followups/{id}.
+    cancelFollowup,
 
     input: inputValue,
     setInput: setInputValue,
@@ -926,6 +1110,8 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     conversations: displayedConversations,
     loadingConversations,
     startNewChat,
+    // Point the open chat at a new selection, in place — no new conversation.
+    retargetActiveChat,
     loadChat,
     deleteChat,
     renameChat,
@@ -943,4 +1129,47 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
 function generateChatId(): string {
   return `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * One sidebar row from a chat document — the single parser the history listener
+ * and both `loadMore` branches share. DISPLAY ONLY: `loadChat` owns the
+ * authoritative, fail-closed target read that a send is addressed with.
+ */
+function parseConversation(id: string, data: DocumentData): ChatConversation {
+  const read = readChatTarget(data);
+  const storedType: unknown = data.targetType;
+  return {
+    id,
+    title: data.title || UNTITLED_CHAT_TITLE,
+    siteId: data.siteId,
+    // Legacy docs predate 'machines' and many predate the field entirely.
+    targetType: storedType === 'site' || storedType === 'machines' ? storedType : 'machine',
+    targetMachineIds: read.ok ? read.target.machineIds : null,
+    targetMachineId: data.targetMachineId || null,
+    machineName: data.machineName || null,
+    source: data.source || 'user',
+    autonomousSummary: data.autonomousSummary || null,
+    category: data.category || undefined,
+    createdAt: data.createdAt?.toDate?.() || new Date(),
+    updatedAt: data.updatedAt?.toDate?.() || new Date(),
+  };
+}
+
+/**
+ * Target fields for the optimistic draft row. An empty selection is legal
+ * transiently (D-G, send disabled) but has no encoding, so it is labelled rather
+ * than handed to `chatTargetFields`, which throws on it. The row is local: the
+ * runner writes the real fields when the chat first persists.
+ */
+function draftTargetFields(target: HootTarget): ChatTargetFields {
+  if (target.machineIds !== null && target.machineIds.length === 0) {
+    return {
+      targetType: 'machines',
+      targetMachineIds: [],
+      targetMachineId: null,
+      machineName: formatTargetLabel([]),
+    };
+  }
+  return chatTargetFields(target);
 }

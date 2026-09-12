@@ -9,6 +9,327 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [3.3.3] - 2026-09-12
+
+### added — a hoot chat talks to the machines you tick, and `@machine` narrows one turn
+
+The machine selector in the hoot header is now a checkbox picker: tick as many
+machines as the conversation should talk to, or leave **all machines** ticked,
+which stays dynamic — a machine added to the site later joins the target on its
+own. Changing the ticks **continues the conversation** instead of starting a new
+one, so a chat can follow a problem from one machine to its neighbours without
+losing its history; changing the site still starts a new chat. Each row says
+whether a machine is offline or has hoot off, the trigger shows how many of the
+targeted machines are online, and the selection is stored on the conversation
+and remembered per site across your devices — reopening an old chat restores the
+machines it was talking to.
+
+Typing `@` in the composer completes a machine name and narrows **that turn
+only**: the chat's own ticks are untouched and the next message goes back to
+them. The parser is deliberately conservative, so a pasted PowerShell `@(...)`,
+an `@splat`, an email address or a fenced code block is never read as targeting.
+Mentions come from the dashboard composer — the public conversations API, the
+SDKs, the CLI and chat-scoped API keys get no narrowing.
+
+A ticked machine that is offline or has hoot off is skipped: the turn runs on
+the rest, the model is told which machines were left out, and the header warns
+before you send. A machine you *named* with `@` is refused instead of skipped,
+so a mention can never quietly miss. A chat whose stored target cannot be read
+asks you to pick machines rather than falling back to the whole site.
+
+### changed — hoot off on a machine now means off on every path
+
+A machine with the hoot toggle switched off has always been skipped by
+single-machine chats. It is now skipped by **every** dispatch: site-wide and
+multi-machine chats, scheduled follow-ups, site-wide talons, and the public
+conversations API's site mode. **This changes behaviour for sites that never
+touch the new picker** — a machine you switched hoot off on, which a site-wide
+chat has been reaching anyway, now receives nothing. A talon whose site has no
+online machine with hoot on records the run as *skipped* rather than failed, so
+it is not auto-disabled over it, and the run records which machines it skipped.
+
+### changed — a tier-3 approval is bound to the turn that asked for it
+
+Approving a privileged call now runs it on the machines **that turn** resolved
+to, named on the approval card, rather than on whatever the picker happens to
+show when you come back to the chat — ticking more machines while a card waits
+never widens it. If another turn has run in the conversation since the approval
+was requested — a follow-up firing, or a message sent from another device — the
+approval no longer matches the turn it belongs to and is refused with "that
+approval expired — another turn ran in this chat. ask again."; nothing is queued
+on any machine and the approval is not spent, so the request can be made again.
+Bound machines are re-checked when you answer, and an approval with nothing
+reachable left is held rather than consumed.
+
+A follow-up fires on the machines the turn that scheduled it was targeting,
+re-validated when it comes due; if none of them is still in the site, it is
+marked failed with the reason rather than dispatched somewhere else.
+
+### fixed — the hoot power toggle, and a follow-up's tool limit
+
+The per-machine hoot toggle in the chat header could switch hoot off but never
+back on: the dashboard never read the machine's stored flag, so the toggle
+always believed hoot was already on. It now reflects what is stored.
+
+A follow-up scheduled by a chat-scoped API key — a caller capped to read-only
+tools — fired later with the chat owner's tool tier, so a turn that could only
+read could schedule one that could act. A follow-up now fires with the lower of
+the tier its scheduling turn had and the tier its owner earns at fire time.
+Follow-ups scheduled before this release keep the old behaviour, since their
+records do not carry the limit.
+
+### changed — hoot runs on Claude Sonnet 5, and can consult Claude Opus 5
+
+Hoot now defaults to Claude Sonnet 5 for accounts that haven't picked a model, and
+the model picker in settings starts a new key on it; an account that already saved
+a model keeps it until you pick another. Sonnet 5 thinks before it answers, and
+"thinking..." stays up until the reply starts. On a problem it judges hard, it can
+consult Claude Opus 5 partway through an answer — Anthropic's advisor tool, at most
+twice per reply — and the chat notes each consultation. They bill at Opus rates on
+your own Anthropic key. Claude Haiku 4.5, Sonnet 4.6 and Opus 4.6–4.8 can consult
+it too; Opus 5, the Fable models, older Claude models and OpenAI models don't.
+
+A reply that comes back empty — for instance when the model declines the request —
+now says so instead of leaving a blank reply.
+
+### added — a resizable conversation list, and a simpler share dialog
+
+Hoot's conversation list can be dragged wider from its right edge — 200px to
+560px, double-click to reset — and both that width and whether the list is
+collapsed are remembered for you across sessions and devices. The list starts
+wider than before, and a row's rename and delete controls now sit over the end
+of the title instead of beside it, so a conversation's generated name has the
+full width of the column to be read in.
+
+The share dialog leads with the preview: what a link includes and leaves out is
+folded behind a "more" link, the expiry sits with the buttons that use it, and
+creating a link copies it to your clipboard and says so. Every link a
+conversation has can be copied from its row, and those rows now carry the time
+each link was made, not only the date. The dialog itself no longer scrolls — the
+preview absorbs the space as links come and go — and it renders the conversation
+on the same surface, with the same avatars and rails, that the live chat does.
+
+A tool call's inputs and outputs slide open and closed rather than snapping, at
+every tier, and editing a message to resend it now opens a full-width box that
+grows with what you type.
+
+### added — share a hoot conversation as a public page
+
+A hoot conversation you started can now be published as a read-only page at
+`/share/{token}`, readable by anyone holding the link without signing in. The
+share dialog renders that finished page before anything is created, so what you
+preview is exactly what a reader gets.
+
+What goes out is a snapshot, frozen at the moment the link is created: your
+messages and hoot's replies as text, plus each tool call collapsed to its name
+and outcome. Tool inputs and outputs — hostnames, paths, log lines, command
+output — are never published, and messages sent afterwards never join a link
+that already exists. Links expire after 30 days by default, with 7 days, 90
+days, and never-until-revoked also on offer; every link a conversation has is
+listed in the same dialog and can be revoked there, and the page is marked
+`noindex`. Autonomous conversations have no author and cannot be shared.
+
+### fixed — offline machines and status badges are readable
+
+In the list view, an offline or restarting machine's metrics were faded to 40%
+opacity, which dropped its device names and readings below the 4.5:1 contrast
+minimum for text. They are now dimmed to 80%. The red offline, restart, and
+failed-process badges use white text instead of near-black, a process on an
+offline machine reads as grey on grey instead of dark on dark, and hoot's
+sidebar group headers use the full muted text color.
+
+### security — dependency updates
+
+- `@simplewebauthn/server` 13.3.3: passkey registration checks that attestation
+  certificates chain to a trust anchor.
+- `ai` 6.0.280 with matching `@ai-sdk/*` providers: fixes uncontrolled resource
+  consumption in `@ai-sdk/provider-utils`.
+- `vitest` 4.1.11 in the desktop app's test toolchain: fixes a path traversal in
+  `@vitest/mocker` (development only; nothing ships in the app).
+
+### fixed — email and pairing links always point at the configured site address
+
+Alert, digest, and API-key-expiry emails, the unsubscribe confirmation, and the
+agent and CLI pairing links built their URLs from the host of the request that
+produced them. They now use the configured site address (`NEXT_PUBLIC_BASE_URL`),
+so a request served through another hostname — such as the failover origin — still
+sends people to owlette.app.
+
+### fixed — a process you close by hand no longer keeps reading as running
+
+Close a managed app yourself and switch its launch mode to **off** before
+owlette's next check, and the process kept showing as running — a green dot and
+a "started N seconds ago" on something that had already exited. It corrected
+itself eventually, up to five minutes later, and not at all if Windows had
+recycled the process id onto something unrelated in the meantime.
+
+owlette wrote a status when it launched a process and when it stopped one, but
+never when a process exited on its own: the stale status was only ever replaced
+as a side effect of relaunching. Take the relaunch away — by switching the mode
+off, or because a scheduled process had left its window — and nothing replaced
+it. Switching a launch mode off now checks whether the process is still alive
+and settles its status immediately, and the periodic cleanup verifies process
+identity rather than just asking whether the id exists, so a recycled id can no
+longer keep a dead entry looking alive.
+
+A process that really is running is untouched, and keeps its stop and restart
+controls. Switching a launch mode off has never stopped a running process and
+still doesn't.
+
+## [3.3.2] - 2026-09-09
+
+### fixed — a failed display enumeration is no longer reported as monitors being removed
+
+When the agent could not read the display configuration at all, it reported that
+as every monitor having been disconnected: one CRITICAL alert per panel, emailed
+immediately, naming displays that were still plugged in. The dashboard kept
+showing those monitors present the whole time, because the upload path already
+refused the bad reading while the alert path did not.
+
+It also remembered the empty reading, so the next successful check announced
+every monitor as newly *added* — a disconnect/reconnect flap for each failure.
+
+The agent now treats "I could not look" as its own case: no alert, no state
+change, and the reading is discarded rather than remembered.
+
+This only affects alerts caused by a failed enumeration. A check that succeeds
+but returns an incomplete monitor list is a separate case and still alerts; if
+you are seeing these, the agent log records `build_display_profile: enumeration
+failed` at the moment of each affected alert when this fix applies.
+
+### changed — the service host is rebuilt with version metadata, after Defender began quarantining it
+
+On 2026-09-08 Windows Defender's machine-learning classifier (definition set
+1.459.111.0) started quarantining `owlette-host.exe` — the Windows service
+that supervises the agent — as `Trojan:Win32/Bearfoos.B!ml`. It was a false
+positive on the file's shape, not its behaviour: a small, size-optimised,
+stripped, statically linked executable with no version information is also
+what a malware dropper looks like. When Defender opened the file it removed
+both the file and the `OwletteService` registration. The agent's Python
+process survived as an orphan and kept reporting the machine healthy, so the
+dashboard did not notice.
+
+Every installer from 3.2.3 to 3.3.1 ships that binary. 3.3.2 rebuilds it with
+a proper Windows version resource (company, product, description, file
+version) and an ordinary release profile; current definitions scan the result
+clean, including under real-time protection. The static CRT link introduced in
+3.2.3 is kept — it is what lets the service start on a freshly imaged machine.
+
+If a machine on 3.2.3–3.3.1 shows `OwletteService` missing while the dashboard
+still shows it online, this is why. Install 3.3.2 over it; the installer
+replaces the host and re-registers the service. No Defender exclusion is
+needed for owlette, and the installer does not add one.
+
+## [3.3.1] - 2026-09-08
+
+> This release removes a public API surface and changes who may do what on a
+> site. Both are breaking changes; the version is a patch bump by release
+> decision, so read the two `breaking` sections below before upgrading.
+
+### breaking — site roles are per site, and a global admin no longer grants access
+
+Who can do what on a site is now decided by that person's role **on that site**,
+not by their account-level role. The same person can own one site, administer a
+second and be a plain member of a third.
+
+Previously an account-level `admin` was treated as an administrator of every
+site it could reach. One role, granted once, applied everywhere — so adding
+someone to a second site silently handed them administrative rights there too.
+That is closed: an account-level `admin` role now grants **nothing** on a site
+by itself. Only a platform superadmin still reaches every site.
+
+**the three per-site roles**
+- **owner** — everything an admin can do, plus deleting the site and
+  transferring ownership. Every site has exactly one, and an owner cannot be
+  demoted in place; ownership moves by transfer.
+- **admin** — machine commands and configuration, deployments, roosts, talons,
+  webhooks, logs, and managing membership.
+- **member** — read-only: view machines, capture screenshots, open live view.
+
+**what changes for you**
+
+Adding a member as an `admin` now genuinely makes them an admin of that site.
+Before, the request was recorded and then quietly downgraded unless the account
+already held a global admin role — the dashboard, the API response and both SDKs
+all reported that downgrade even when a real site-admin grant had been written.
+Roles are also editable per site from the members page; the old advice to contact
+support to change a role no longer applies.
+
+**enrolling a machine now requires site-admin.** Generating an installer, minting
+a setup token, or authorizing a pairing code all issue a machine identity plus a
+non-expiring refresh token, and revoking one has always been an administrator's
+job — so issuing one can no longer be less. A plain **member** who currently runs
+installers will receive `403` after this release. Promote the people who deploy
+your machines to **admin** on the sites they deploy to.
+
+**for operators upgrading**
+
+Membership rows are created by a one-time backfill that must land together with
+the security rules and the collection-group index — in that order, index first.
+Until all three are live, per-site access cannot be resolved. If you self-host,
+run `scripts/migrations/backfill-per-site-membership.mjs` (it has a `--verify`
+mode and a rollback path) before promoting the web release.
+
+`roleHonored` in the add-member API response is now always `true` and is
+retained only so the response shape does not change. It previously reported
+whether an account's global role would make an `admin` request stick, which is
+no longer how any of this works.
+
+
+### fixed — agent: three faults that made the fleet quieter than it should have been
+
+**The roost kill switch had never actually stopped anything on an agent.** The agent read
+the flag through a method its Firestore client does not have, swallowed the resulting error,
+and cached the failure as "enabled" for the full TTL — so no request was ever made and the
+switch was never observed, while the changelog said it was checked before every sync. Agents
+now read `roostEnabled` from the server-mediated `/api/agent/site` projection, and a disabled
+site genuinely halts new roost work.
+
+**A stalled display enumeration could stall the heartbeat, and the machine would read
+offline.** Two watchdogs used a thread-pool context manager whose exit waits for the worker,
+so the timeout they advertised bounded nothing: the call blocked for the full duration of the
+very hang the watchdog existed to survive. One of them was the only bound on the heartbeat
+path. Both now abandon the stalled worker, as two sibling watchdogs in the same codebase
+already did.
+
+**A screenshot request could freeze process monitoring for the better part of a minute.** The
+Cortex/hoot IPC pump ran on the 5-second service loop, and a single `capture_screenshot`
+takes around 55 seconds end to end. It now runs off the loop, one at a time, with the same
+result contract.
+
+### breaking — the legacy by-URL distribution path is removed
+
+roost is now the only way to get files onto a machine. The v1 "point the fleet at a hosted ZIP and let the agent download and extract it" path is gone in one clean cut — no deprecation window, no compatibility shim. An agent that receives a `distribute_project` command now logs and skips it.
+
+**removal surface**
+- API routes: `POST|GET /api/sites/{siteId}/project-distributions`, `GET|DELETE /api/sites/{siteId}/project-distributions/{distId}`, and `POST /api/sites/{siteId}/project-distributions/{distId}/cancel` all 404. Their OpenAPI paths and the `listProjectDistributions` / `createProjectDistribution` / `getProjectDistribution` / `deleteProjectDistribution` / `cancelProjectDistribution` operations are dropped from the published spec.
+- Agent commands: `distribute_project` and `cancel_distribution` no longer have handlers, and `agent/src/project_utils.py` (download, ZIP extract, verify, cleanup) is deleted. The agent no longer extracts archives at all.
+- Dashboard: the roost dialog's `by url` source picker and its project-URL field are gone — uploading a folder is the only source. Saved distribution presets are unaffected; a stored `project_url` on one is simply no longer read.
+- Security rules (2.9.0): the `sites/{siteId}/project_distributions/{distributionId}` block is removed, so the collection falls through to default-deny for every verb.
+
+**data at rest** — existing `project_distributions` documents are **not** deleted. They stay in Firestore, unreachable from any client or server route. Nothing reads them; no archival or purge job was run.
+
+**migration** — recreate any recurring by-URL deployment as a roost: open `/roosts`, click `new roost`, drop the project folder, and pick the same target machines. You get content-addressed chunking, resumable uploads, immutable versions, and one-click rollback, none of which the URL path ever had.
+
+## [3.3.0] - 2026-09-05
+
+### changed
+
+- **owlette now only ever manages processes it launched or deliberately inherited.** every launch — and every deliberate adoption of an already-running instance — writes a durable identity record: the PID plus the process's creation time and the executable it runs. every kill, restart, stall recovery, schedule-window stop, and deployment close the agent performs first proves the live process still matches that record, and refuses rather than guesses — a PID that Windows has recycled, a process whose identity cannot be read, or a record belonging to a different entry comes back as a plain `Error:` result naming the reason. previous versions never re-verified a PID before terminating it.
+- **where owlette previously adopted an arbitrary same-image instance, it now launches a fresh one it can identify.** several instances of one executable with nothing configured to tell them apart used to be resolved by picking one — and picking wrong meant monitoring, and eventually killing, a process owlette never launched. ambiguity now means a fresh launch. this is safe because the identity record makes owlette re-recognise its own child after every service restart: an entry can produce a duplicate at most once, ever, and then converges on the instance owlette launched. setting the entry's path/args tells instances apart up front and avoids even that one duplicate.
+- **upgrading re-verifies every supervised process; most carry over untouched.** state files written by earlier versions carry no identity records, so on its first start after the upgrade owlette does not trust recorded PIDs. an instance it can still identify unambiguously — the entry's path/args in the process's command line, or the only instance of its executable on the machine — is inherited in place and recorded: no restart, no interruption. an entry whose instance cannot be told apart from look-alikes launches fresh instead, and the unidentifiable instance is left running unmanaged — owlette will not terminate a process it cannot verify — so close such stragglers by hand, or set path/args before upgrading so there are none. every service restart after that re-adopts exactly the instances owlette launched or inherited.
+
+### fixed
+
+- **a deployment's close_processes no longer kills by image name across the whole machine.** previously every process on the box whose filename matched a close name died — owlette's or not: a deployment closing `TouchDesigner.exe` took down every TouchDesigner on the machine. close names now resolve to configured entries, and from there to those entries' recorded instances only, each identity-verified before the terminate; a name matching no managed entry is logged and skipped.
+- **a process that cannot be launched or verified now shows as failed.** the red `LAUNCH_FAILED` state has been rendered by the desktop app and the dashboard for years, but nothing ever wrote it — a broken executable path or a refused operation left the entry on the hollow inactive ring, indistinguishable from a launch mode set to off. it is now written whenever the executable cannot be resolved, a launch fails, or an operation is refused because the process could not be verified as owlette's, and it clears on the entry's next successful launch. the one gap is an entry that has never launched at all: with no status row to carry the mark, it stays inactive, and the log and the command result are the only signals.
+
+## [3.2.4] - 2026-09-05
+
+### changed
+
+- **internal cleanup only — no behaviour changes.** this release removes code that stopped being reachable when the python interface was replaced in 3.0.0, and folds several copy-pasted implementations into one each. the tkinter colour tables, window-title lookups and window-closing routine that served the old interface are gone, along with a handful of functions and parameters nothing had called since. the three near-identical screenshot pipelines, the token-cloning logic that existed in two modules, and the command-completion writers that differed only in a status word now each have a single implementation. agents on 3.2.3 gain nothing by updating; the value is in a smaller, clearer codebase for what comes next.
+
 ## [3.2.3] - 2026-08-30
 
 ### fixed
@@ -126,7 +447,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ### fixed
 
-- **Starting a process that is already running no longer launches a second copy.** Starting a process from the dashboard, or from hoot's self-healing, decided whether it was already running by looking only at the PID Owlette itself last launched. A process that was live but untracked — anything with its launch mode set to off, or an instance that outlived a service restart — looked absent, so the start landed a duplicate on top of it. Both paths now search for a matching instance first and adopt it instead. Matching is project-aware: several instances of one application are normal, so a TouchDesigner instance is identified by the `.toe` it has open, not just by `TouchDesigner.exe`, and Owlette declines to adopt rather than guess when a process entry has no file configured to tell instances apart.
+- **Starting a process that is already running no longer launches a second copy.** Starting a process from the dashboard, or from hoot's self-healing, decided whether it was already running by looking only at the PID Owlette itself last launched. A process that was live but untracked — anything with its launch mode set to off, or an instance that outlived a service restart — looked absent, so the start landed a duplicate on top of it. Both paths now search for a matching instance first and adopt it instead. Matching is project-aware: several instances of one application are normal, so a TouchDesigner instance is identified by the `.toe` it has open, not just by `TouchDesigner.exe`. When a process entry had no file configured to tell instances apart, only the kill and restart paths declined to guess — adoption still picked the first instance matching the executable. (3.3.0 makes refusal universal.)
 - **Restarting a `.bat` or `.cmd` process no longer leaves the old one running.** Scripts start through a `cmd.exe` wrapper, so the process Owlette tracked was the wrapper rather than the script's real work. Stopping or restarting killed the wrapper and reported success while the actual process kept running — still holding its files, its port, or its GPU — and invisible to Owlette from then on. The payload is now shut down along with its wrapper. Ordinary `.exe` processes are unaffected: applications that manage their own helpers, like TouchDesigner, still close them in their own time.
 - **A hung process no longer reads as "inactive" in the local app.** When a process stops responding, the agent marks it stalled — but the desktop app didn't recognise that state, so it displayed the process as inactive and greyed out the restart button, at exactly the moment an operator would want it. It now shows as stalled and stays actionable, matching how the dashboard has always treated it.
 - **Setting relaunch attempts to 0 really does mean unlimited.** The field is documented as "0 is unlimited", and the agent's reboot-escalation check was written to honour it, but a zero was being read as "not set" and silently replaced with the default of 3 — so a machine configured never to reboot itself would reboot after three failed relaunches. A zero is now preserved end to end, through the agent, the API, and the dashboard's edit form. A blank or non-numeric value still falls back to 3.

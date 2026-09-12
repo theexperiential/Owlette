@@ -26,6 +26,8 @@ import * as Sentry from '@sentry/nextjs';
 // Type-only: mfaFactors.server.ts is Admin-SDK code that must never reach the
 // client bundle; `import type` is erased at compile time.
 import type { MfaFactorInventory } from '@/lib/mfaFactors.server';
+import { useSiteMemberships, unionMembership, type SiteRole } from '@/hooks/useFirestore';
+import { emitMembershipFallback, emitMembershipListenerError } from '@/lib/membershipMetrics';
 
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
@@ -44,16 +46,6 @@ const SESSION_ENDED_CODES = new Set(['auth/user-token-expired', 'auth/invalid-us
 function isSessionEndedError(error: unknown): boolean {
   const code = (error as { code?: string } | null)?.code;
   return code !== undefined && SESSION_ENDED_CODES.has(code);
-}
-
-function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (a[key] !== b[key]) return false;
-  }
-  return true;
 }
 
 // Not JSON.stringify: Firestore does not guarantee key order, so stringify
@@ -80,6 +72,36 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
     if (!isDeepEqual(aObj[key], bObj[key])) return false;
   }
   return true;
+}
+
+/** Last hoot target per site: the site sentinel, one machine id, or a set. */
+export type LastMachineSelection = string | string[];
+
+/**
+ * Read `users/{uid}.lastMachineIds`. Values gained a list form when a hoot chat
+ * could target a SET of machines, so old entries (a single id or the site
+ * sentinel) and new ones coexist and both have to survive a round trip.
+ *
+ * Sanitized rather than trusted: this value picks the machines a turn dispatches
+ * to, and an entry that isn't a string or a non-empty list of strings is dropped
+ * instead of being carried into a selection. (The empty list is never a valid
+ * target — see `lib/hoot/target.ts`.)
+ */
+function readLastMachineIds(raw: unknown): Record<string, LastMachineSelection> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const parsed: Record<string, LastMachineSelection> = {};
+  for (const [siteId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      parsed[siteId] = value;
+    } else if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every((id) => typeof id === 'string')
+    ) {
+      parsed[siteId] = value as string[];
+    }
+  }
+  return parsed;
 }
 
 // Local literal, not an import of `EMPTY_MFA_FACTORS`: importing that VALUE
@@ -206,15 +228,73 @@ export function computeIsSuperadmin(role: UserRole | null): boolean {
 }
 
 /**
- * Site-admin for `siteId`? Superadmins pass for every site; admins only for
- * their `userSites[]`. Exported so it's testable without AuthProvider.
+ * Site-admin for `siteId`? Superadmins pass for every site; everyone else needs
+ * an `owner` or `admin` role on that specific site.
+ *
+ * The global role no longer participates beyond superadmin: a global `admin` is
+ * worth nothing on a site it holds no membership for, which is the whole point of
+ * per-site roles. Owners rank above admins and satisfy this too.
+ *
+ * Exported so it's testable without AuthProvider.
  */
 export function computeIsSiteAdmin(
   role: UserRole | null,
-  userSites: string[],
+  roleMap: Map<string, SiteRole>,
   siteId: string
 ): boolean {
-  return role === 'superadmin' || (role === 'admin' && userSites.includes(siteId));
+  if (role === 'superadmin') return true;
+  // A null global role means the user document has not resolved — pre-auth, doc
+  // missing, or the listener errored. Membership alone must not grant off a
+  // half-loaded session, so this stays fail-closed exactly as it was before the
+  // role map replaced `sites[]`.
+  if (role === null) return false;
+  const siteRole = roleMap.get(siteId);
+  return siteRole === 'owner' || siteRole === 'admin';
+}
+
+/**
+ * Owner of `siteId`? The only capability owners hold that admins do not is
+ * SITE_DELETE, so this exists to gate that one control on the same standing the
+ * server checks.
+ *
+ * Reads the role map, never `sites/{siteId}.owner` — the legacy field is
+ * stripped in wave 6.1 and a control gated on it would silently stop rendering.
+ *
+ * Exported so it's testable without AuthProvider.
+ */
+export function computeIsSiteOwner(
+  role: UserRole | null,
+  roleMap: Map<string, SiteRole>,
+  siteId: string
+): boolean {
+  if (role === 'superadmin') return true;
+  if (role === null) return false;
+  return roleMap.get(siteId) === 'owner';
+}
+
+/**
+ * Does this user administer ANY site? The entry predicate for the admin panel's
+ * site-scoped half (members, tokens, schedules, alerts, webhooks).
+ *
+ * It replaces `role === 'admin'`, which since wave 5.1 grants nothing: a global
+ * admin with no membership could still open those pages, see an empty site list
+ * on every one, and have each write refused. The panel now admits exactly the
+ * users the server will actually let act.
+ *
+ * Superadmins pass without a membership, as everywhere else.
+ *
+ * Exported so it's testable without AuthProvider.
+ */
+export function computeAdministersAnySite(
+  role: UserRole | null,
+  roleMap: Map<string, SiteRole>
+): boolean {
+  if (role === 'superadmin') return true;
+  if (role === null) return false;
+  for (const siteRole of roleMap.values()) {
+    if (siteRole === 'owner' || siteRole === 'admin') return true;
+  }
+  return false;
 }
 
 export interface UserPreferences {
@@ -232,6 +312,7 @@ export interface UserPreferences {
   cortexAlerts: boolean; // Receive email alerts when Cortex AI escalates unresolved issues. Default: true
   displayAlerts: boolean; // Receive email alerts when display layout / topology events fire (drift, monitor removed, apply failed, auto-revert, etc). Default: true
   talonAlerts: boolean; // Receive email alerts when a talon (automation) fires or fails. Default: true
+  apiKeyAlerts: boolean; // Receive email notices before one of your api keys expires (14 / 3 / 0 days out). Default: true
   displayAlertsBannerDismissed: boolean; // [B4.3] One-shot dismissal of the "new: display alerts" banner on /admin/alerts. Default: false (banner shows). The banner also auto-hides after 30 days from feature launch regardless of dismissal state.
   mutedMachines: string[]; // Machine IDs to suppress all alerts for. Default: []
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
@@ -267,9 +348,13 @@ interface AuthContextType {
   isSuperadmin: boolean;
   /** Admin or superadmin of `siteId`. Gates site-level elevated ops (delete machines, stored layouts, site webhooks/settings). */
   isSiteAdmin: (siteId: string) => boolean;
+  /** Administers at least one site — the admin panel's site-scoped entry gate. */
+  administersAnySite: boolean;
+  /** Owner of this site. Gates SITE_DELETE, the one owner-only capability. */
+  isSiteOwner: (siteId: string) => boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
-  lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
+  lastMachineIds: Record<string, LastMachineSelection>; // Last hoot target per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
   /** Second factors, mirrored live from the user doc. `totp || passkeys > 0` === `mfaEnrolled`. */
   mfaFactors: MfaFactorInventory;
@@ -285,7 +370,7 @@ interface AuthContextType {
   sendPasswordReset: (email: string, turnstileToken?: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
-  updateLastMachine: (siteId: string, machineId: string) => void;
+  updateLastMachine: (siteId: string, selection: LastMachineSelection) => void;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -295,12 +380,14 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   isSuperadmin: false,
   isSiteAdmin: () => false,
+  administersAnySite: false,
+  isSiteOwner: () => false,
   userSites: [],
   lastSiteId: null,
   lastMachineIds: {},
   requiresMfaSetup: false,
   mfaFactors: NO_MFA_FACTORS,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, apiKeyAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
   signInWithGoogle: async () => ({ isNewUser: false }),
@@ -327,10 +414,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<UserRole | null>(null);
-  const [userSites, setUserSites] = useState<string[]>([]);
+  // The LEGACY `users/{uid}.sites[]` array. No longer the source of site access —
+  // it is unioned with membership below for one release, and the gap between the
+  // two is what `membership_fallback` counts. Deleted in wave 6.1.
+  const [legacySites, setLegacySites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<MfaFactorInventory>(NO_MFA_FACTORS);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, apiKeyAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   // Ref mirror so updateUserPreferences reads current prefs without listing
   // them in its deps — that caused stale closures to clobber rapid stacked
   // updates (cell-click + sparkline-toggle).
@@ -347,7 +437,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // instead of racing a second, tokenless one — see shouldListenerBootstrap.
   const signUpBootstrapRef = useRef<Promise<{ alreadyExists: boolean }> | null>(null);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
-  const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
+  const [lastMachineIds, setLastMachineIds] = useState<Record<string, LastMachineSelection>>({});
 
   const sendUserCreatedNotification = async (
     email: string,
@@ -434,19 +524,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (docSnap.exists()) {
                 const userData = docSnap.data();
                 const rawRole = userData.role;
+                // `'user'` maps onto the same tier as `'member'`. Wave 5.2 rewrites
+                // every non-superadmin global role to `'user'`, and a parser that
+                // returned null for it would strip a live session's role mid-flight
+                // — every site-admin control vanishing from an open tab with no
+                // reload. Accept both spellings before that migration runs, not after.
                 const newRole: UserRole | null =
-                  rawRole === 'member' || rawRole === 'admin' || rawRole === 'superadmin'
+                  rawRole === 'superadmin' || rawRole === 'admin'
                     ? rawRole
-                    : null;
+                    : rawRole === 'member' || rawRole === 'user'
+                      ? 'member'
+                      : null;
                 const newSites: string[] = userData.sites || [];
                 const newRequiresMfa = userData.requiresMfaSetup || false;
                 const newMfaFactors = readMfaFactorsFromDoc(userData);
                 const newLastSiteId = userData.lastSiteId || null;
-                const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
+                const newLastMachineIds = readLastMachineIds(userData.lastMachineIds);
 
                 // Identity-preserving setters: avoid re-renders on equal values.
                 setRole(prev => prev === newRole ? prev : newRole);
-                setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
+                setLegacySites(prev => arraysEqual(prev, newSites) ? prev : newSites);
                 setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
                 setMfaFactors(prev =>
                   prev.totp === newMfaFactors.totp && prev.passkeys === newMfaFactors.passkeys
@@ -454,7 +551,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     : newMfaFactors
                 );
                 setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
-                setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
+                // Deep, not shallow: a per-site value can be a LIST now, and a
+                // shallow compare sees two equal lists as a change on every
+                // snapshot — churning the context value for the whole app.
+                setLastMachineIds(prev => isDeepEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
                 const preferences = userData.preferences || {};
                 // Unknown/missing timeDisplayMode falls back to 'machine'.
@@ -472,6 +572,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   cortexAlerts: preferences.cortexAlerts !== false, // Default: true
                   displayAlerts: preferences.displayAlerts !== false, // Default: true
                   talonAlerts: preferences.talonAlerts !== false, // Default: true
+                  apiKeyAlerts: preferences.apiKeyAlerts !== false, // Default: true
                   displayAlertsBannerDismissed: preferences.displayAlertsBannerDismissed === true, // Default: false (banner shows)
                   mutedMachines: preferences.mutedMachines || [], // Default: []
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
@@ -491,6 +592,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const mutedEqual = arraysEqual(prev.mutedMachines, newPrefs.mutedMachines);
                   const ccEqual = arraysEqual(prev.alertCcEmails, newPrefs.alertCcEmails);
 
+                  // EVERY preference field must be compared here: one left out is
+                  // treated as unchanged forever, so a change made in another tab
+                  // or device never reaches this one (displayAlerts and the banner
+                  // dismissal were both missing).
                   const allEqual =
                     prev.temperatureUnit === newPrefs.temperatureUnit &&
                     prev.timezone === newPrefs.timezone &&
@@ -500,7 +605,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.processAlerts === newPrefs.processAlerts &&
                     prev.thresholdAlerts === newPrefs.thresholdAlerts &&
                     prev.cortexAlerts === newPrefs.cortexAlerts &&
+                    prev.displayAlerts === newPrefs.displayAlerts &&
                     prev.talonAlerts === newPrefs.talonAlerts &&
+                    prev.apiKeyAlerts === newPrefs.apiKeyAlerts &&
+                    prev.displayAlertsBannerDismissed === newPrefs.displayAlertsBannerDismissed &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
                     prev.displaysExpanded === newPrefs.displaysExpanded &&
@@ -545,7 +653,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   console.error('listener failed to bootstrap document:', bootstrapError);
                   console.error('Error message:', err?.message);
                   setRole(null);
-                  setUserSites([]);
+                  setLegacySites([]);
                   setLoading(false);
                 }
               }
@@ -553,13 +661,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (error) => {
               console.error('Error listening to user document:', error);
               setRole(null);
-              setUserSites([]);
+              setLegacySites([]);
               setLoading(false);
             }
           );
         } else {
           setRole(null);
-          setUserSites([]);
+          setLegacySites([]);
           setLoading(false);
         }
       } else {
@@ -568,7 +676,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         intentionalSignOutRef.current = false;
         destroySessionCookie();
         setRole(null);
-        setUserSites([]);
+        setLegacySites([]);
         setLoading(false);
         if (involuntary) {
           toast.error('Session Expired', {
@@ -882,11 +990,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const updateLastMachine = useCallback((siteId: string, machineId: string) => {
-    setLastMachineIds((prev) => ({ ...prev, [siteId]: machineId }));
+  // The selection is the site sentinel, one machine id, or an explicit set.
+  // Same writer, same field, same rules allowlist entry as the single-id form.
+  const updateLastMachine = useCallback((siteId: string, selection: LastMachineSelection) => {
+    setLastMachineIds((prev) => ({ ...prev, [siteId]: selection }));
     if (auth?.currentUser && db) {
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
-      setDoc(userDocRef, { lastMachineIds: { [siteId]: machineId } }, { merge: true }).catch((err) =>
+      setDoc(userDocRef, { lastMachineIds: { [siteId]: selection } }, { merge: true }).catch((err) =>
         console.error('Failed to save lastMachineId:', err)
       );
     }
@@ -1045,10 +1155,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Per-site membership — THE source of site access from here on. One
+  // collectionGroup listener replaces reading `users/{uid}.sites[]`.
+  const { roleMap, error: membershipError } = useSiteMemberships(user?.uid);
+
+  // A listener that is not running degrades every user to the legacy array. The
+  // union hides that today, so without this it stays silent right up until wave
+  // 6.1 strips the field and it becomes total.
+  useEffect(() => {
+    if (!user?.uid || !membershipError) return;
+    emitMembershipListenerError(user.uid, membershipError);
+  }, [user?.uid, membershipError]);
+
+  // `userSites` is now a PROJECTION, not a second source of truth. The legacy
+  // array is unioned in for exactly one release so a user whose backfill has not
+  // landed keeps working; wave 6.1 drops the union and the projection together.
+  const { sites: userSites, fallbacks } = useMemo(
+    () => unionMembership(roleMap, legacySites),
+    [roleMap, legacySites]
+  );
+
+  // Every site the legacy array grants and membership does not. This counter
+  // holding at zero is what gates wave 6.1 — not a human reading a dry-run.
+  //
+  // SUPERADMINS ARE EXCLUDED, and the counter is unusable without that. They hold
+  // no member rows by design — the backfill deliberately drops their non-owner
+  // `sites[]` entries because they reach every site by global role — so every
+  // stale entry a superadmin carries would report as drift forever and pin the
+  // gate above zero permanently. For them a missing membership is the intended
+  // state, not a gap. `useSites` never reads their `userSites` either; it takes
+  // the superadmin branch and lists every site.
+  useEffect(() => {
+    if (!user?.uid || role === 'superadmin' || fallbacks.length === 0) return;
+    emitMembershipFallback(user.uid, fallbacks);
+  }, [user?.uid, role, fallbacks]);
+
   const isSuperadmin = computeIsSuperadmin(role);
   const isSiteAdmin = useCallback(
-    (siteId: string) => computeIsSiteAdmin(role, userSites, siteId),
-    [role, userSites]
+    (siteId: string) => computeIsSiteAdmin(role, roleMap, siteId),
+    [role, roleMap]
+  );
+  const administersAnySite = useMemo(
+    () => computeAdministersAnySite(role, roleMap),
+    [role, roleMap]
+  );
+  const isSiteOwner = useCallback(
+    (siteId: string) => computeIsSiteOwner(role, roleMap, siteId),
+    [role, roleMap]
   );
 
   const value = useMemo(() => ({
@@ -1057,6 +1210,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     role,
     isSuperadmin,
     isSiteAdmin,
+    administersAnySite,
+    isSiteOwner,
     userSites,
     lastSiteId,
     lastMachineIds,
@@ -1075,7 +1230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, mfaFactors, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, administersAnySite, isSiteOwner, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, mfaFactors, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertUserHasSiteCapability, requireSession } from '@/lib/apiAuth.server';
+import { Capability } from '@/lib/capabilities';
 import { normalizePairPhrase } from '@/lib/pairPhrases';
 import { apiError } from '@/lib/apiErrorResponse';
+import { emitMutation } from '@/lib/auditLogClient';
 import {
   DEVICE_CODE_WRAP_VERSION,
   encryptDeviceCodeCredentials,
@@ -21,6 +23,12 @@ import logger from '@/lib/logger';
  * 200: `{ success: true, machineId: string | null }`
  * 400 bad fields/phrase · 401 unauthenticated · 403 no site access · 404 unknown or
  * expired phrase · 409 already authorized.
+ *
+ * Audits `site_mutated` / `machine.pair` once the transaction commits. The siteId is
+ * always known here; the machineId is not — a pre-authorized ("generate code") doc
+ * binds it later, at poll time, so the row records `deferred: true` and no machineId
+ * rather than inventing one. The pairing phrase is a bearer credential and never
+ * appears in the audit attributes.
  */
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -43,7 +51,11 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     const userId = await requireSession(request);
-    await assertUserHasSiteAccess(userId, siteId);
+    // MACHINE_ENROLL, not bare membership: issuing a device-code pairing mints an agent
+    // identity plus a refresh token that never expires, and revoking one is
+    // site-admin (AGENT_TOKEN_REVOKE). Issue and revoke have to sit at the same
+    // bar, or a read-only member can create credentials it cannot take back.
+    await assertUserHasSiteCapability(userId, siteId, Capability.MACHINE_ENROLL);
 
     // Transactional lookup+authorize, so two concurrent requests can't both read 'pending'
     // and authorize the same device code.
@@ -80,7 +92,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           authorizedAt: FieldValue.serverTimestamp(),
           deferTokenMint: true,
         });
-        return { success: true, machineId: null } as const;
+        return { success: true, machineId: null, deferred: true } as const;
       }
 
       const supportsEncryption =
@@ -204,11 +216,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       });
 
       logger.info(
-        `Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, ` +
+        // The phrase stays out of the log line: until it expires it is redeemable
+        // for agent credentials, so logging it would hand log readers a live credential.
+        `Device code authorized: site=${siteId}, machine=${machineId}, ` +
           `by=${userId}, wrap=${DEVICE_CODE_WRAP_VERSION}`,
       );
 
-      return { success: true, machineId: data.machineId || null } as const;
+      return { success: true, machineId: data.machineId || null, deferred: false } as const;
     });
 
     if ('error' in result) {
@@ -217,6 +231,24 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         { status: result.status }
       );
     }
+
+    // After the commit, never inside it: the transaction body can be retried, and
+    // an emit from a retried-then-discarded attempt would be a phantom row.
+    emitMutation({
+      kind: 'site_mutated',
+      siteId,
+      actor: `user:${userId}`,
+      targetId: result.machineId ?? siteId,
+      attributes: {
+        verb: 'machine.pair',
+        endpoint: '/api/agent/auth/device-code/authorize',
+        method: 'POST',
+        siteId,
+        // Absent on the pre-authorized path — the agent supplies it at poll time.
+        ...(result.machineId ? { machineId: result.machineId } : {}),
+        deferredTokenMint: result.deferred,
+      },
+    });
 
     return NextResponse.json({
       success: true,

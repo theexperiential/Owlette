@@ -163,11 +163,23 @@ After the first superadmin exists, use **Admin Panel -> User Management** to pro
 
 Owlette enforces site-based access through Firestore rules and server-side API authorization.
 
-| role | access |
+Roles are **per site**. A person's role on one site says nothing about their
+role on another, and their account-level role grants nothing on any site.
+
+| per-site role | access |
 |------|--------|
-| `member` | Reads assigned sites listed in `users/{uid}.sites[]` |
-| `admin` | Site-scoped write access for assigned sites |
-| `superadmin` | Platform admin access and implicit access to every site |
+| `member` | Read-only on that site: view machines, capture screenshots, open live view |
+| `admin` | Write access on that site: commands, configuration, deployments, roosts, talons, webhooks, membership |
+| `owner` | Everything `admin` can do, plus deleting the site and transferring ownership |
+
+Access is granted by a `sites/{siteId}/members/{uid}` document with
+`status: "active"`. The account-level roles are separate:
+
+| account role | meaning |
+|------|--------|
+| `member` | The default. Reaches only the sites it holds member rows for |
+| `admin` | A platform tier. Grants **nothing** on a site without a member row |
+| `superadmin` | Platform admin, with implicit access to every site |
 | `agent` | Custom-token access to one site and one machine |
 
 Client rules name the helpers `isSuperadmin()`, `isSiteAdmin(siteId)`, `canAccessSite(siteId)`, `isServiceAccount()`, and agent claim helpers. Trusted server APIs and the Admin SDK handle server-only collections and control-plane writes.

@@ -12,8 +12,8 @@ import { NextResponse } from 'next/server';
 import { problem, problemFromError, ProblemType } from '@/lib/apiErrors';
 import {
   applyAuthDeprecations,
+  auditActorIdentifier,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -27,6 +27,10 @@ type RouteParams = { siteId: string; deploymentId: string };
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {
@@ -35,21 +39,19 @@ export const POST = authorizedSiteHandler<RouteParams>({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'write');
-    if (!auth.ok) return auth.response;
 
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
         const result = await cancelDeployment({
           siteId,
           deploymentId,
-          actorIdentifier: actorIdentifier(auth),
+          actorIdentifier: auditActorIdentifier(ctx.auth),
           correlationId: ctx.correlationId,
         });
 
@@ -65,7 +67,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             cancelled: result.cancelled,
             machine_ids: result.machine_ids,
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
       { requireKey: true },
@@ -75,11 +77,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
   }
 });
 
-function actorIdentifier(auth: Extract<Awaited<ReturnType<typeof requireSiteAuthAndScope>>, { ok: true }>): string {
-  return auth.auth.keyContext
-    ? `apiKey:${auth.auth.keyContext.keyId}`
-    : `user:${auth.userId}`;
-}
 
 function cancelDeploymentErrorToResponse(
   result: Extract<CancelDeploymentResult, { ok: false }>,

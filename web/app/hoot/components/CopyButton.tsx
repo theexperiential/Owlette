@@ -8,9 +8,20 @@ interface CopyButtonProps {
   value: string;
   className?: string;
   iconSize?: 'xs' | 'sm';
+  /**
+   * Accessible name and tooltip. Several copy buttons in one list need names
+   * that tell them apart — to a screen reader and to a role query alike. Named
+   * as in `components/CopyButton.tsx`, which carries the same prop.
+   */
+  tooltipLabel?: string;
 }
 
-export function CopyButton({ value, className = '', iconSize = 'xs' }: CopyButtonProps) {
+export function CopyButton({
+  value,
+  className = '',
+  iconSize = 'xs',
+  tooltipLabel = 'copy to clipboard',
+}: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async (e: React.MouseEvent) => {
@@ -35,7 +46,7 @@ export function CopyButton({ value, className = '', iconSize = 'xs' }: CopyButto
         <button
           onClick={handleCopy}
           className={`inline-flex items-center gap-1 p-0 bg-transparent border-0 text-muted-foreground hover:text-foreground transition-colors cursor-pointer ${className}`}
-          aria-label="copy to clipboard"
+          aria-label={tooltipLabel}
           type="button"
         >
           {copied ? (
@@ -46,7 +57,7 @@ export function CopyButton({ value, className = '', iconSize = 'xs' }: CopyButto
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        <p>{copied ? 'copied' : 'copy to clipboard'}</p>
+        <p>{copied ? 'copied' : tooltipLabel}</p>
       </TooltipContent>
     </Tooltip>
   );

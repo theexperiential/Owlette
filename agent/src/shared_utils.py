@@ -2,7 +2,6 @@ import os
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-import ctypes
 import socket
 from packaging import version
 import psutil
@@ -33,35 +32,6 @@ def get_app_version():
 
 APP_VERSION = get_app_version()
 CONFIG_VERSION = '1.7.0'  # Added temperature.enabled (PawnIO migration)
-# Color scheme matching web app dark theme (oklch hue 250 navy + cyan accent)
-WINDOW_COLOR = '#020b16'      # web --background oklch(0.145 0.03 250)
-FRAME_COLOR = '#0d1e2f'       # web --card oklch(0.23 0.04 250)
-BUTTON_COLOR = '#11283e'      # web --muted oklch(0.269 0.05 250)
-BUTTON_HOVER_COLOR = '#143c62' # web --accent/border oklch(0.35 0.08 250)
-BUTTON_IMPORTANT_COLOR = '#00cfd1' # web --accent-cyan oklch(0.75 0.18 195)
-BUTTON_IMPORTANT_HOVER = '#00e2e5' # web --accent-cyan-hover oklch(0.80 0.20 195)
-BUTTON_IMPORTANT_TEXT = '#020b16'  # dark text on cyan buttons (matches background)
-ACCENT_COLOR = '#00cfd1'      # web --accent-cyan oklch(0.75 0.18 195)
-BORDER_COLOR = '#143c62'      # web --border oklch(0.35 0.08 250)
-HIGHLIGHT_COLOR = '#006566'   # web --accent-cyan-muted oklch(0.45 0.10 195)
-TEXT_COLOR = "white"
-CORNER_RADIUS = 6
-STATUS_COLORS = {
-    'RUNNING':       '#4ade80',  # green-400
-    'LAUNCHING':     '#facc15',  # yellow-400
-    'RESTARTING':    '#facc15',  # yellow-400 (operator-initiated, mid-flight)
-    'QUEUED':        '#fb923c',  # orange-400
-    'LAUNCH_FAILED': '#ef4444',  # red-500
-    'KILLED':        '#f87171',  # red-400
-    'STOPPED':       '#f87171',  # red-400
-    'INACTIVE':      '#94a3b8',  # slate-400
-}
-WINDOW_TITLES = {
-    "owlette_gui": "owlette configuration",
-    "prompt_slack_config": "connect to slack",
-    "prompt_restart": "process repeatedly failing!",
-    "report_issue": "feedback"
-}
 SERVICE_NAME = 'OwletteService'
 
 
@@ -847,12 +817,9 @@ def ensure_data_directories():
 
 def get_environment():
     """'production' or 'development' from config; 'production' by default."""
-    try:
-        config = read_config()
-        if config:
-            return config.get('environment', 'production')
-    except (json.JSONDecodeError, OSError, KeyError) as e:
-        logging.debug(f"Could not read environment from config: {e}")
+    config = read_config()
+    if config:
+        return config.get('environment', 'production')
     return 'production'
 
 def get_api_base_url(environment=None):
@@ -891,33 +858,6 @@ def get_environment_label(environment=None):
         environment = get_environment()
 
     return f"{environment} ({get_web_host(environment)})"
-
-# TTL cache: psutil.process_iter() costs 200-500ms on Windows (cmdline parse
-# across all procs) and the metrics thread only needs it to pick a heartbeat
-# cadence. 10s is under the 5s main-loop granularity that matters.
-_script_running_cache = {}  # script_name -> (result, expires_at_monotonic)
-_SCRIPT_RUNNING_TTL = 10.0
-
-def is_script_running(script_name):
-    now = time.monotonic()
-    cached = _script_running_cache.get(script_name)
-    if cached is not None and cached[1] > now:
-        return cached[0]
-    result = _is_script_running_uncached(script_name)
-    _script_running_cache[script_name] = (result, now + _SCRIPT_RUNNING_TTL)
-    return result
-
-def _is_script_running_uncached(script_name):
-    for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
-        try:
-            name = process.info.get('name') or ''
-            if 'python' in name:
-                cmdline = process.info.get('cmdline')
-                if cmdline and script_name in ' '.join(cmdline):
-                    return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return False
 
 # PATHS
 CONFIG_PATH = get_data_path('config/config.json')
@@ -967,7 +907,7 @@ def build_detached_launch_command(exe_path, args=()):
 def read_desktop_pid(pid_path):
     """PID from pid_path, but only if it is a live owlette-desktop.exe.
 
-    is_script_running() can't be used — it only matches "python" image names.
+    A python-image cmdline scan can't be used — it only matches "python" image names.
     Checking the image name as well as the PID is what stops a recycled PID from
     reading as a live UI. None when the marker is absent, stale or foreign.
     """
@@ -1266,7 +1206,7 @@ def initialize_logging(log_file_name, level=logging.INFO):
     logger.setLevel(level)
     logger.addHandler(log_handler)
 
-    _log_startup_banner(log_file_name, level, log_file_path)
+    _log_startup_banner(level, log_file_path)
 
 
 def _get_windows_version_string():
@@ -1284,7 +1224,7 @@ def _get_windows_version_string():
         return platform.version()
 
 
-def _log_startup_banner(log_file_name, level, log_file_path):
+def _log_startup_banner(level, log_file_path):
     """Rich startup banner logged immediately after logging is configured."""
     import sys
     sep = "=" * 70
@@ -1495,23 +1435,18 @@ def add_firebase_log_handler(firebase_client):
 
 # CONFIG JSON
 
-def load_config(emails_to_entry=None):
+def load_config():
     try:
         config = read_json_from_file(CONFIG_PATH)
-        if emails_to_entry is not None:
-            emails_to_entry.insert(0, ', '.join(config['gmail']['to']))
         return config
         
     except FileNotFoundError as e:
         logging.error(f"Failed to load config: {e}")
         return generate_config_file()
 
-def save_config(config=None, emails_to_entry=None):
+def save_config(config=None):
     if config is None:
         config = read_json_from_file(CONFIG_PATH)
-
-    if emails_to_entry is not None:
-        config['gmail']['to'] = [email.strip() for email in emails_to_entry.get().split(',')]
 
     # Strip runtime-only fields before persisting — these belong in app_states.json, not config
     for process in config.get('processes', []):
@@ -1527,10 +1462,6 @@ def upgrade_config():
 
         if version.parse(current_version) < version.parse(CONFIG_VERSION):
             config['version'] = CONFIG_VERSION
-
-            if 'email' in config:
-                config['gmail'] = config.pop('email')
-                config['gmail']['enabled'] = True
 
             for process in config['processes']:
                 if 'autostart_process' in process:
@@ -1815,7 +1746,6 @@ def generate_config_file(existing_config=None):
         "displays": {
             "enabled": True,
             "assigned": None,
-            "auto_enforce": False,
             "remoteApplyEnabled": False
         },
         "temperature": {
@@ -2033,26 +1963,96 @@ def graceful_terminate(pid, timeout=5, exe_path=None):
 
 # PROCESSES
 
-def fetch_pid_by_id(target_id):
-    data = read_json_from_file(RESULT_FILE_PATH)
+def read_process_identity(pid):
+    """Snapshot a live process's identity: {pid, create_time, exe}.
 
-    if data is None:
-        data = {}
+    The record half of the managed-or-inherited rule: owlette operations touch
+    only processes owlette launched or deliberately inherited, and both cases
+    are later proven by comparing this snapshot against the live process
+    (identity_matches). The exe is normalised the way the matching code in
+    find_running_process_by_exe normalises paths (forward slashes to back,
+    lowercase) so stored records compare cheaply, without re-normalising on
+    every check.
 
-    matching_processes = {pid: info for pid, info in data.items() if info['id'] == target_id}
-
-    if not matching_processes:
-        logging.debug(f"No processes found with id: {target_id}")
+    Returns None on ANY failure (dead pid, access denied, zombie) -- a caller
+    that cannot read an identity must treat the process as unmanaged.
+    """
+    try:
+        proc = psutil.Process(int(pid))
+        # oneshot caches the underlying process handle/queries so create_time
+        # and exe come from one consistent view of the process.
+        with proc.oneshot():
+            create_time = proc.create_time()
+            exe = proc.exe() or ''
+        return {
+            'pid': int(pid),
+            'create_time': create_time,
+            'exe': exe.replace('/', '\\').lower(),
+        }
+    except Exception as e:
+        logging.debug(f"read_process_identity({pid}) failed: {e}")
         return None
 
-    # Newest timestamp wins.
-    newest_pid = max(matching_processes.keys(), key=lambda pid: matching_processes[pid]['timestamp'])
-    
-    return newest_pid
 
-def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None):
+def identity_matches(record, pid):
+    """True iff the live process at `pid` is the one `record` describes.
+
+    Every destructive operation under the managed-or-inherited rule must prove
+    the pid it is about to touch still belongs to the process owlette recorded;
+    anything else is a refusal. create_time is compared EXACTLY, never with a
+    tolerance: psutil returns the kernel-stamped creation time verbatim, two
+    reads of the same process yield the identical float, and the JSON round
+    trip through app_states.json preserves it bit-for-bit (repr-based float
+    serialisation round-trips). Any difference therefore means the pid was
+    recycled -- the same idiom _reap_orphaned_descendants relies on to avoid
+    killing a stranger behind a reused pid. A tolerance window would reopen
+    exactly that hole.
+
+    exe is a sanity check only: with equal (pid, create_time) a differing exe
+    means the record itself is corrupt, which earns a warning -- and is still
+    a refusal. Missing/None/malformed record -> False. Never raises.
+    """
+    if not isinstance(record, dict):
+        return False
+    try:
+        recorded_pid = int(record['pid'])
+        recorded_create_time = record['create_time']
+    except (KeyError, TypeError, ValueError):
+        return False
+    try:
+        if int(pid) != recorded_pid:
+            return False
+    except (TypeError, ValueError):
+        return False
+    live = read_process_identity(pid)
+    if live is None:
+        return False
+    if live['create_time'] != recorded_create_time:
+        return False  # pid recycled -- a different process wears this pid now
+    recorded_exe = record.get('exe')
+    if recorded_exe:
+        # Records written by read_process_identity are already normalised;
+        # normalise again anyway so hand-written or legacy records compare
+        # fairly instead of failing on slash direction or case.
+        recorded_exe_normalised = str(recorded_exe).replace('/', '\\').lower()
+        if recorded_exe_normalised != live['exe']:
+            logging.warning(
+                f"identity_matches: pid {recorded_pid} create_time matches but "
+                f"exe does not (recorded {recorded_exe_normalised!r}, live "
+                f"{live['exe']!r}) -- corrupt record, refusing")
+            return False
+    return True
+
+
+def update_process_status_in_json(pid, new_status, firebase_client=None, process_id=None, extra=None):
     """Write a process status to app_states.json; the metrics loop syncs it to
     Firebase. firebase_client is deprecated, kept for signature compatibility.
+
+    `extra`, when a dict, is merged into the pid's row alongside status/id --
+    row-level only, because the desktop parser prunes non-numeric top-level
+    keys and would persist the pruned document. Per-row extras are established
+    precedent (owlette_scout writes responsive/responsive_prev/hung_since the
+    same way); this is how identity records reach app_states.json.
     """
     # A None pid would be written as the literal key "None" and corrupt the file.
     if pid is None:
@@ -2070,33 +2070,54 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
     data[str(pid)]['status'] = new_status
     if process_id:
         data[str(pid)]['id'] = process_id
+    if isinstance(extra, dict):
+        data[str(pid)].update(extra)
     write_json_to_file(data, RESULT_FILE_PATH)
 
-def find_running_process_by_exe(exe_path, file_path=None, strict=False):
-    """Find a running process by its executable path.
+def find_running_process_by_exe(exe_path, file_path=None, strict=False,
+                                expected_cmdline=None):
+    """Find a running process by its executable path -- unambiguously, or not
+    at all.
 
     Matches on exe basename so a file-association launch of a different build
-    still resolves. .bat/.cmd targets run behind cmd.exe, so a script exe_path
-    matches a cmd.exe whose command line references it.
+    still resolves as a candidate. .bat/.cmd targets run behind cmd.exe, so a
+    script exe_path matches a cmd.exe whose command line references it.
 
-    Matching precedence, strongest evidence first:
-      1. file_path found in a candidate's command line — unambiguous even with
-         several instances of the exe (TouchDesigner: one process per .toe).
-      2. an exact exe-path match that is unique on the machine.
-      3. (non-strict only) one of several exe-path or image-name matches.
-         Ambiguous by construction; warns, because the fix is to configure
-         file_path.
+    Only unambiguous evidence returns a pid:
+      1. file_path found in a candidate's command line -- unambiguous even
+         with several instances of the exe (TouchDesigner: one process per
+         .toe).
+      2. an exact exe-path match that is unique on the machine (for scripts:
+         a unique cmd.exe wrapper referencing the script).
+      3. expected_cmdline -- a launch command line the caller RECORDED
+         (space-joined argv) -- equal, after path normalisation, to exactly
+         one candidate's live cmdline. This is the only cmdline tier: with no
+         file_path there is nothing CONFIGURED to compare a live cmdline
+         against, so bare cmdlines are never ranked or guessed from; only
+         recorded launch evidence counts. It is consulted only after tiers
+         1-2 fail, i.e. it disambiguates, it never vetoes.
 
-    strict=True refuses tier 3 and refuses bare basename matches outright.
-    Anything that kills or restarts MUST pass strict=True; only startup
-    adoption, which merely risks watching the wrong instance, may take tier 3.
+    Everything else returns None in BOTH modes: several instances with
+    nothing to tell them apart, several cmd.exe wrappers for one script, or
+    (non-strict) processes sharing only the image name. For the non-strict
+    adoption callers None deliberately means "launch fresh" (D3): a duplicate
+    instance is recoverable and converges once identity is recorded, while
+    adopting -- and later killing -- a stranger is not.
+
+    strict=True additionally refuses bare image-name candidates outright.
+    Anything that kills or restarts MUST pass strict=True.
     """
     try:
         exe_lower = exe_path.replace('/', '\\').lower()
         exe_basename = os.path.basename(exe_lower)
         file_path_lower = file_path.replace('/', '\\').lower() if file_path else None
+        # Same normalisation as the live cmdlines below, so recorded evidence
+        # compares exactly regardless of slash direction or case.
+        expected_lower = (expected_cmdline.replace('/', '\\').lower()
+                          if expected_cmdline else None)
         is_script = exe_lower.endswith(('.bat', '.cmd'))
-        candidates = []
+        candidates = []      # (pid, full_match, cmdline-or-None) -- exe targets
+        script_matches = []  # (pid, cmdline) -- cmd.exe wrappers for a script
         for proc in psutil.process_iter(['pid', 'exe']):
             try:
                 if not proc.info['exe']:
@@ -2114,7 +2135,10 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                         continue
                     if file_path_lower and file_path_lower not in cmdline:
                         continue
-                    return proc.info['pid']
+                    # Collect instead of returning first: several wrappers for
+                    # one script are ambiguous and must refuse (D3).
+                    script_matches.append((proc.info['pid'], cmdline))
+                    continue
                 full_match = proc_exe == exe_lower
                 basename_match = os.path.basename(proc_exe) == exe_basename
                 if not (full_match or basename_match):
@@ -2128,111 +2152,88 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                         if file_path_lower not in cmdline:
                             continue  # wrong instance
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue  # unverifiable cmdline — don't risk a false match
+                        continue  # unverifiable cmdline -- don't risk a false match
                     return proc.info['pid']  # cmdline-corroborated
-                candidates.append((proc.info['pid'], full_match))
+                cmdline = None
+                if expected_lower:
+                    # Reading a cmdline is a per-process syscall -- only pay
+                    # for it when there is recorded evidence to compare with.
+                    try:
+                        cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        cmdline = None  # unreadable -> can never corroborate
+                candidates.append((proc.info['pid'], full_match, cmdline))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        # No file_path. Rank exact exe-path above bare image-name: several
-        # instances of one image are normal here (every TouchDesigner project is
-        # the same TouchDesigner.exe) and an unranked scan would adopt whichever
-        # psutil yielded first, possibly from a different install.
-        full_matches = [pid for pid, is_full in candidates if is_full]
+        if is_script:
+            if len(script_matches) == 1:
+                return script_matches[0][0]
+            if expected_lower:
+                exact = [pid for pid, cmdline in script_matches
+                         if cmdline == expected_lower]
+                if len(exact) == 1:
+                    return exact[0]
+            if script_matches:
+                # Ambiguous wrappers refuse in BOTH modes: binding one at
+                # random risks watching -- and later killing -- a cmd.exe
+                # owlette never launched (D3).
+                logging.warning(
+                    f"find_running_process_by_exe: {len(script_matches)} "
+                    f"cmd.exe wrappers reference {exe_path} and nothing "
+                    f"distinguishes them -- refusing to guess"
+                    + ("" if strict else "; the caller will launch fresh"))
+            return None
+        # An exact exe-path match that is unique on the machine is the only
+        # self-sufficient evidence left; several instances of one image are
+        # normal here (every TouchDesigner project is the same
+        # TouchDesigner.exe), so uniqueness, not rank order, is what counts.
+        full_matches = [pid for pid, is_full, _ in candidates if is_full]
         if len(full_matches) == 1:
             return full_matches[0]
-        if strict:
-            # Bare basename matches never reach `candidates` under strict and the
-            # unique full-path case already returned, so getting here means
-            # several instances with nothing to tell them apart.
-            if candidates:
-                logging.warning(
-                    f"find_running_process_by_exe: {len(candidates)} instances of "
-                    f"{exe_basename} match with no file_path to disambiguate — refusing"
-                )
-            return None
-        # Non-strict (startup adoption) must still pick one: None makes the
-        # monitor loop launch yet another instance — the duplicate we're avoiding.
-        if full_matches:
-            logging.warning(
-                f"find_running_process_by_exe: {len(full_matches)} instances of "
-                f"{exe_path} running and no file_path configured to tell them "
-                f"apart — adopting PID {full_matches[0]}. Set the file path on "
-                f"this process entry to make adoption unambiguous."
-            )
-            return full_matches[0]
+        # Cmdline tier: exact equality with the RECORDED launch cmdline, and
+        # exactly one winner. Zero exact matches is a mismatch, several is
+        # still ambiguity -- both refuse, because a wrong guess here is
+        # precisely the disease D3 cures.
+        if expected_lower:
+            exact = [pid for pid, _, cmdline in candidates
+                     if cmdline == expected_lower]
+            if len(exact) == 1:
+                return exact[0]
         if candidates:
-            return candidates[0][0]
+            # Ambiguous, so BOTH modes refuse: strict discovery backs kill and
+            # restart and must never touch a stranger; non-strict adoption
+            # falls through to a fresh launch, which is safe by design -- the
+            # duplicate converges once identity is recorded, an adopted
+            # stranger never does (D3). Operators grep these warnings.
+            if full_matches:
+                what = (f"{len(full_matches)} instances of {exe_path} are "
+                        f"running and no file_path is configured to tell "
+                        f"them apart")
+            else:
+                what = (f"{len(candidates)} process(es) match {exe_basename} "
+                        f"only by image name, not the configured path "
+                        f"{exe_path}")
+            logging.warning(
+                "find_running_process_by_exe: " + what + " -- refusing to "
+                "guess"
+                + ("" if strict else "; the caller will launch fresh. Set the "
+                   "file path on this process entry to make matching "
+                   "unambiguous"))
+        return None
     except Exception:
-        pass
+        # The silent pass that lived here hid real psutil/OS faults
+        # (observability sweep finding). Log the traceback; still report
+        # not-found so the monitor loop survives and callers take their
+        # normal launch-fresh path.
+        logging.exception(
+            f"find_running_process_by_exe({exe_path!r}) failed unexpectedly "
+            f"-- treating as not found")
     return None
 
-
-def pid_matches_exe(pid, exe_path, file_path=None):
-    """True if PID is alive and its image matches exe_path.
-
-    Kill/restart must never terminate a PID whose image doesn't match the entry
-    it came from: state-file entries go stale once a process stops being
-    monitored, and Windows reuses PIDs. .bat/.cmd entries match a cmd.exe whose
-    command line references the script (and file_path too, when given).
-    """
-    if not pid or not exe_path:
-        return False
-    exe_lower = exe_path.replace('/', '\\').lower()
-    try:
-        proc = psutil.Process(int(pid))
-        proc_exe = (proc.exe() or '').lower()
-        cmdline = None
-        if exe_lower.endswith(('.bat', '.cmd')):
-            if os.path.basename(proc_exe) != 'cmd.exe':
-                return False
-            cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
-            if exe_lower not in cmdline:
-                return False
-        elif proc_exe != exe_lower and os.path.basename(proc_exe) != os.path.basename(exe_lower):
-            return False
-        if file_path:
-            if cmdline is None:
-                cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
-            if file_path.replace('/', '\\').lower() not in cmdline:
-                return False
-        return True
-    except (psutil.Error, OSError, ValueError):
-        return False
-
-
-def fetch_process_by_id(id, data):
-    return next((process for process in data['processes'] if process['id'] == id), None)
-
-def fetch_process_name_by_id(id, data):
-    process = next((process for process in data['processes'] if process['id'] == id), None)
-    return process['name'] if process else None   
 
 def fetch_process_id_by_name(name, data):
     process = next((process for process in data['processes'] if process['name'] == name), None)
     return process['id'] if process else None
-
-def get_process_index(selected_process_id):
-    return next((i for i, p in enumerate(read_config()['processes']) if p['id'] == selected_process_id), None)
-
-# WINDOWS / UI
-
-def get_scaling_factor():
-    hdc = ctypes.windll.user32.GetDC(0)
-    LOGPIXELSX = 88
-    actual_dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
-    ctypes.windll.user32.ReleaseDC(0, hdc)
-    return actual_dpi / 96.0  # 96 DPI == 100% scaling
-
-def center_window(root, width, height):
-    scaling_factor = get_scaling_factor()
-
-    screen_width = root.winfo_screenwidth() * scaling_factor
-    screen_height = root.winfo_screenheight() * scaling_factor
-
-    x = (screen_width / 2) - (width * scaling_factor / 2)
-    y = (screen_height / 2) - (height * scaling_factor / 2)
-    root.geometry(f'{int(width)}x{int(height)}+{int(x)}+{int(y)}')
-    root.minsize(width, height)
 
 # METRICS
 def get_system_info():
@@ -2273,9 +2274,10 @@ def get_system_metrics(skip_gpu=False):
 
 def get_system_metrics_with_config(config=None, skip_gpu=False):
     """Legacy snake_case metrics (cpu/memory/disk/gpu/network/processes) for
-    in-process consumers: mcp_tools, report_issue, the tray GUI. firebase_client
-    reads only `memory` and `processes` — the v2 heartbeat sources per-device
-    metrics from hardware_profile.collect_dynamic_metrics() instead.
+    in-process consumers: mcp_tools and configure_site's feedback report.
+    firebase_client reads only `memory` and `processes` — the v2 heartbeat
+    sources per-device metrics from hardware_profile.collect_dynamic_metrics()
+    instead.
 
     config: reuse a dict to skip a disk read; None goes through the mtime cache.
     skip_gpu: skip the nvidia-smi / sensor probes that flash a console window.

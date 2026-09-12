@@ -117,7 +117,11 @@ export async function bootstrapUser(
   await userRef.set({
     email: input.email,
     role: 'member',
-    sites: [],
+    // NO `sites: []`. That field is legacy — site access comes from
+    // `sites/{siteId}/members/{uid}` — and wave 6.1 strips it. Seeding it here
+    // meant the very next signup re-created what the migration had just removed,
+    // so its "field is gone" gate could never converge. Readers all default a
+    // missing value to [], and an empty array granted nothing anyway.
     createdAt: nowDate,
     displayName,
     mfaEnrolled: false,

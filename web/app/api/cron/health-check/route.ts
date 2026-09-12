@@ -8,6 +8,7 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 
 /**
  * GET /api/cron/health-check — scans machines for stale heartbeats and emails
@@ -488,7 +489,7 @@ export async function GET(request: NextRequest) {
   }
 
   const resendClient = getResend();
-  const baseUrl = request.nextUrl.origin;
+  const baseUrl = publicOrigin(request);
   let alertsSent = 0;
 
   for (const plan of sendPlans) {

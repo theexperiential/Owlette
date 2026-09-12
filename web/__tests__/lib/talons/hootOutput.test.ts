@@ -9,6 +9,12 @@
  * play — this module classifies on `instanceof`, and a stand-in would keep
  * passing after the real class moved. `Date.now` is pinned so the chatId is
  * assertable verbatim.
+ *
+ * `hoot-utils.server` is deliberately NOT mocked either: the pre-flights run
+ * against seeded machine documents — one for a machine-scoped run, the whole
+ * `machines` collection for a site-wide one — so the defaults they lean on (an
+ * absent doc is offline, an absent `online` is offline, an absent
+ * `cortexEnabled` is on) are the real ones.
  */
 
 const mockResolveTalonAuthor = jest.fn();
@@ -68,21 +74,58 @@ const EXPECTED_CHAT_ID = `talon_${NOW_MS}_${RUN_ID}`;
 
 type DocData = Record<string, unknown>;
 
-/** Just enough Firestore for `chats/{chatId}.set(...)`. */
+/**
+ * Just enough Firestore for `chats/{chatId}.set(...)`, the machine pre-flight's
+ * `sites/{siteId}/machines/{machineId}.get()`, and the site-wide pre-flight's
+ * `sites/{siteId}/machines.get()`. Seeded docs live in their own map so `docs`
+ * stays a record of what this module WROTE — the refusal tests assert it never
+ * grows.
+ */
 class FakeFirestore {
   readonly docs = new Map<string, DocData>();
+  readonly seeded = new Map<string, DocData>();
   setError: Error | null = null;
+  getError: Error | null = null;
 
   collection(name: string) {
+    return this.collectionAt(name);
+  }
+
+  private collectionAt(path: string) {
     return {
-      doc: (id: string) => ({
-        set: async (data: DocData) => {
-          if (this.setError) throw this.setError;
-          this.docs.set(`${name}/${id}`, { ...data });
-        },
-      }),
+      doc: (id: string) => {
+        const docPath = `${path}/${id}`;
+        return {
+          set: async (data: DocData) => {
+            if (this.setError) throw this.setError;
+            this.docs.set(docPath, { ...data });
+          },
+          get: async () => {
+            if (this.getError) throw this.getError;
+            const data = this.seeded.get(docPath) ?? this.docs.get(docPath);
+            return { exists: data !== undefined, data: () => data };
+          },
+          collection: (sub: string) => this.collectionAt(`${docPath}/${sub}`),
+        };
+      },
+      // Collection read: the immediate children of `path`, seeded winning over
+      // written, mirroring the document getter's precedence.
+      get: async () => {
+        if (this.getError) throw this.getError;
+        const merged = new Map([...this.docs, ...this.seeded]);
+        const prefix = `${path}/`;
+        const docs = [...merged.entries()]
+          .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+          .map(([docPath, data]) => ({ id: docPath.slice(prefix.length), data: () => data }));
+        return { docs };
+      },
     };
   }
+}
+
+/** The presence doc a pre-flight reads — `m1` is the machine-scoped target. */
+function seedMachine(data: DocData, machineId = 'm1'): void {
+  fake.seeded.set(`sites/${SITE}/machines/${machineId}`, data);
 }
 
 let fake: FakeFirestore;
@@ -141,6 +184,8 @@ beforeEach(() => {
   fake = new FakeFirestore();
   db = fake as unknown as Firestore;
   jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+  // Online, and no `cortexEnabled` field — the kill switch defaults to on.
+  seedMachine({ online: true });
 
   mockResolveTalonAuthor.mockResolvedValue({
     userId: 'admin-uid',
@@ -227,6 +272,207 @@ describe('fire-time access re-resolution', () => {
   });
 });
 
+describe('machine pre-flight', () => {
+  // Every tool the turn can call is relayed to the agent, so an unreachable or
+  // opted-out machine must refuse BEFORE a chat, a lock, or a runner exists.
+  it.each([
+    ['the machine is offline', { online: false }, 'machine_offline'],
+    ['the machine has no presence doc', null, 'machine_offline'],
+    ['hoot is switched off on the machine', { online: true, cortexEnabled: false }, 'hoot_disabled'],
+  ])('skips without dispatching when %s', async (_label, machine, detail) => {
+    if (machine === null) fake.seeded.clear();
+    else seedMachine(machine);
+
+    const result = await runHootOutput(db, args());
+
+    // `skipped`, not `failed`: nothing is wrong with the talon, so this must
+    // never spend one of the ten runs that auto-disable it.
+    expect(result).toEqual({ status: 'skipped', detail });
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('dispatches when the machine is online and the kill switch is on', async () => {
+    seedMachine({ online: true, cortexEnabled: true });
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+    expect(mockStartTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a failed machine read on the failure counter', async () => {
+    // A read that failed says nothing about the machine, so it is neither a
+    // benign skip nor grounds to disable anything.
+    fake.getError = new Error('DEADLINE_EXCEEDED');
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toEqual({
+      status: 'failed',
+      detail: 'machine_check_failed',
+      error: 'DEADLINE_EXCEEDED',
+    });
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('still disables the talon when the author is gone AND the machine is offline', async () => {
+    // Ordering is deliberate: the author check is terminal and runs first, so a
+    // machine that happens to be down cannot postpone the disable indefinitely.
+    seedMachine({ online: false });
+    mockResolveTalonAuthor.mockRejectedValue(
+      new TalonAuthorError('creator_deleted', 'Talon t1 author admin-uid can no longer run it'),
+    );
+
+    const result = await runHootOutput(db, args());
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      detail: 'creator_deleted',
+      disabledReason: 'creator_deleted',
+    });
+  });
+});
+
+describe('site-wide pre-flight', () => {
+  /** A site-wide run: no machineId, so the whole site is the target. */
+  function siteArgs(): RunHootOutputArgs {
+    return args({ machineId: undefined, machineName: undefined });
+  }
+
+  // `/api/hoot` refuses site mode with nothing online; without the same check
+  // here the turn runner throws INSIDE an already-locked turn, leaving an empty
+  // chat and a claimed lock behind on every firing.
+  it.each([
+    ['no machine in the site is online', () => seedMachine({ online: false, cortexEnabled: true }, 'm2')],
+    ['the site has no machines at all', () => fake.seeded.clear()],
+  ])('skips without dispatching when %s', async (_label, seed) => {
+    fake.seeded.clear();
+    seed();
+
+    const result = await runHootOutput(db, siteArgs());
+
+    // `skipped`, not `failed`: a sleeping site is not a talon fault, so it must
+    // never spend one of the ten runs that auto-disable it.
+    expect(result).toEqual({ status: 'skipped', detail: 'no_machines_online' });
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('dispatches when one machine is online and the rest are not', async () => {
+    // The gate is "somewhere to run", not "everywhere" — the runner fans each
+    // tool call out to whichever machines are online at the time.
+    seedMachine({ online: false });
+    seedMachine({ online: true }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+    expect(mockStartTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a hoot-off machine from the set a site run fans out over', async () => {
+    // D-A: the kill switch is honoured on EVERY dispatch, site-wide talons
+    // included. `m2` is online and would have received every relayed tool call
+    // before this; now it is skipped, and the turn carries which machine it lost
+    // so the model can say so rather than quietly answering for a smaller fleet.
+    fake.seeded.clear();
+    seedMachine({ online: true });
+    seedMachine({ online: true, cortexEnabled: false }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    // The held-back machine travels back to the caller, which records it on the
+    // run: a fan-out that reached 1 of 2 machines must not read as a complete
+    // delivery once the turn is over.
+    expect(result).toEqual({
+      status: 'sent',
+      chatId: EXPECTED_CHAT_ID,
+      skippedMachineIds: ['m2'],
+    });
+    expect(startTurnParams().resolved).toEqual({
+      ids: ['m1'],
+      fanOut: true,
+      skipped: { offline: [], disabled: ['m2'] },
+    });
+  });
+
+  it('records no skipped list when the kill switch held nothing back', async () => {
+    // `toStrictEqual`: the field must be ABSENT, not present-and-undefined — a
+    // run that reached everything says nothing about skipping.
+    fake.seeded.clear();
+    seedMachine({ online: true });
+    seedMachine({ online: true }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toStrictEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+  });
+
+  it('skips without dispatching when every online machine has hoot switched off', async () => {
+    // `skipped`, not `failed`: an operator pausing hoot across the site is a
+    // deliberate act, and must not spend one of the ten runs that auto-disable
+    // the talon. Refusing here also keeps the empty chat and the claimed lock
+    // from being written for a turn with nothing to talk to.
+    fake.seeded.clear();
+    seedMachine({ online: true, cortexEnabled: false });
+    seedMachine({ online: true, cortexEnabled: false }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({ status: 'skipped', detail: 'no_hoot_enabled_machines' });
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('reports a sleeping site as offline even when its machines also have hoot off', async () => {
+    // Offline is classified first: "nobody is home" must never read back as
+    // "somebody switched hoot off", or the suggested fix is the wrong one.
+    fake.seeded.clear();
+    seedMachine({ online: false, cortexEnabled: false });
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({ status: 'skipped', detail: 'no_machines_online' });
+  });
+
+  it('leaves a failed site read on the failure counter', async () => {
+    // Classified exactly like the machine guards' failed read: transient, and it
+    // decides nothing about the site.
+    fake.getError = new Error('DEADLINE_EXCEEDED');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({
+      status: 'failed',
+      detail: 'machine_check_failed',
+      error: 'DEADLINE_EXCEEDED',
+    });
+    expect(fake.docs.size).toBe(0);
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('still disables the talon when the author is gone AND the site is asleep', async () => {
+    // Same ordering rule as the machine path: the author check is terminal and
+    // runs first, so an empty site cannot postpone the disable indefinitely.
+    fake.seeded.clear();
+    mockResolveTalonAuthor.mockRejectedValue(
+      new TalonAuthorError('creator_deleted', 'Talon t1 author admin-uid can no longer run it'),
+    );
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      detail: 'creator_deleted',
+      disabledReason: 'creator_deleted',
+    });
+  });
+});
+
 describe('the chat', () => {
   it('creates a fresh chat keyed by timestamp and run id', async () => {
     const result = await runHootOutput(db, args());
@@ -237,6 +483,10 @@ describe('the chat', () => {
       siteId: SITE,
       userId: 'admin-uid',
       targetType: 'machine',
+      // The new list plus the legacy trio, written together by
+      // `chatTargetFields` so an old tab reading `targetMachineId` narrows to
+      // this machine instead of widening to the site.
+      targetMachineIds: ['m1'],
       targetMachineId: 'm1',
       machineName: 'LOBBY-01',
       title: 'talon: lobby wall check',
@@ -259,6 +509,10 @@ describe('the chat', () => {
       turnId: 'turn_fixed',
       siteId: SITE,
       machineId: 'm1',
+      // The record carries the turn's target from the moment it is claimed, so a
+      // later approval resume has an explicit list to bind to.
+      target: { machineIds: ['m1'], fanOut: false, source: 'talon' },
+      resolvedMachineIds: ['m1'],
     });
   });
 
@@ -267,10 +521,32 @@ describe('the chat', () => {
 
     expect(chatDoc()).toMatchObject({
       targetType: 'site',
+      targetMachineIds: null,
       targetMachineId: null,
       machineName: 'All Machines',
     });
-    expect(startTurnParams()).toMatchObject({ machineId: '__site__', machineName: '' });
+    // The turn fans out over the online machines; no `chatTarget`, so the
+    // runner cannot overwrite the friendly label written above.
+    expect(startTurnParams()).toMatchObject({
+      resolved: { ids: ['m1'], fanOut: true },
+      turnTarget: { machineIds: null, fanOut: true, source: 'talon' },
+    });
+    expect(startTurnParams().chatTarget).toBeUndefined();
+  });
+
+  it('keeps the machine display name as the chat label', async () => {
+    // A talon machine chat is labelled `LOBBY-01`, not `m1`: `machineName` is
+    // what the sidebar, the header and both sides of a share read, and the
+    // run carries the friendly name the engine already resolved.
+    await runHootOutput(db, args({ machineName: 'LOBBY-01' }));
+
+    expect(chatDoc()).toMatchObject({ targetMachineIds: ['m1'], machineName: 'LOBBY-01' });
+  });
+
+  it('labels the chat with the machine id when the run carries no display name', async () => {
+    await runHootOutput(db, args({ machineName: undefined }));
+
+    expect(chatDoc()).toMatchObject({ targetMachineIds: ['m1'], machineName: 'm1' });
   });
 
   it('fails without a lock or a turn when the chat cannot be written', async () => {
@@ -303,7 +579,15 @@ describe('the chat', () => {
 
 describe('the turn', () => {
   it('starts headless with the run identifiers, the talon source, and the recovery index', async () => {
-    mockAcquireTurnLock.mockResolvedValue({ call_1: { m1: { commandId: 'cmd_1' } } });
+    // The lock returns the whole prior turn record; only its recovery index is
+    // threaded into the runner here.
+    mockAcquireTurnLock.mockResolvedValue({
+      toolCommands: { call_1: { m1: { commandId: 'cmd_1' } } },
+      fanOut: false,
+      resolvedMachineIds: ['m1'],
+      messageId: null,
+      pendingApprovals: [],
+    });
 
     await runHootOutput(db, args());
 
@@ -311,11 +595,11 @@ describe('the turn', () => {
       chatId: EXPECTED_CHAT_ID,
       turnId: 'turn_fixed',
       siteId: SITE,
-      machineId: 'm1',
-      machineName: 'LOBBY-01',
+      resolved: { ids: ['m1'], fanOut: false },
+      turnTarget: { machineIds: ['m1'], fanOut: false, source: 'talon' },
       userId: 'admin-uid',
       source: 'talon',
-      priorToolCommands: { call_1: { m1: { commandId: 'cmd_1' } } },
+      priorTurn: { toolCommands: { call_1: { m1: { commandId: 'cmd_1' } } } },
     });
   });
 

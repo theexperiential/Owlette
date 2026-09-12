@@ -8,7 +8,7 @@ import {
   type MintedApiKey,
 } from '../../helpers/apiKey';
 import { getAdminDb } from '../../helpers/emulator';
-import { seedChunks, seedMachine } from '../../helpers/seed';
+import { seedChunks, seedMachine, seedMemberRow } from '../../helpers/seed';
 
 const SUFFIX = crypto.randomBytes(4).toString('hex');
 const SITE_ID = `site-smoke-${SUFFIX}`;
@@ -57,6 +57,9 @@ test.describe.serial('public API smoke', () => {
       { sites: FieldValue.arrayUnion(SITE_ID) },
       { merge: true },
     );
+    // Ownership is a member row since wave 5.1; the `owner` field above grants
+    // nothing, so without this the api key cannot reach its own site.
+    await seedMemberRow(SITE_ID, 'admin-uid', 'owner');
     await seedMachine(SITE_ID, MACHINE_ID);
     await seedChunks(SITE_ID, [PRESENT_CHUNK]);
 

@@ -6,21 +6,46 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from './emulator';
 
-export type TestRole = 'member' | 'admin' | 'superadmin';
+/**
+ * FIXTURE identities, not global roles. `owner` is the important one: a global
+ * `member` who OWNS a site, which is what every self-serve customer actually is
+ * (`bootstrapUser.server.ts` creates them as `member`, and `POST /api/sites` has
+ * no capability gate). That shape is the one that shipped a production bug —
+ * Davor, 2026-09-04 — and the suite could not express it until now.
+ */
+export type TestRole = 'member' | 'admin' | 'superadmin' | 'owner';
+
+/** What actually lands in `users/{uid}.role`. */
+export type GlobalRole = 'member' | 'admin' | 'superadmin';
 
 export interface TestUser {
   uid: string;
   email: string;
   password: string;
-  role: TestRole;
+  /** GLOBAL role. Grants nothing on a site since wave 5.1. */
+  role: GlobalRole;
   sites: string[];
+  /**
+   * Per-site standing, overriding the global-role mirror `seedUser` applies.
+   * This is how a fixture can be a global `member` and a site `owner` at once.
+   */
+  siteRoles?: Record<string, SeedMemberRole>;
   displayName?: string;
 }
 
 /**
- * Canonical test-user fleet; mirrors scripts/test-rules.mjs. admin-uid is a
- * site-admin on site-A, not a platform superadmin. super-uid has empty sites[]
- * and reaches everything via the canAccessSite fall-through.
+ * Canonical test-user fleet. admin-uid is a site-admin on site-A via its member
+ * ROW, not a platform superadmin; super-uid reaches every site through the
+ * superadmin short-circuit in `canAccessSite`, which runs before membership is
+ * consulted at all.
+ *
+ * The rules matrix these once mirrored (`scripts/checks/test-rules.mjs`) was
+ * deleted 2026-09-07: it seeded `users/{uid}.sites[]` with no member rows and
+ * asserted the site read SUCCEEDED, which the per-site-roles migration made
+ * false. It ran in no CI job, so it sat red and unread — and the obvious way to
+ * "fix" that red is to make the rules honour `sites[]` again, reopening the
+ * escalation the migration closed. Its coverage lives in `web/__tests__/rules/`,
+ * which the `rules` CI job actually runs.
  */
 export const TEST_USERS: Record<TestRole, TestUser> = {
   member: {
@@ -46,6 +71,18 @@ export const TEST_USERS: Record<TestRole, TestUser> = {
     role: 'superadmin',
     sites: [],
     displayName: 'E2E Superadmin',
+  },
+  // A global `member` who owns site-C. The global role grants nothing; the
+  // `owner` membership is the whole of their authority, which is exactly the
+  // real customer shape and the one the old superadmin-only suite could not test.
+  owner: {
+    uid: 'owner-uid',
+    email: 'owner@e2e.test',
+    password: 'e2e-owner-password',
+    role: 'member',
+    sites: ['site-C'],
+    siteRoles: { 'site-C': 'owner' },
+    displayName: 'E2E Owner',
   },
 };
 
@@ -84,7 +121,9 @@ export async function seedUser(user: TestUser): Promise<void> {
   await db.collection('users').doc(user.uid).set({
     email: user.email,
     role: user.role,
-    sites: user.sites,
+    // Membership is granted below, through grantMembership — seeded empty here
+    // so there is exactly one writer of `sites[]`.
+    sites: [],
     displayName: user.displayName ?? '',
     createdAt: new Date(),
     // MFA bypass — avoids the /setup-2fa and /verify-2fa redirect gates.
@@ -110,6 +149,82 @@ export async function seedUser(user: TestUser): Promise<void> {
       processesExpanded: true,
     },
   });
+
+  // One writer, not two: the user document above no longer carries membership.
+  //
+  // The GLOBAL role is mirrored onto each of the fixture's sites, because that is
+  // what it used to confer there — the `admin` fixture was a site admin on site-A,
+  // and 61 of 81 spec files depend on it staying one. Superadmins get no row,
+  // matching production: they reach every site by global role and hold none.
+  for (const siteId of user.sites) {
+    if (user.role === 'superadmin') continue;
+    const explicit = user.siteRoles?.[siteId];
+    await grantMembership(
+      siteId,
+      user.uid,
+      explicit ?? (user.role === 'admin' ? 'admin' : 'member')
+    );
+  }
+}
+
+/** Per-site standing a fixture can grant. Mirrors the production role set. */
+export type SeedMemberRole = 'owner' | 'admin' | 'member';
+
+/**
+ * THE seeding entry point for site membership. Every fixture that needs a user
+ * on a site goes through here — nothing writes `users/{uid}.sites[]` or
+ * `sites/{siteId}.owner` directly.
+ *
+ * `sites/{siteId}/members/{uid}` is what GRANTS access, as of wave 5.1: both the
+ * rules and the server matrix resolve from it, and neither reads the legacy
+ * fields any more. Those are still written because wave 6.1 has not stripped
+ * them yet and the client still unions them in — but they confer nothing, so a
+ * fixture seeded without a member row is simply denied.
+ *
+ * That the seam existed is why this is one edit instead of one per spec file.
+ */
+export async function grantMembership(
+  siteId: string,
+  uid: string,
+  role: SeedMemberRole = 'member',
+): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .set({ sites: FieldValue.arrayUnion(siteId) }, { merge: true });
+  if (role === 'owner') {
+    await db.collection('sites').doc(siteId).set({ owner: uid }, { merge: true });
+  }
+  await seedMemberRow(siteId, uid, role);
+}
+
+/**
+ * Write ONLY `sites/{siteId}/members/{uid}` — no user document, no `sites[]`.
+ *
+ * Split out of `grantMembership` for two callers that must not mint a user doc:
+ * `seedSite`, whose TEST_SITES owners are deliberately not real users, and the
+ * api specs that seed a site inline. Since wave 5.1 this row is what GRANTS, so
+ * a site seeded without one is unreadable even by the uid its `owner` field
+ * names — which is exactly how the owner-delete spec started failing.
+ */
+export async function seedMemberRow(
+  siteId: string,
+  uid: string,
+  role: SeedMemberRole = 'member',
+): Promise<void> {
+  await getAdminDb()
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .set({
+      uid,
+      role,
+      status: 'active',
+      addedAt: new Date(0),
+      addedBy: 'system:e2e-seed',
+    });
 }
 
 export interface TestSite {
@@ -122,16 +237,84 @@ export interface TestSite {
 export const TEST_SITES: TestSite[] = [
   { id: 'site-A', name: 'Site A (Assigned)', owner: 'someone-else', timezone: 'UTC' },
   { id: 'site-B', name: 'Site B (Unassigned)', owner: 'someone-else', timezone: 'UTC' },
+  // Owned by a REAL fixture, unlike A and B whose 'someone-else' owner is not a
+  // user. Sorts after both by name, so it never displaces site-A as the default
+  // selection for the fixtures that already depend on that.
+  { id: 'site-C', name: 'Site C (Owned)', owner: 'owner-uid', timezone: 'UTC' },
 ];
 
 export async function seedSite(site: TestSite): Promise<void> {
   const db = getAdminDb();
   await db.collection('sites').doc(site.id).set({
     name: site.name,
+    // `owner` stays part of the SITE document rather than going through
+    // grantMembership: TEST_SITES owners are deliberately NOT test users
+    // ('someone-else'), which is what makes site-A "assigned but not owned".
+    // Routing it through the membership helper would mint phantom user
+    // documents for owners that are not meant to exist.
     owner: site.owner,
     timezone: site.timezone ?? 'UTC',
     createdAt: new Date(),
   });
+  // Ownership is a member row since wave 5.1; the `owner` field above grants
+  // nothing. Written through `seedMemberRow` rather than `grantMembership` so a
+  // non-user owner like 'someone-else' still gets no phantom user document.
+  await seedMemberRow(site.id, site.owner, 'owner');
+}
+
+/**
+ * Revoke one fixture's membership of a site WITHOUT deleting the site.
+ *
+ * The counterpart to `releaseFixtureSite`, which is for sites a spec created and
+ * must remove entirely. Use this when a spec borrows a BASELINE site (site-A/B/C)
+ * for a fixture that does not normally hold it — the grant has to come back off,
+ * or site auto-selection carries it into every later spec.
+ */
+export async function revokeMembership(siteId: string, uid: string): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .update({ sites: FieldValue.arrayRemove(siteId) })
+    .catch(() => undefined);
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .delete()
+    .catch(() => undefined);
+}
+
+/**
+ * Undo a spec's temporary site grant. Call it from `afterAll` in any spec that
+ * seeds a site of its own onto a shared fixture.
+ *
+ * Leaving the grant behind makes site auto-selection prefer the spec's site over
+ * `site-A` for every LATER spec, whose own seeds then never render — the suite
+ * runs `workers: 1`, so this is ordinary sequential contamination, and it cost 9
+ * co-run specs on 2026-08-12.
+ *
+ * It matters more since wave 5.1. Before it, a leftover site was invisible
+ * anyway: the fixture held no member row, so the client listener was denied and
+ * the site never entered the switcher. Now that specs seed the row that grants,
+ * the leftover site is fully visible and the hazard is live again.
+ */
+export async function releaseFixtureSite(siteId: string, uid = 'admin-uid'): Promise<void> {
+  const db = getAdminDb();
+  await db
+    .collection('users')
+    .doc(uid)
+    .update({ sites: FieldValue.arrayRemove(siteId) })
+    .catch(() => undefined);
+  await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('members')
+    .doc(uid)
+    .delete()
+    .catch(() => undefined);
+  await db.collection('sites').doc(siteId).delete().catch(() => undefined);
 }
 
 /** The canonical baseline: three users + two sites. Called by global-setup. */
@@ -148,6 +331,18 @@ export interface SeedMachineOptions {
   heartbeatOffsetSec?: number;
   /** Monitors in the display profile. Default 2; 0 writes no display subdoc. */
   monitorCount?: number;
+  /**
+   * Explicit per-monitor specs — overrides `monitorCount`'s uniform dual
+   * 1920×1080. Added when the mixed-states fleet read as fake: every machine
+   * carried the same two "Test Monitor" screens on camera. Positions are
+   * computed left-to-right; rotation 90/270 swaps the footprint.
+   */
+  monitors?: Array<{
+    widthPx: number;
+    heightPx: number;
+    rotation?: 0 | 90 | 180 | 270;
+    friendlyName?: string;
+  }>;
   /**
    * Seconds until an in-flight reboot fires. Writes `rebooting` +
    * `rebootScheduledAt` so MachineStatusPill renders its countdown variant.
@@ -234,24 +429,40 @@ export async function seedMachine(
   // Offset positions so DisplayCanvas has something non-trivial to render.
   // `edidHash` is the drift-matching identity key — synthetic but stable, so
   // re-runs are deterministic.
-  if (monitorCount > 0) {
-    const monitors = Array.from({ length: monitorCount }, (_, i) => ({
-      id: `MONITOR\\TEST${i}`,
-      edidHash: `hash-${machineId}-${i}`,
-      manufacturerId: 'TST',
-      productCode: `000${i}`,
-      serialNumber: `SN${i}`,
-      friendlyName: `Test Monitor ${i + 1}`,
-      position: { x: i * 1920, y: 0 },
-      resolution: { width: 1920, height: 1080 },
-      refreshHz: 60,
-      rotation: 0,
-      scalePct: 100,
-      primary: i === 0,
-      connectionType: 'dp',
-      adapterLuid: '0:0',
-      targetId: i,
-    }));
+  const monitorSpecs =
+    opts.monitors ??
+    (monitorCount > 0
+      ? Array.from({ length: monitorCount }, () => ({
+          widthPx: 1920,
+          heightPx: 1080,
+          rotation: 0 as const,
+          friendlyName: undefined,
+        }))
+      : []);
+  if (monitorSpecs.length > 0) {
+    let cursorX = 0;
+    const monitors = monitorSpecs.map((m, i) => {
+      const rotated = m.rotation === 90 || m.rotation === 270;
+      const rec = {
+        id: `MONITOR\\TEST${i}`,
+        edidHash: `hash-${machineId}-${i}`,
+        manufacturerId: 'TST',
+        productCode: `000${i}`,
+        serialNumber: `SN${i}`,
+        friendlyName: m.friendlyName ?? `Test Monitor ${i + 1}`,
+        position: { x: cursorX, y: 0 },
+        resolution: { width: m.widthPx, height: m.heightPx },
+        refreshHz: 60,
+        rotation: m.rotation ?? 0,
+        scalePct: 100,
+        primary: i === 0,
+        connectionType: 'dp',
+        adapterLuid: '0:0',
+        targetId: i,
+      };
+      cursorX += rotated ? m.heightPx : m.widthPx;
+      return rec;
+    });
 
     await db
       .collection('sites')

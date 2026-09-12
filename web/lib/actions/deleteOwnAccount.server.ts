@@ -722,8 +722,23 @@ export async function deleteOwnAccount(
       totals[sub] += n;
     }
     if (!dryRun) {
+      // Tombstone the id BEFORE freeing it — the same guarantee `deleteSite`
+      // makes (see deleteSite.server.ts), for the same reason. Site ids are
+      // caller-supplied slugs, deletion does not clear OTHER users' `sites[]`
+      // entries, and `POST /api/sites` is open to any authenticated user — so an
+      // untombstoned slug can be re-registered by anyone, and the previous
+      // site's members come with it as a cross-tenant grant nobody performed.
+      // This path deleted the site document without a tombstone, which made
+      // self-delete the one way to free a slug unsafely. Written first: a
+      // tombstone with no delete is harmless, a delete with no tombstone is the
+      // bug. Timestamp only — the document is client-readable for the
+      // id-availability check and must carry nothing else.
+      await db.collection('site_ids').doc(entry.siteId).set({
+        deletedAt: FieldValue.serverTimestamp(),
+      });
       await siteRef.delete();
     }
+    deletedPaths.push(`site_ids/${entry.siteId}`);
     deletedPaths.push(`sites/${entry.siteId}`);
     sitesDeleted += 1;
   }

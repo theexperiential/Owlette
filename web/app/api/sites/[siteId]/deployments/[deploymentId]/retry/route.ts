@@ -15,7 +15,6 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import {
   applyAuthDeprecations,
   readAndParseJsonBody,
-  requireSiteAuthAndScope,
 } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
@@ -37,6 +36,10 @@ export const maxDuration = 300;
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
   siteIdParam: 'path',
+  // Opted in: enforced through the inner _shared gate until now, so without
+  // this, removing that gate would drop the 400 on an unsupported
+  // Roost-Version.
+  roostVersioned: true,
   targetKind: 'deployment',
 })(async (request: NextRequest, ctx, routeContext) => {
   try {
@@ -61,14 +64,12 @@ export const POST = authorizedSiteHandler<RouteParams>({
       machineFilter = new Set(body.machines as string[]);
     }
 
-    const auth = await requireSiteAuthAndScope(request, siteId, 'write');
-    if (!auth.ok) return auth.response;
 
     return withIdempotency(
       request,
       {
-        userId: auth.userId,
-        environment: auth.auth.keyContext?.environment ?? 'unknown',
+        userId: ctx.actor.userId,
+        environment: ctx.auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
@@ -216,9 +217,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
         emitMutation({
           kind: 'deployment_mutated',
           siteId,
-          actor: auth.auth.keyContext
-            ? `apiKey:${auth.auth.keyContext.keyId}`
-            : `user:${auth.userId}`,
+          actor: ctx.auth.keyContext
+            ? `apiKey:${ctx.auth.keyContext.keyId}`
+            : `user:${ctx.actor.userId}`,
           targetId: deploymentId,
           attributes: {
             endpoint: `/api/sites/${siteId}/deployments/${deploymentId}/retry`,
@@ -238,7 +239,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
             retried: failed.length,
             machine_ids: failed.map((t) => t.machineId),
           }),
-          auth.scopeCheck,
+          ctx.scopeCheck,
         );
       },
       { requireKey: true },

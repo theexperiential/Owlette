@@ -4,8 +4,12 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 2.x.x   | :white_check_mark: |
-| < 2.0   | :x:                |
+| 3.x.x   | :white_check_mark: |
+| < 3.0   | :x:                |
+
+The 3.x line is current; 3.0.0 replaced the NSSM-hosted service with
+`owlette-host` and is the floor for everything since. Agents older than 3.x are
+not supported and should be upgraded through the installer rather than patched.
 
 ## Reporting a Vulnerability
 

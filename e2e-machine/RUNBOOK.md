@@ -4,7 +4,7 @@ How to stand up the harness on your spare Windows box, run what exists (Wave 0 +
 and continue building the remaining waves. Written so either you or an AI coding agent on
 that box can follow it step by step.
 
-> **Where things are**: plan/tasks/context = [`dev/active/full-machine-e2e/`](../dev/active/full-machine-e2e/) ·
+> **Where things are**: plan/tasks/context = [`dev/completed/full-machine-e2e/`](../dev/completed/full-machine-e2e/) ·
 > machine prep = [`docs/internal/gui-automation-machine-setup.md`](../docs/internal/gui-automation-machine-setup.md) ·
 > harness code = this directory (`e2e-machine/`).
 
@@ -133,7 +133,7 @@ and the Wave 1 controller are reused throughout. Hand an agent one wave at a tim
   `/ADD=` re-pairs. Exclude the N-1 snapshot's baked-in refresh token from teardown.
 - Reuse `run_wave1.py`'s oracles; skip stage 0's empty-machine check.
 
-### Wave 2 — GUI tier (the flakiest; keep advisory longest)
+### Wave 2 — GUI tier (REMOVED 2026-09-06 — it drove the CustomTkinter GUI deleted in 3.0.0; OWL-46)
 - **Needs**: Part A3 provisioning done (pywinauto venv, DPI/theme pinned, interactive session).
 - **Build**: an env-gated (`OWLETTE_E2E=1`), read-only tk-introspection shim in the GUI that
   writes widget rects to a side file (CustomTkinter widgets are invisible to UIAutomation);

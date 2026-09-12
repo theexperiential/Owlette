@@ -32,20 +32,22 @@ dev/completed/
 dev/active/
 dev/scratch/
 
-# One-shot codex/claude prompts and transcripts. Structured plan dirs (with
-# BRIEF.md, named-feature subfolders) and audit conclusions are committed
-# explicitly — see the negation below. Loose dev/codex-* one-shots, raw .txt
-# transcripts, and ad-hoc debug notes are scratch work and don't belong in
-# the repo. .claude/codex-prompts/ is local-only prompt scratchpad.
+# One-shot codex/claude prompts and transcripts. Loose dev/codex-* one-shots,
+# raw .txt transcripts, and ad-hoc debug notes are scratch work and don't
+# belong in the repo. .claude/codex-prompts/ is local-only prompt scratchpad.
 dev/codex-*
 dev/**/codex-*
 dev/**/claude-*
-!dev/codex-dev-audit-*.output.md
-dev/build-failure-context.md
 
 # Ad-hoc multi-agent review/dispatch scratch — per-agent findings, briefings,
 # prompts, raw stdout/patches, trigger payloads. Durable conclusions live in
-# commits and dev/findings-ledger.md; these one-off dispatches aren't committed.
+# COMMITS; these one-off dispatches aren't committed.
+#
+# dev/findings-ledger.md is deliberately local-only too (see below), matching
+# dev/active/ and dev/completed/. It holds accepted-risk security triage, which
+# is not something to publish into repo history. This comment used to name it as
+# the durable home for conclusions while the rule below ignored it — a
+# contradiction resolved 2026-09-07 in favour of keeping it out of git.
 dev/**/*-findings.md
 dev/**/agent*.md
 dev/**/BRIEFING.md
@@ -145,3 +147,4 @@ agent/pywin32_postinstall.py
 # Backfill change logs — operational undo records containing uid↔site mappings.
 # Keep them on disk (they are the only safe rollback source) but never commit.
 scripts/*.log.json
+scripts/migrations/*.log.json

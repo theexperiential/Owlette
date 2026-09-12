@@ -7,6 +7,7 @@ CCD calls (`_SetDisplayConfig`, `_query_active_paths_safe`, `_snapshot_live_conf
 import json
 import os
 import threading
+import time
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -1845,3 +1846,39 @@ class TestEmitDisplayEventAlertDispatch:
         _, data = svc.firebase_client.send_display_alert.call_args[0]
         assert 'suppressAlert' not in data
         assert 'correlatedApplyId' not in data
+
+
+class TestEnumerationWatchdog:
+    """The watchdog must survive the stall it exists to survive.
+
+    `_enumerate_with_timeout` is the ONLY bound on the heartbeat path —
+    firebase_client's `_upload_metrics` -> `_ensure_display_profile` ->
+    `build_display_profile` reaches it with no outer pool. Until 2026-09-07 it
+    used `with ThreadPoolExecutor(...)`, whose implicit shutdown(wait=True) on
+    block exit waited for the worker anyway, so the timeout bounded nothing and a
+    wedged console session stalled the heartbeat until the machine read offline.
+    """
+
+    def test_timeout_is_enforced_when_the_worker_hangs(self):
+        release = threading.Event()
+
+        def hanging_enumeration():
+            # Far longer than the watchdog. Released in the finally below so an
+            # abandoned worker cannot outlive the test.
+            release.wait(30)
+            return []
+
+        try:
+            with patch.object(dm, '_is_session_0', return_value=False),                     patch.object(dm, '_enumerate_monitors', hanging_enumeration):
+                started = time.monotonic()
+                with pytest.raises(dm.DisplayEnumerationError):
+                    dm._enumerate_with_timeout(timeout=0.2)
+                elapsed = time.monotonic() - started
+        finally:
+            release.set()
+
+        # THE negative control. Against the previous `with`-block form this is the
+        # assertion that fails: exiting the block joined the worker, so the call
+        # returned after ~30s rather than ~0.2s. A green here without it would
+        # only prove that an exception was raised, not that it was raised in time.
+        assert elapsed < 5, f'watchdog blocked on the hung worker for {elapsed:.1f}s'

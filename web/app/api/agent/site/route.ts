@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { ROOST_ENABLED_FIELD } from '@/lib/roostKillSwitch';
 import { apiError } from '@/lib/apiErrorResponse';
 import { problemForbidden, problemNotFound, problemUnauthorized } from '@/lib/apiErrors';
 
@@ -15,12 +16,21 @@ import { problemForbidden, problemNotFound, problemUnauthorized } from '@/lib/ap
  * firestore.rules grants an agent its machine subtree only
  * (`agentCanAccessMachine`), so a direct read of `sites/{siteId}` 403s.
  *
- * 200 `{ name: string | null, timezone: string | null }`. `name` is null when
- * the site has no name, so the caller falls back to the id rather than rendering
- * "null". 401 missing/invalid bearer, 403 non-agent token or no `site_id` claim,
- * 404 site gone.
+ * 200 `{ name: string | null, timezone: string | null, roostEnabled: boolean | null }`.
+ * `name` is null when the site has no name, so the caller falls back to the id
+ * rather than rendering "null". 401 missing/invalid bearer, 403 non-agent token
+ * or no `site_id` claim, 404 site gone.
  *
- * PROJECTION, not the raw document: the two fields above are the whole contract.
+ * `roostEnabled` is passed through verbatim, including null for unset, because
+ * the agent's kill-switch helper fails OPEN on a missing field and must be able
+ * to tell "absent" from "false". This field is here rather than read directly
+ * because the agent's own read of `sites/{siteId}` 403s: the gate in
+ * sync_commands called a `get_document` method that does not exist on
+ * FirebaseClient, swallowed the AttributeError, and cached the resulting
+ * fail-open for the full TTL — so the kill switch had never once been observed
+ * by an agent, while the changelog said it was checked before every sync_pull.
+ *
+ * PROJECTION, not the raw document: the three fields above are the whole contract.
  * `timezone` is gated on `schedulesFollowSiteTime === true` because a non-null
  * timezone flips schedule evaluation for every process on every machine at the
  * site from machine-local to site time. The field is three-state — absent means
@@ -78,7 +88,12 @@ export const GET = withRateLimit(
           ? rawTimezone.trim()
           : null;
 
-      return NextResponse.json({ name, timezone });
+      // Verbatim, null when unset — see the roostEnabled note in the header.
+      const rawRoostEnabled = siteData[ROOST_ENABLED_FIELD];
+      const roostEnabled =
+        typeof rawRoostEnabled === 'boolean' ? rawRoostEnabled : null;
+
+      return NextResponse.json({ name, timezone, roostEnabled });
     } catch (error: unknown) {
       return apiError(error, 'agent/site');
     }

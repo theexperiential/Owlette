@@ -18,6 +18,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { validateSiteId } from '@/lib/validators';
+import { addOwnerToBatch } from '@/lib/membership.server';
 
 const NAME_MAX_LENGTH = 200;
 
@@ -49,6 +50,7 @@ export type CreateSiteResult =
   | { kind: 'invalid_site_id'; reason: string }
   | { kind: 'invalid_name'; reason: string }
   | { kind: 'already_exists' }
+  | { kind: 'id_retired' }
   | {
       kind: 'created';
       siteId: string;
@@ -107,6 +109,15 @@ export async function createSite(
     return { kind: 'already_exists' };
   }
 
+  // A retired id is not free. deleteSite clears `users/{uid}.sites[]` only for
+  // members whose user doc still exists, so a stale entry can survive a delete
+  // and reusing the slug could hand the new site's data to a leftover holder.
+  // Refused rather than silently reused.
+  const tombstone = await db.collection('site_ids').doc(input.siteId).get();
+  if (tombstone.exists) {
+    return { kind: 'id_retired' };
+  }
+
   const nowDate = (input.now ?? (() => new Date()))();
 
   // `update`, not `set(..., {merge:true})`: the route already ran
@@ -122,6 +133,17 @@ export async function createSite(
   });
   batch.update(db.collection('users').doc(input.ownerUid), {
     sites: FieldValue.arrayUnion(input.siteId),
+  });
+  // The owner's member document rides the SAME batch, so a new site is created
+  // in both shapes atomically or not at all. Without this, every site created
+  // after the Wave 3 backfill would be missing its owner row — the backfill
+  // target would move under it and Wave 4's fallback counter could never reach
+  // zero, which is the gate Wave 6 waits on.
+  addOwnerToBatch(batch, {
+    siteId: input.siteId,
+    ownerUid: input.ownerUid,
+    now: nowDate,
+    db,
   });
   await batch.commit();
 

@@ -17,10 +17,12 @@ import {
 import {
   aggregateOneSite,
   getUsageSummary,
+  isAuthorizedForSiteUsage,
   recordEvent,
   type AggregateDeps,
   type EventStore,
   type SiteDirectory,
+  type SiteUsageAuthDeps,
   type SummaryStore,
 } from '../src/telemetry';
 
@@ -431,5 +433,96 @@ describe('getUsageSummary', () => {
     assert.ok(r!.projectedMonthCost.totalUsd >= r!.cost.totalUsd);
     // Roughly 2x MTD halfway through the month.
     assert.ok(r!.projectedMonthCost.totalUsd > 0.3);
+  });
+});
+
+describe('isAuthorizedForSiteUsage', () => {
+  /**
+   * The only authorization check in front of getUsageSummaryHttp, a DEPLOYED
+   * public HTTPS endpoint serving every site's cost figures — and it had no test
+   * at all until 2026-09-07.
+   *
+   * It authorized on `users/{uid}.sites[]` until then. Wave 6.1 deletes that
+   * field, which would have locked every non-superadmin out of their own usage
+   * data. It now reads the member row that actually grants access.
+   */
+  function deps(overrides: Partial<SiteUsageAuthDeps> = {}): SiteUsageAuthDeps {
+    return {
+      verifyIdToken: async () => ({ uid: 'user-1' }),
+      getUser: async () => ({ role: 'member' }),
+      getMember: async () => ({ status: 'active' }),
+      ...overrides,
+    };
+  }
+
+  it('allows an active member of the site', async () => {
+    assert.equal(await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps()), true);
+  });
+
+  it('allows a superadmin with no member row', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps({
+        getUser: async () => ({ role: 'superadmin' }),
+        getMember: async () => null,
+      })),
+      true,
+    );
+  });
+
+  // THE regression this rewrite exists to prevent. A user carrying the legacy
+  // array but no member row must be refused: the array is not an access grant.
+  it('refuses a user with a legacy sites[] entry but no member row', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps({
+        getUser: async () => ({ role: 'member', sites: ['site-a'] }),
+        getMember: async () => null,
+      })),
+      false,
+    );
+  });
+
+  it('refuses a member row that is not active', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps({
+        getMember: async () => ({ status: 'revoked' }),
+      })),
+      false,
+    );
+  });
+
+  it('refuses a soft-deleted account holding a still-valid token', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps({
+        getUser: async () => ({ role: 'member', deletedAt: 1 }),
+      })),
+      false,
+    );
+  });
+
+  it('refuses a missing or malformed bearer token', async () => {
+    assert.equal(await isAuthorizedForSiteUsage(undefined, 'site-a', deps()), false);
+    assert.equal(await isAuthorizedForSiteUsage('', 'site-a', deps()), false);
+  });
+
+  it('refuses when token verification throws', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer bad', 'site-a', deps({
+        verifyIdToken: async () => {
+          throw new Error('invalid token');
+        },
+      })),
+      false,
+    );
+  });
+
+  it('fails closed when the member lookup throws', async () => {
+    assert.equal(
+      await isAuthorizedForSiteUsage('Bearer t', 'site-a', deps({
+        getMember: async () => {
+          throw new Error('firestore unavailable');
+        },
+      })),
+      false,
+    );
   });
 });

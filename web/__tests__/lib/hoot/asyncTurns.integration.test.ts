@@ -20,6 +20,7 @@ import type { InferUIMessageChunk, UIMessage } from 'ai';
 import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
+  APPROVAL_ALREADY_CONSUMED_ERROR,
   LOST_RESULT_ERROR,
   STILL_RUNNING_ERROR,
 } from '@/lib/hoot/repairMessages';
@@ -73,7 +74,7 @@ jest.mock('@/lib/llm', () => ({
   __esModule: true,
   createModel: jest.fn(),
   createCheapModel: jest.fn(),
-  buildSystemPrompt: jest.fn(),
+  buildHootSystemPrompt: jest.fn(),
 }));
 
 // resolveLlmConfig (real) decrypts the seeded user key — stub the crypto only.
@@ -92,10 +93,13 @@ import * as llm from '@/lib/llm';
 import { categorizeNewChat } from '@/lib/hoot/categorizeChat.server';
 import {
   acquireTurnLock,
+  ApprovalStaleError,
+  readTurnRecord,
   TurnActiveError,
   _resetThrottleForTests,
   type TurnToolCommand,
 } from '@/lib/hoot/turnStore.server';
+import { neverWidenLegacyMachineId } from '@/lib/hoot/target';
 import {
   startTurn,
   _setTurnTimingForTests,
@@ -185,6 +189,7 @@ interface FakeDocRef {
   _path: string;
   get: () => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>;
   set: (data: Record<string, unknown>, opts?: { merge?: boolean }) => Promise<void>;
+  create: (data: Record<string, unknown>) => Promise<void>;
   update: (...args: unknown[]) => Promise<void>;
   collection: (name: string) => { doc: (id: string) => FakeDocRef };
 }
@@ -207,6 +212,13 @@ function docRef(path: string): FakeDocRef {
       const next = materializeTop(data);
       store[path] = opts?.merge ? { ...(store[path] ?? {}), ...next } : next;
     },
+    // Real firestore create(): atomic, ALREADY_EXISTS (gRPC code 6) on conflict.
+    create: async (data) => {
+      if (store[path] !== undefined) {
+        throw Object.assign(new Error(`already exists: ${path}`), { code: 6 });
+      }
+      store[path] = materializeTop(data);
+    },
     update: async (...args: unknown[]) => {
       if (!store[path]) throw new Error(`update on missing doc: ${path}`);
       const next = { ...store[path] };
@@ -218,7 +230,22 @@ function docRef(path: string): FakeDocRef {
 }
 
 function collectionRef(prefix: string) {
-  return { doc: (id: string) => docRef(`${prefix}/${id}`) };
+  return {
+    doc: (id: string) => docRef(`${prefix}/${id}`),
+    // Collection read (`listSiteMachines`): the immediate children of `prefix`,
+    // so a machine's own `commands/…` subtree is not mistaken for a machine.
+    get: async () => ({
+      docs: Object.keys(store)
+        .filter(
+          (path) =>
+            path.startsWith(`${prefix}/`) && !path.slice(prefix.length + 1).includes('/'),
+        )
+        .map((path) => ({
+          id: path.slice(prefix.length + 1),
+          data: () => ({ ...store[path] }),
+        })),
+    }),
+  };
 }
 
 const fakeDb = {
@@ -261,34 +288,50 @@ function assistantMsg(id: string, parts: unknown[]): UIMessage {
   return { id, role: 'assistant', parts } as UIMessage;
 }
 
-function baseParams(overrides: Partial<StartTurnParams>): StartTurnParams {
+/** A single-machine turn against `machineId`, as the route resolves one. */
+function baseParams(overrides: Partial<StartTurnParams> & { machineId?: string }): StartTurnParams {
+  const { machineId = MACHINE_ID, ...rest } = overrides;
   return {
     chatId: 'chat_default',
     turnId: 'turn_default',
     siteId: SITE_ID,
-    machineId: MACHINE_ID,
-    machineName: 'Machine One',
     messages: [userMsg('u1', 'check the machine')],
     userId: USER_ID,
     access: { role: 'admin', isSuperadmin: false, isSiteAdmin: true, isSiteOwner: true },
-    ...overrides,
+    resolved: { ids: [machineId], fanOut: false, skipped: { offline: [], disabled: [] } },
+    turnTarget: { machineIds: [machineId], fanOut: false, source: 'chat' },
+    chatTarget: { machineIds: [machineId] },
+    priorTurn: null,
+    ...rest,
   };
 }
 
-/** Mirror the route: claim the per-chat lock, then start the detached turn. */
-async function beginTurn(params: StartTurnParams, opts?: { supersede?: boolean }) {
-  await acquireTurnLock(fakeDb, params.chatId, {
+/**
+ * Mirror the route: claim the per-chat lock — recording the turn's target, or
+ * re-verifying an approval binding — and start the detached turn on the prior
+ * record the claim returned.
+ */
+async function beginTurn(
+  params: StartTurnParams,
+  opts?: { supersede?: boolean; resume?: { messageId: string; toolCallIds: string[] } },
+) {
+  const prior = await acquireTurnLock(fakeDb, params.chatId, {
     turnId: params.turnId,
     siteId: params.siteId,
-    machineId: params.machineId,
+    machineId: neverWidenLegacyMachineId({ machineIds: params.turnTarget.machineIds }),
     supersede: opts?.supersede,
+    ...(opts?.resume
+      ? // As the route does: the mode comes from THIS turn's resolution, the
+        // machine list from the record the claim re-reads.
+        { resume: { ...opts.resume, fanOut: params.resolved.fanOut } }
+      : { target: params.turnTarget, resolvedMachineIds: params.resolved.ids }),
   });
-  return startTurn(fakeDb, params);
+  return startTurn(fakeDb, { ...params, priorTurn: prior });
 }
 
 const finishChunk = {
   type: 'finish' as const,
-  finishReason: 'stop' as const,
+  finishReason: { unified: 'stop' as const, raw: undefined },
   usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
 };
 
@@ -399,11 +442,16 @@ beforeEach(() => {
 
   (llm.createModel as jest.Mock).mockImplementation(() => currentModel);
   (llm.createCheapModel as jest.Mock).mockReturnValue('CHEAP_MODEL');
-  (llm.buildSystemPrompt as jest.Mock).mockImplementation(
-    (machineName: string, siteMode?: boolean) =>
-      siteMode ? 'SITE PROMPT' : `MACHINE PROMPT ${machineName}`,
+  (llm.buildHootSystemPrompt as jest.Mock).mockImplementation(
+    ({ mode, machineIds }: { mode: string; machineIds: string[] }) =>
+      `${mode.toUpperCase()} PROMPT ${machineIds.join(',')}`,
   );
   (categorizeNewChat as jest.Mock).mockResolvedValue({ title: 't', category: 'General' });
+
+  // The machines the runner re-checks its target against at turn start.
+  for (const machineId of [MACHINE_ID, 'machine-appr', 'machine-fu']) {
+    store[`sites/${SITE_ID}/machines/${machineId}`] = { online: true, cortexEnabled: true };
+  }
 
   // resolveLlmConfig (real) reads the turn owner's own key — the only scope there is.
   store[`users/${USER_ID}/settings/llm`] = {
@@ -509,7 +557,7 @@ describe('supersede mid-tool → commandId recovery', () => {
                         toolName: 'get_system_info',
                         input: '{}',
                       },
-                      { ...finishChunk, finishReason: 'tool-calls' as const },
+                      { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                     ]
                   : textChunks('turn A final summary'),
             }),
@@ -552,9 +600,8 @@ describe('supersede mid-tool → commandId recovery', () => {
         },
       };
 
-      // Route behavior: capture the prior turn's recovery index pre-lock.
-      const priorToolCommands = { ...streamDoc(chatId)!.toolCommands };
-      expect(priorToolCommands).toEqual({
+      // The recovery index A recorded; turn B's own claim hands it back.
+      expect(streamDoc(chatId)!.toolCommands).toEqual({
         call_A1: { [MACHINE_ID]: { commandId } },
       });
 
@@ -564,6 +611,8 @@ describe('supersede mid-tool → commandId recovery', () => {
           turnId: 'turn_B',
           siteId: SITE_ID,
           machineId: MACHINE_ID,
+          target: { machineIds: [MACHINE_ID], fanOut: false, source: 'chat' },
+          resolvedMachineIds: [MACHINE_ID],
         }),
       ).rejects.toThrow(TurnActiveError);
 
@@ -594,7 +643,6 @@ describe('supersede mid-tool → commandId recovery', () => {
             ]),
             userMsg('u2', 'how did it go?'),
           ],
-          priorToolCommands,
         }),
         { supersede: true },
       );
@@ -665,7 +713,7 @@ describe('tier-3 approval round-trip through the runner', () => {
               toolName: 'execute_script',
               input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
             },
-            { ...finishChunk, finishReason: 'tool-calls' as const },
+            { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
           ],
         }),
       }),
@@ -810,6 +858,399 @@ describe('tier-3 approval round-trip through the runner', () => {
     },
     15_000,
   );
+
+  /**
+   * OWL-47 pin: a DUPLICATE resume of the same approval (reload / second tab
+   * re-posting the approval-responded history) must not dispatch the tool a
+   * second time. The approval ledger's create() is the gate; the duplicate
+   * turn recovers the real result via the prior record instead of executing.
+   * Negative control: pre-ledger, this exact flow dispatched a second command
+   * (pending doc would hold 2 command ids).
+   */
+  it(
+    'duplicate approval resume: exactly one dispatch, duplicate turn recovers the result',
+    async () => {
+      await runTurn1();
+
+      const prompts: unknown[] = [];
+      const { commandId, streamError } = await runTurn2(prompts);
+      expect(streamError).toBeNull();
+      await waitFor(
+        () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+        'turn 2 terminal status',
+        8000,
+      );
+
+      // The duplicate: same approved history, fresh turn — as a reloaded tab
+      // whose approval buttons were still armed would send it.
+      const history = JSON.parse(JSON.stringify(chatMessages(chatId))) as UIMessage[];
+      // Re-arm the persisted part back to approval-responded, as the stale
+      // client's in-memory copy would carry it.
+      const toolPart = (history[1].parts as Array<Record<string, unknown>>).find(
+        (p) => p.type === 'tool-execute_script',
+      )!;
+      toolPart.state = 'approval-responded';
+      toolPart.approval = { ...(toolPart.approval as Record<string, unknown>), approved: true };
+      delete toolPart.output;
+
+      currentModel = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: textChunks('already handled') }),
+        }),
+      });
+
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_appr_dup',
+          machineId: MACHINE_APPR,
+          messages: history,
+        }),
+        { supersede: true },
+      );
+      const dup = await collectChunks(stream);
+      expect(dup.streamError).toBeNull();
+      await waitFor(
+        () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+        'duplicate turn terminal status',
+        8000,
+      );
+
+      // THE pin: still exactly one command ever dispatched to the machine.
+      expect(Object.keys(store[pendingPath(MACHINE_APPR)])).toEqual([commandId]);
+
+      // The duplicate turn's persisted part is terminal — never a re-armed
+      // approval. The raw output is NOT recoverable here (turn 2's poll loop
+      // consumed and deleted the commands/completed entry), so the honest
+      // outcome is the consumed-approval error; turn 2's assistant narrative
+      // of the result survives in the same message.
+      const parts = chatMessages(chatId)[1].parts as Array<Record<string, unknown>>;
+      const persisted = parts.find((p) => p.type === 'tool-execute_script')!;
+      expect(persisted).toMatchObject({
+        state: 'output-error',
+        errorText: APPROVAL_ALREADY_CONSUMED_ERROR,
+      });
+      expect(JSON.stringify(chatMessages(chatId))).toContain('scan finished clean');
+    },
+    20_000,
+  );
+
+  it('records what the turn ended waiting on, so a resume has something to bind to', async () => {
+    await runTurn1();
+
+    expect(streamDoc(chatId)).toMatchObject({
+      status: 'complete',
+      pendingApprovals: ['toolu_appr_1'],
+    });
+  });
+
+  /**
+   * D-C: the approved call runs on the machines resolved when the approval was
+   * REQUESTED. Here the chat has since been widened to every machine, and the
+   * resumed turn still reaches only the machine that was asked about.
+   */
+  it(
+    'runs a resumed approval on the bound machine alone, not the chat`s current selection',
+    async () => {
+      await runTurn1();
+
+      const history = JSON.parse(JSON.stringify(chatMessages(chatId))) as UIMessage[];
+      const toolPart = (history[1].parts as Array<Record<string, unknown>>).find(
+        (p) => p.type === 'tool-execute_script',
+      )!;
+      toolPart.state = 'approval-responded';
+      toolPart.approval = { ...(toolPart.approval as Record<string, unknown>), approved: true };
+
+      currentModel = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: textChunks('scan finished clean') }),
+        }),
+      });
+
+      // The route's mapping: the bound set comes from the record, never the body.
+      const prior = await readTurnRecord(fakeDb, chatId);
+      expect(prior).toMatchObject({ resolvedMachineIds: [MACHINE_APPR], fanOut: false });
+      const boundIds = prior!.resolvedMachineIds!;
+
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_appr_bound',
+          messages: history,
+          resolved: { ids: boundIds, fanOut: prior!.fanOut, skipped: { offline: [], disabled: [] } },
+          turnTarget: { machineIds: boundIds, fanOut: prior!.fanOut, source: 'resume' },
+          // A resume never rewrites the chat's selection.
+          chatTarget: undefined,
+        }),
+        { resume: { messageId: prior!.messageId!, toolCallIds: ['toolu_appr_1'] } },
+      );
+
+      await waitFor(
+        () => store[pendingPath(MACHINE_APPR)] !== undefined,
+        'pending write (bound resume)',
+      );
+      const commandId = Object.keys(store[pendingPath(MACHINE_APPR)])[0];
+      store[completedPath(MACHINE_APPR)] = {
+        [commandId]: { status: 'completed', result: JSON.stringify({ exit_code: 0 }) },
+      };
+      const { streamError } = await collectChunks(stream);
+      expect(streamError).toBeNull();
+
+      // Nothing reached the other machine, and the record says which one it was.
+      expect(store[pendingPath(MACHINE_ID)]).toBeUndefined();
+      expect(streamDoc(chatId)).toMatchObject({
+        resolvedMachineIds: [MACHINE_APPR],
+        target: { machineIds: [MACHINE_APPR], fanOut: false, source: 'resume' },
+      });
+    },
+    20_000,
+  );
+
+  /**
+   * D-C, one turn later: the record a resume leaves behind must name the
+   * machines that resume REACHED. The claim can only copy the list of the turn
+   * that asked (it re-reads it inside the transaction, which is what makes the
+   * binding safe), so when a bound machine has dropped off in the meantime the
+   * runner is the only thing that can correct it — and it must, or the next
+   * approval this chat parks on binds to the wider list and can run on a machine
+   * that received nothing in the turn that requested it.
+   */
+  it(
+    'a resume records the machines it reached, not the wider set it inherited',
+    async () => {
+      // Turn 1: both machines ticked, one tier-3 call, parked on approval.
+      currentModel = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call' as const,
+                toolCallId: 'toolu_appr_1',
+                toolName: 'execute_script',
+                input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
+              },
+              { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
+            ],
+          }),
+        }),
+      });
+      const both = [MACHINE_APPR, MACHINE_ID];
+      await collectChunks(
+        await beginTurn(
+          baseParams({
+            chatId,
+            turnId: 'turn_appr_wide',
+            messages: [userMsg('u1', 'run sfc /scannow')],
+            resolved: { ids: both, fanOut: true, skipped: { offline: [], disabled: [] } },
+            turnTarget: { machineIds: both, fanOut: true, source: 'chat' },
+            chatTarget: { machineIds: both },
+          }),
+        ),
+      );
+      await waitFor(() => chatMessages(chatId).length === 2, 'wide turn 1 final persist');
+      await flushAsync();
+      expect(streamDoc(chatId)).toMatchObject({ resolvedMachineIds: both });
+
+      // One of the two goes offline before anyone answers the approval.
+      store[`sites/${SITE_ID}/machines/${MACHINE_ID}`] = { online: false, cortexEnabled: true };
+
+      const history = JSON.parse(JSON.stringify(chatMessages(chatId))) as UIMessage[];
+      const toolPart = (history[1].parts as Array<Record<string, unknown>>).find(
+        (p) => p.type === 'tool-execute_script',
+      )!;
+      toolPart.state = 'approval-responded';
+      toolPart.approval = { ...(toolPart.approval as Record<string, unknown>), approved: true };
+
+      currentModel = new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({ chunks: textChunks('scan finished clean') }),
+        }),
+      });
+
+      // The route's own resolution already drops the offline machine, so the
+      // runner narrows nothing further — only the resume itself tells it the
+      // record is still the asking turn's.
+      const prior = await readTurnRecord(fakeDb, chatId);
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_appr_wide_resume',
+          messages: history,
+          resolved: {
+            ids: [MACHINE_APPR],
+            fanOut: true,
+            skipped: { offline: [MACHINE_ID], disabled: [] },
+          },
+          turnTarget: { machineIds: both, fanOut: true, source: 'resume' },
+          chatTarget: undefined,
+        }),
+        { resume: { messageId: prior!.messageId!, toolCallIds: ['toolu_appr_1'] } },
+      );
+
+      await waitFor(
+        () => store[pendingPath(MACHINE_APPR)] !== undefined,
+        'pending write (narrowed resume)',
+      );
+      const commandId = Object.keys(store[pendingPath(MACHINE_APPR)])[0];
+      store[completedPath(MACHINE_APPR)] = {
+        [commandId]: { status: 'completed', result: JSON.stringify({ exit_code: 0 }) },
+      };
+      await collectChunks(stream);
+      await waitFor(
+        () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+        'narrowed resume terminal',
+        8000,
+      );
+
+      // The offline machine got nothing, and the record no longer names it —
+      // so the next approval in this chat cannot be aimed at it.
+      expect(store[pendingPath(MACHINE_ID)]).toBeUndefined();
+      expect(streamDoc(chatId)).toMatchObject({ resolvedMachineIds: [MACHINE_APPR] });
+    },
+    20_000,
+  );
+
+  it('refuses a resume that an intervening turn made stale, queuing nothing and consuming nothing', async () => {
+    await runTurn1();
+    const asked = await readTurnRecord(fakeDb, chatId);
+    const askedMessageId = asked!.messageId!;
+
+    // Someone (another device, a follow-up) sends in this chat in the meantime.
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => ({ stream: simulateReadableStream({ chunks: textChunks('sure') }) }),
+    });
+    const intervening = await beginTurn(
+      baseParams({
+        chatId,
+        turnId: 'turn_intervening',
+        machineId: MACHINE_APPR,
+        messages: [...(chatMessages(chatId) as UIMessage[]), userMsg('u2', 'never mind')],
+      }),
+      { supersede: true },
+    );
+    await collectChunks(intervening);
+    await waitFor(
+      () => (streamDoc(chatId)?.status ?? 'running') !== 'running',
+      'intervening turn terminal',
+    );
+
+    // The approval can no longer bind to the record it was requested on.
+    await expect(
+      acquireTurnLock(fakeDb, chatId, {
+        turnId: 'turn_appr_stale',
+        siteId: SITE_ID,
+        machineId: MACHINE_APPR,
+        resume: { messageId: askedMessageId, toolCallIds: ['toolu_appr_1'], fanOut: false },
+      }),
+    ).rejects.toThrow(ApprovalStaleError);
+
+    // Zero commands queued, and the one-shot ledger was never claimed — the
+    // approval is still answerable on a fresh turn.
+    expect(store[pendingPath(MACHINE_APPR)]).toBeUndefined();
+    expect(store[`chats/${chatId}/approvals/toolu_appr_1`]).toBeUndefined();
+  });
+});
+
+// 3b. scheduled follow-ups force the tier-3 gate on (plan decision 9)
+
+describe('scheduled follow-up turns never auto-execute tier 3', () => {
+  const MACHINE_FU = 'machine-fu';
+
+  /** The site setting that lets an ATTENDED turn auto-run tier-3 tools. */
+  function seedApprovalGateOff() {
+    store[`sites/${SITE_ID}/settings/cortex`] = { requireTier3Approval: false };
+  }
+
+  /**
+   * One tier-3 call (`execute_script`), then narrate. The second step has to be
+   * text or the unforced control re-dispatches on every loop iteration.
+   */
+  function modelCallsTier3() {
+    let step = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        step += 1;
+        if (step > 1) {
+          return { stream: simulateReadableStream({ chunks: textChunks('scan finished clean') }) };
+        }
+        return {
+          stream: simulateReadableStream({
+            chunks: [
+              {
+                type: 'tool-call' as const,
+                toolCallId: 'toolu_fu_1',
+                toolName: 'execute_script',
+                input: JSON.stringify({ script: 'sfc /scannow', timeout_seconds: 5 }),
+              },
+              { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
+            ],
+          }),
+        };
+      },
+    });
+  }
+
+  it('parks at approval-requested even where the site allows tier-3 auto-run', async () => {
+    const chatId = 'chat_fu_appr';
+    seedApprovalGateOff();
+    modelCallsTier3();
+
+    const { chunks, streamError } = await collectChunks(
+      await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_fu_1',
+          machineId: MACHINE_FU,
+          messages: [userMsg('u1', '[scheduled follow-up] did the scan finish?')],
+          source: 'followup',
+          forceTier3Approval: true,
+        }),
+      ),
+    );
+
+    expect(streamError).toBeNull();
+    expect(chunks.some((c) => c.type === 'tool-approval-request')).toBe(true);
+    // Nothing was queued for the agent — the tool never ran.
+    expect(store[pendingPath(MACHINE_FU)]).toBeUndefined();
+
+    await waitFor(() => chatMessages(chatId).length === 2, 'follow-up turn persist');
+    const toolPart = chatMessages(chatId)[1].parts.find((p) => p.type === 'tool-execute_script');
+    expect(toolPart).toMatchObject({ state: 'approval-requested', toolCallId: 'toolu_fu_1' });
+  });
+
+  it(
+    'negative control: the same turn WITHOUT the flag dispatches on that site',
+    async () => {
+      // Proves the gate comes from `forceTier3Approval` and not from the site
+      // setting, the access level, or the tool tier.
+      const chatId = 'chat_fu_noflag';
+      seedApprovalGateOff();
+      modelCallsTier3();
+
+      const stream = await beginTurn(
+        baseParams({
+          chatId,
+          turnId: 'turn_fu_2',
+          machineId: MACHINE_FU,
+          messages: [userMsg('u1', 'run the scan')],
+        }),
+      );
+
+      // The tool dispatches for real — answer it like the agent would.
+      await waitFor(
+        () => store[pendingPath(MACHINE_FU)] !== undefined,
+        'pending write (unforced tier-3)',
+      );
+      const commandId = Object.keys(store[pendingPath(MACHINE_FU)])[0];
+      store[completedPath(MACHINE_FU)] = {
+        [commandId]: { status: 'completed', result: JSON.stringify({ exit_code: 0 }) },
+      };
+
+      const { chunks } = await collectChunks(stream);
+      expect(chunks.some((c) => c.type === 'tool-approval-request')).toBe(false);
+    },
+    20_000,
+  );
 });
 
 // 4. error path
@@ -878,7 +1319,7 @@ describe('heartbeat keeps the stream doc fresh during a long tool poll', () => {
                         toolName: 'get_system_info',
                         input: '{}',
                       },
-                      { ...finishChunk, finishReason: 'tool-calls' as const },
+                      { ...finishChunk, finishReason: { unified: 'tool-calls' as const, raw: undefined } },
                     ]
                   : textChunks('cpu is fine'),
             }),

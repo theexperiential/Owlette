@@ -57,7 +57,14 @@ test.beforeAll(async () => {
   superKey = await mintApiKey({
     ownerUid: 'super-uid',
     name: `e2e-users-super-${SUFFIX}`,
-    scopes: [{ resource: 'user', id: '*', permissions: ['read', 'write', 'admin'] }],
+    scopes: [
+      { resource: 'user', id: '*', permissions: ['read', 'write', 'admin'] },
+      // The bulk membership routes now require `site=<id>:write` + `:admin` for
+      // every site they touch. A `user=*` scope names no site, and used to reach
+      // membership on all of them — that confinement gap is what this scope
+      // closes. Wildcard here because the spec assigns and removes freely.
+      { resource: 'site', id: '*', permissions: ['read', 'write', 'admin'] },
+    ],
   });
 });
 

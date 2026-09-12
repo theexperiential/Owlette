@@ -42,11 +42,13 @@ Version → `OWLETTE_VERSION` env var → Inno Setup reads it → installer file
 
 **IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
-**IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
+**IMPORTANT: the changelog MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
+
+**BOTH changelogs, always.** `docs/changelog.md` is internal; `web/content/docs/changelog.mdx` is the one customers actually read at `/docs/changelog`. They carry the same entries and drift the moment one is updated alone — which is what every checklist that named only the first has been causing.
 
 ```bash
 # 1. Update changelog, bump version, commit, push
-# Edit docs/changelog.md → add [X.Y.Z] section
+# Edit docs/changelog.md AND web/content/docs/changelog.mdx → add [X.Y.Z] section to both
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 
@@ -68,19 +70,32 @@ git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin de
 # the trailing pause will hang non-interactive shells indefinitely.
 # Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# 3. Refresh the agent docs screenshots (~15 s)
+# 3. Refresh the agent docs screenshots (~1 min) - REQUIRED, not optional
 #
 # Run this AFTER the build, never at bump time: the bump is pre-build, has no
 # binary to photograph, and must stay side-effect-free. Release time is the one
 # moment the documentation has to match what is about to ship.
 #
-#   cd web && npm run screenshots:desktop
+#   node scripts/refresh-docs-screens.mjs      (or: cd web && npm run screenshots:release)
 #
-# It drives the app installed at C:\ProgramData\Owlette\app\owlette-desktop.exe
-# over CDP and rewrites web/public/docs-screens/agent*.png. If this release
-# changed the desktop UI, install the freshly built installer on this machine
-# first (or copy build\installer_package\app\owlette-desktop.exe over the
-# installed one) — otherwise the shots are of the *previous* build.
+# Use THAT, not the bare `npm run screenshots:desktop`. The capture harness drives
+# the app INSTALLED at C:\ProgramData\Owlette\app, not the one you just built, so the
+# bare command silently photographs the PREVIOUS version - the shots look fine, they
+# are just wrong. That is how these reached three minor versions stale. The wrapper
+# refuses unless the built exe matches VERSION, swaps it into the install (elevated:
+# the service must STOP, because it respawns the tray within seconds and that holds
+# the exe lock), captures, then records what it photographed in
+# web/public/docs-screens/captured.json.
+#
+#   node scripts/refresh-docs-screens.mjs --check
+#
+# ...compares that record against VERSION and exits non-zero when stale, so "did we
+# recapture?" is answerable mechanically instead of remembered.
+#
+# Needs an interactive desktop session with the owlette tray icon VISIBLE. If it sits
+# in the hidden-icons overflow, the tray-menu shot fails while the other eleven
+# succeed - turn it on under taskbar settings > other system tray icons.
+# `git diff --stat web/public/docs-screens` is the check; no diff is a valid result.
 #
 # Needs an interactive desktop session with the owlette tray icon visible on the
 # taskbar (the tray-menu shot is captured by UI Automation, not CDP). It kills

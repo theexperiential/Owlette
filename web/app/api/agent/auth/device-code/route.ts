@@ -4,6 +4,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { generatePairPhrase } from '@/lib/pairPhrases';
 import { apiError } from '@/lib/apiErrorResponse';
+import { publicOrigin } from '@/lib/publicOrigin.server';
 import { DEVICE_CODE_WRAP_VERSION } from '@/lib/deviceCodeCrypto';
 import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import logger from '@/lib/logger';
@@ -61,9 +62,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       isDashboardOrigin = false;
     }
 
-    const host = request.headers.get('host') || 'owlette.app';
-    const protocol = host.includes('localhost') ? 'http' : 'https';
-    const baseUrl = `${protocol}://${host}`;
+    const baseUrl = publicOrigin(request);
 
     const expiresAt = Timestamp.fromDate(new Date(Date.now() + 10 * 60 * 1000)); // 10 minutes
 

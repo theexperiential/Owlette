@@ -11,6 +11,7 @@ import { toast } from '@/lib/toast';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { SiteMachinesList } from '@/components/SiteMachinesList';
 import { useUserManagement } from '@/hooks/useUserManagement';
+import { useAuth } from '@/contexts/AuthContext';
 import { useScrollFade } from '@/hooks/useScrollFade';
 
 interface Site {
@@ -75,6 +76,10 @@ export function ManageSitesDialog({
 }: ManageSitesDialogProps) {
   // The list dissolves under the dialog header rather than being cut by it.
   const listRef = useScrollFade<HTMLDivElement>();
+
+  // Owner-only controls resolve from the role map, not `sites/{id}.owner`:
+  // wave 6.1 strips that field, and a control gated on it would silently vanish.
+  const { isSiteOwner, isSiteAdmin } = useAuth();
 
   // Superadmin only: resolve owner UIDs to emails for foreign sites.
   const { users: allUsers } = useUserManagement(Boolean(isSuperadmin));
@@ -189,13 +194,11 @@ export function ManageSitesDialog({
   const handleDeleteSite = async () => {
     if (!siteToDelete) return;
 
-    if (sites.length === 1) {
-      toast.error('Cannot delete the last site');
-      setDeletingDialogOpen(false);
-      setSiteToDelete(null);
-      return;
-    }
-
+    // No "cannot delete the last site" guard. It existed only here, in the
+    // browser, so the API, the CLI and any script ignored it — a guard that reads
+    // as enforced and is not. Having zero sites is a supported state: the
+    // dashboard has a first-run empty state and every self-serve user starts
+    // there. Decided 2026-09-04; see dev/active/per-site-roles/.
     try {
       await onDeleteSite(siteToDelete);
       toast.success('Site deleted successfully!');
@@ -445,44 +448,58 @@ export function ManageSitesDialog({
                               <p>{expandedSiteId === site.id ? 'hide machines' : 'view machines'}</p>
                             </TooltipContent>
                           </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  editingSiteId === site.id ? cancelEditingSite() : startEditingSite(site)
-                                }
-                                aria-label={`edit ${site.name}`}
-                                aria-expanded={editingSiteId === site.id}
-                                className={`h-7 w-7 p-0 hover:bg-muted hover:text-accent-cyan cursor-pointer ${
-                                  editingSiteId === site.id ? 'text-accent-cyan' : 'text-muted-foreground'
-                                }`}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{editingSiteId === site.id ? 'close editor' : 'edit site'}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => confirmDeleteSite(site.id)}
-                                aria-label={`delete ${site.name}`}
-                                className="h-7 w-7 p-0 text-muted-foreground hover:bg-muted hover:text-red-400 cursor-pointer"
-                                disabled={sites.length === 1}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{sites.length === 1 ? 'cannot delete the last site' : 'delete site'}</p>
-                            </TooltipContent>
-                          </Tooltip>
+                          {/* Site-admin only: renaming a site is a PATCH gated on
+                              SITE_MEMBER_MANAGE, which the matrix grants to admin
+                              and owner but not member. Same reason as delete —
+                              offering an action the server will refuse reads as a
+                              fault rather than a boundary. */}
+                          {isSiteAdmin(site.id) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    editingSiteId === site.id ? cancelEditingSite() : startEditingSite(site)
+                                  }
+                                  aria-label={`edit ${site.name}`}
+                                  aria-expanded={editingSiteId === site.id}
+                                  className={`h-7 w-7 p-0 hover:bg-muted hover:text-accent-cyan cursor-pointer ${
+                                    editingSiteId === site.id ? 'text-accent-cyan' : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{editingSiteId === site.id ? 'close editor' : 'edit site'}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                          {/* Owner-only, matching the server: SITE_DELETE sits on
+                              the owner row of the capability matrix and nowhere
+                              else. It used to render for everyone and answer with
+                              a raw "capability not granted" toast — an action
+                              offered and then refused, which reads as a fault
+                              rather than a boundary. */}
+                          {isSiteOwner(site.id) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => confirmDeleteSite(site.id)}
+                                  aria-label={`delete ${site.name}`}
+                                  className="h-7 w-7 p-0 text-muted-foreground hover:bg-muted hover:text-red-400 cursor-pointer"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>delete site</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                         </div>
                       </div>
 

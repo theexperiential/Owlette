@@ -243,7 +243,10 @@ paths:
       operationId: revokeAccountApiKey
       tags: [API Keys]
       summary: Revoke account API key
-      description: Deletes an API key owned by the authenticated superadmin account.
+      description: |
+        Revokes an API key owned by the authenticated superadmin account. Same
+        semantics as `DELETE /api/keys/{keyId}`: immediate, not a delete — the
+        key is stamped `revokedAt` and kept — and idempotent.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -2521,8 +2524,12 @@ paths:
       tags: [API Keys]
       summary: revoke api key
       description: |
-        Permanently revokes a key. Effective within 60s across all
-        edge caches. Cannot be undone.
+        Revokes a key. Takes effect immediately — there is no cache in front of
+        the credential lookup, so the very next request with this key is
+        rejected. The key is not deleted: the record and its lookup are kept and
+        stamped `revokedAt`, so later reads still return the key with
+        `revoked: true` and a request replayed with it stays attributable.
+        Repeating the call is a no-op that keeps the original revocation time.
       security:
         - firebaseIdToken: []
       responses:
@@ -3307,8 +3314,11 @@ paths:
       tags: [Sites]
       summary: create a site
       description: |
-        Creates a top-level site owned by the caller. Requires a
-        superadmin caller; API-key callers must hold `site=*:admin`.
+        Creates a top-level site owned by the caller. Any authenticated,
+        active user may create a site — self-serve signup depends on it — so
+        there is no role requirement; API-key callers must hold `site=*:admin`.
+        Returns 409 `site_already_exists` for a live id, or `site_id_retired`
+        for one belonging to a deleted site (ids are not reusable).
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -3443,8 +3453,10 @@ paths:
       summary: delete a site
       description: |
         Deletes the top-level site document. Requires
-        `site=<siteId>:admin`. Subcollection cascade cleanup is deferred
-        from the MVP surface.
+        `site=<siteId>:admin`, AND the caller must be the site **owner** or a
+        superadmin — a site admin who does not own the site is refused. The id is
+        tombstoned on delete and cannot be reused. Subcollection cascade cleanup
+        is deferred from the MVP surface.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4776,6 +4788,10 @@ paths:
       description: |
         Creates a webhook subscription. The `signingSecret` is returned
         **once** on creation.
+
+        Requires `site=<siteId>:write` scope and admin of this site.
+        Listing and reading subscriptions is open to any member of the
+        site; creating, updating, deleting and rotating are not.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4835,7 +4851,8 @@ paths:
       summary: update webhook url / events / paused state
       description: |
         Partial update — any subset of `url`, `events`, `description`,
-        `paused` may be specified.
+        `paused` may be specified. Requires `site=<siteId>:write` scope
+        and admin of this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4868,6 +4885,7 @@ paths:
       description: |
         Soft-deletes a subscription and pauses future delivery. Delivery
         history remains available for the 30-day retention window.
+        Requires `site=<siteId>:write` scope and admin of this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -4905,7 +4923,8 @@ paths:
       description: |
         Mints a new hmac signing secret. The previous secret is retained
         for a fixed 24-hour verifier grace window. The new secret is
-        returned once.
+        returned once. Requires `site=<siteId>:write` scope and admin of
+        this site.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -5998,139 +6017,6 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
-  /api/sites/{siteId}/project-distributions:
-    parameters:
-      - $ref: '#/components/parameters/SiteIdPath'
-    get:
-      operationId: listProjectDistributions
-      tags: [Deployments]
-      summary: list project distributions
-      description: Requires `site=<siteId>:read`.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/PageSizeQuery'
-        - $ref: '#/components/parameters/PageTokenQuery'
-      responses:
-        '200': { description: Project distributions. }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-    post:
-      operationId: createProjectDistribution
-      tags: [Deployments]
-      summary: create a project distribution
-      description: Requires `site=<siteId>:write` and an idempotency key.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name, file_name, project_url, machines]
-              properties:
-                name: { type: string }
-                file_name: { type: string }
-                project_url: { type: string, format: uri }
-                extract_path: { type: string, nullable: true }
-                verify_files:
-                  type: array
-                  items: { type: string }
-                machines:
-                  type: array
-                  items: { type: string }
-      responses:
-        '201': { description: Project distribution created. }
-        '400': { $ref: '#/components/responses/Problem400' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '413': { $ref: '#/components/responses/Problem413' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-
-  /api/sites/{siteId}/project-distributions/{distId}:
-    parameters:
-      - $ref: '#/components/parameters/SiteIdPath'
-      - name: distId
-        in: path
-        required: true
-        schema: { type: string }
-        description: The project distribution ID.
-    get:
-      operationId: getProjectDistribution
-      tags: [Deployments]
-      summary: get project distribution details
-      description: Requires `site=<siteId>:read`.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      responses:
-        '200': { description: Project distribution detail. }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-    delete:
-      operationId: deleteProjectDistribution
-      tags: [Deployments]
-      summary: delete a terminal project distribution
-      description: Requires `site=<siteId>:write` and an idempotency key.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
-      responses:
-        '200': { description: Project distribution deleted. }
-        '400': { $ref: '#/components/responses/Problem400' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '409': { $ref: '#/components/responses/Problem409' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-
-  /api/sites/{siteId}/project-distributions/{distId}/cancel:
-    parameters:
-      - $ref: '#/components/parameters/SiteIdPath'
-      - name: distId
-        in: path
-        required: true
-        schema: { type: string }
-        description: The project distribution ID.
-    post:
-      operationId: cancelProjectDistribution
-      tags: [Deployments]
-      summary: cancel pending project distribution targets
-      description: Requires `site=<siteId>:write` and an idempotency key.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
-      responses:
-        '200': { description: Project distribution cancellation result. }
-        '400': { $ref: '#/components/responses/Problem400' }
-        '401': { $ref: '#/components/responses/Problem401' }
-        '403': { $ref: '#/components/responses/Problem403' }
-        '404': { $ref: '#/components/responses/Problem404' }
-        '409': { $ref: '#/components/responses/Problem409' }
-        '429': { $ref: '#/components/responses/Problem429' }
-        '500': { $ref: '#/components/responses/Problem500' }
-
   /api/users/me:
     delete:
       operationId: deleteCurrentUser
@@ -6810,6 +6696,17 @@ paths:
         owned sites to the supplied `successorUid`. Refuses if the user
         owns sites and `successorUid` is not provided (409 `orphan_sites`).
 
+        Each transfer runs as one transaction and the delete FAILS CLOSED: if any
+        site cannot be handed over, the request answers 409 `transfer_failed` and
+        the account is left completely untouched — no key revoked, no soft-delete
+        stamped. Sites that moved before the failure are reported in
+        `transferredSites`; they are not rolled back and do not need to be, since
+        a re-issued delete re-queries owned sites and skips them. A retry needs a
+        NEW `Idempotency-Key`.
+
+        Refuses with 409 `last_superadmin` if this would leave the deployment
+        below its floor of one active superadmin.
+
         Talons the user authored are reported as `authoredTalonCount` on every
         successful delete — an unattended talon run resolves its AUTHOR's site
         access, so deleting the author stops it. They are only moved when
@@ -6883,7 +6780,7 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
-        '409': { description: Orphan sites (provide successorUid) }
+        '409': { description: Orphan sites (provide successorUid), transfer_failed, or last_superadmin }
 
   /api/users/{uid}/talons:
     parameters:
@@ -6953,8 +6850,13 @@ paths:
       tags: [Users]
       summary: promote a user to admin or superadmin
       description: |
-        Atomic role update via Firestore transaction. Requires `user=*:write`
+        Atomic role update via Firestore transaction. Requires `user=*:admin`
         scope or session/id-token from a superadmin user.
+
+        `user=*:admin`, not the `user=*:write` its demote sibling takes: this
+        route can grant `superadmin`, which confers every capability on every
+        site. A key narrowed to `write` must not be able to mint a principal
+        stronger than itself.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -7089,6 +6991,7 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
+        '409': { description: User owns one or more of the named sites; transfer ownership first }
 
   # ──────────────────────────────────────────────────────────────────────
   # Site members (users-api / api-sprint wave 3 — track 3B)
@@ -7110,6 +7013,10 @@ paths:
         the site `owner` if they aren't already in that set. Per-site
         role is derived: `owner` (always wins), then `superadmin`,
         `admin` (global admin assigned to the site), else `member`.
+
+        A member's other site memberships are deliberately not returned —
+        they would disclose the site ids of every other organization that
+        member belongs to.
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
@@ -7138,7 +7045,7 @@ paths:
                         globalRole:
                           type: string
                           enum: [member, admin, superadmin]
-                        sites: { type: array, items: { type: string } }
+                        displayName: { type: string, nullable: true }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not site admin) }
         '404': { description: Site not found or no access }
@@ -7146,12 +7053,21 @@ paths:
       tags: [Site Members]
       summary: add a member to a site
       description: |
-        Adds siteId to the target user's `users/{uid}.sites[]` via
-        `arrayUnion`. The per-site role is derived from global role at
-        read time, so requesting `role: 'admin'` for a member-tier user
-        only succeeds in extending membership — the global role is
-        unchanged (use `/api/users/{uid}/promote` for that). The
-        response includes `roleHonored: false` in that case.
+        Writes `sites/{siteId}/members/{uid}` — the document that grants
+        site access — with the requested per-site role, and adds siteId to
+        the target's legacy `users/{uid}.sites[]` while that field still
+        exists.
+
+        The role is PER SITE. `role: 'admin'` makes them an admin of this
+        site and nothing else; their account role is untouched and they
+        gain nothing on any other site. It is always honoured, so
+        `roleHonored` is always `true` — retained only for response-shape
+        stability.
+
+        Identify the target by **exactly one** of `uid` or `email`.
+        `email` is trimmed and lowercased, then resolved to a uid through
+        Firebase Auth; supplying both, or neither, is a `400`, and an
+        address with no auth user is the same `404` as an unknown uid.
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
         admin of this site.
@@ -7170,16 +7086,76 @@ paths:
           application/json:
             schema:
               type: object
-              required: [uid, role]
+              required: [role]
               properties:
                 uid: { type: string }
+                email: { type: string, format: email, maxLength: 254 }
                 role: { type: string, enum: [admin, member] }
+              oneOf:
+                - required: [uid]
+                - required: [email]
       responses:
         '200': { description: Member added }
         '400': { description: Validation failure }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not site admin) }
         '404': { description: User or site not found }
+
+  /api/sites/{siteId}/transfer-ownership:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema: { type: string }
+    post:
+      tags: [Site Members]
+      summary: transfer site ownership to another user
+      description: |
+        Moves ownership of a site to `successorUid` in a single Firestore
+        transaction, writing the new `sites/{siteId}/members/{uid}` role and the
+        legacy `sites/{siteId}.owner` field together.
+
+        **Only the current owner or a superadmin may transfer.** A site admin is
+        admitted by the route's capability gate and then refused by the
+        transaction with `403 not_owner`: administering a site and owning it are
+        different things, the same line `SITE_DELETE` draws. The ownership check
+        is made from the site document read INSIDE the transaction, so a transfer
+        racing another transfer is serialised rather than interleaved — the
+        loser re-reads, finds the owner changed, and is refused.
+
+        The successor need not already be a member; they are made one by the same
+        transaction. The outgoing owner is demoted to `admin` and KEEPS their
+        membership — handing a site over is not eviction. Transferring to the
+        current owner is `409 successor_already_owner` rather than a silent no-op.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from the site's
+        owner (or a superadmin).
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [successorUid]
+              properties:
+                successorUid:
+                  type: string
+                  description: uid receiving ownership
+      responses:
+        '200': { description: Ownership transferred }
+        '400': { description: Validation failure, or successor is soft-deleted }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (caller is not the owner or a superadmin) }
+        '404': { description: Site or successor not found }
+        '409': { description: Successor already owns the site, or the site records no owner }
 
   /api/sites/{siteId}/members/{uid}:
     parameters:
@@ -7195,6 +7171,45 @@ paths:
         in: header
         required: false
         schema: { type: string }
+    patch:
+      tags: [Site Members]
+      summary: change a member's per-site role
+      description: |
+        Sets the member's role on THIS site only, leaving their global role
+        untouched. Before this endpoint existed there was no per-site role to
+        change — it was derived from the global role at read time, so making
+        someone an admin on one site meant promoting them globally, on every
+        site they belong to. That is the leak per-site roles close.
+
+        `owner` is not assignable here. Ownership moves only through
+        `POST /api/sites/{siteId}/transfer-ownership`, and the owner is refused
+        as a target as well, so an admin can neither promote themselves into
+        ownership (`400`) nor demote the owner out of it
+        (`409 cannot_change_owner_role`). Both are enforced inside the
+        transaction that performs the write.
+
+        Requires `site=<siteId>:admin` scope or session/id-token from an admin
+        of this site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, member] }
+      responses:
+        '200': { description: Role changed }
+        '400': { description: Validation failure (including role=owner) }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not site admin) }
+        '404': { description: User is not a member of this site }
+        '409': { description: Target is the site owner }
     delete:
       tags: [Site Members]
       summary: remove a member from a site
@@ -9000,6 +9015,13 @@ components:
         retired:
           type: boolean
           description: Derived. A rotated key whose grace window has closed.
+        revoked:
+          type: boolean
+          description: |
+            Derived from the presence of `revokedAt`, deliberately not from
+            `revokedAt <= now`: the API rejects a key the instant the field is set,
+            so a future-dated stamp is already dead. Terminal — it outranks
+            `expired` and `retired`, matching the order the API checks them in.
     ApiKeyWithSecret:
       description: |
         Returned **only** on create or rotate — the one and only time

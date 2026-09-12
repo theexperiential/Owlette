@@ -53,14 +53,23 @@ The `firestore.rules` file in the repository is the canonical version. Always de
 |----------|---------|
 | `isAuthenticated()` | User has a valid Firebase Auth token |
 | `isSuperadmin()` | User document has `role: "superadmin"` |
+| `isNotDeletedUser()` | User document has no `deletedAt` — a soft-deleted account loses site access immediately, even with a live session token |
 | `isServiceAccount()` | Request token has `admin: true`; Firebase Admin SDK calls bypass rules entirely |
 | `isAgent()` | Token has `role: "agent"`, `site_id`, and `machine_id` claims |
-| `isSiteOwner(siteId)` | Site document `owner` matches the authenticated user id |
 | `agentCanAccessSite(siteId)` | Agent token `site_id` matches `siteId` |
 | `agentCanAccessMachine(siteId, machineId)` | Agent token matches both `site_id` and `machine_id` |
-| `canAccessSite(siteId)` | User owns the site, is a superadmin, or has `siteId` in their user document `sites[]` array |
-| `isSiteAdmin(siteId)` | User has `role: "admin"` or `"superadmin"` and passes `canAccessSite(siteId)` |
+| `isActiveMember(siteId)` | A `sites/{siteId}/members/{uid}` document exists with `status: "active"` |
+| `siteMemberRole(siteId)` | Per-site role (`owner`, `admin`, or `member`) read from that membership document. Only valid behind `isActiveMember()` |
+| `canAccessSite(siteId)` | Not soft-deleted, and either a superadmin or an active member of the site |
+| `isSiteAdmin(siteId)` | Superadmin, or an active member whose per-site role is `owner` or `admin`. A global `users/{uid}.role == "admin"` grants **nothing** on a site it holds no member row for |
 | `hasRequiredFields(required)` | Write payload contains all required field names |
+
+site access is a document. `sites/{siteId}/members/{uid}` holds
+`{ uid, role, status, addedAt, addedBy }` and is the only thing that grants a
+user access to a site. the older `sites/{siteId}.owner` field and
+`users/{uid}.sites[]` array are still written, but no rule reads them.
+superadmins hold no member rows — they reach every site by global role. all
+member writes are server-only.
 
 ### access matrix
 
@@ -68,7 +77,8 @@ These are Firestore client-rule permissions. Trusted server routes that use the 
 
 | path | member/admin client | superadmin client | agent client | trusted server / Admin SDK |
 |------|---------------------|-------------------|--------------|----------------------------|
-| `sites/{siteId}` | Read owned or assigned sites; no direct write | Read all sites; no direct write | No access | Create/update/delete |
+| `sites/{siteId}/members/{memberUid}` | Read only your own membership rows (by document id, or `where('uid','==',me)`); no write. Matched at `match /{path=**}/members/{memberUid}`, a recursive wildcard, which is what makes the dashboard's `collectionGroup('members')` listener legal | Same | No access | Full write — `membership.server.ts` is the single writer |
+| `sites/{siteId}` | Read sites where you hold an active member row; no direct write | Read all sites; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/machines/{machineId}` | Read machines in accessible sites; no direct write | Read all machines; no direct write | Read/write/delete own machine only | Full write |
 | `sites/{siteId}/machines/{machineId}/commands/{commandDoc}` | Read commands in accessible sites; no direct write | Read all commands; no direct write | Read/write/delete own machine commands | Full write |
 | `sites/{siteId}/machines/{machineId}/screenshots/{screenshotId}` | Read screenshots in accessible sites | Read all screenshots | No access | Write history entries |
@@ -78,11 +88,10 @@ These are Firestore client-rule permissions. Trusted server routes that use the 
 | `sites/{siteId}/deployments/{deploymentId}` | Read deployments in accessible sites; no direct write | Read all deployments; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/installer_templates/{templateId}` | Read templates in accessible sites; no direct write | Read all templates; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/project_templates/{templateId}` | Read templates in accessible sites; no direct write | Read all templates; no direct write | No access | Create/update/delete |
-| `sites/{siteId}/project_distributions/{distributionId}` | Read legacy distributions in accessible sites; no direct write | Read all legacy distributions; no direct write | No access | Create/update/delete |
 | `sites/{siteId}/roosts/{roostId}` | Read/create/update/delete roost shells in accessible sites; client creates cannot set version pointers and client updates cannot change version pointers or `schemaVersion` | Same for all sites | No access | Publish/rollback version pointer changes |
 | `sites/{siteId}/roosts/{roostId}/target_state/{machineId}` | Read/delete target state in accessible sites; no direct create/update | Read/delete all target state; no direct create/update | Create/update own machine target state | Full write |
 | `sites/{siteId}/roosts/{roostId}/versions/{versionId}` | Read version history in accessible sites; no direct write | Read all version history; no direct write | No access | Server/Admin SDK only |
-| `sites/{siteId}/webhooks/{webhookId}` | Read webhooks in accessible sites; no direct write | Read all webhooks; no direct write | No access | Write |
+| `sites/{siteId}/webhooks/{webhookId}` | Site admins (`owner`/`admin`) read; plain members denied, because the document can still carry a legacy in-document signing secret. No direct write | Read all webhooks; no direct write | No access | Write |
 | `sites/{siteId}/logs/{logId}` | Read logs in accessible sites; no direct write | Read all logs; no direct write | Read site logs and create own-machine log entries | Create/delete |
 | `sites/{siteId}/audit_log/{entryId}` | Site admins can read; members cannot read | Read all audit entries | No access | Server/Admin SDK only |
 | `sites/{siteId}/settings/{settingId}` | Read settings in accessible sites; no direct write | Read all settings; no direct write | No access | Write |
@@ -90,7 +99,7 @@ These are Firestore client-rule permissions. Trusted server routes that use the 
 | `config/{siteId}/schedule_presets/{presetId}` | Read presets in accessible sites; no direct write | Read all presets; no direct write | No access | Write/delete |
 | `config/{siteId}/reboot_presets/{presetId}` | Read presets in accessible sites; no direct write | Read all presets; no direct write | No access | Write/delete |
 | `config/{siteId}/project_distribution_presets/{presetId}` | Read presets in accessible sites; no direct write | Read all presets; no direct write | No access | Write/delete |
-| `users/{userId}` | Read own profile, self-create as `member`, and update allowed self fields without changing `role`, `email`, or `sites` | Read all user profiles; role/site writes still server-mediated | No access | Manage roles, site assignments, and deletion |
+| `users/{userId}` | Read own profile, self-create as `member`, and update allowed self fields without changing `role`, `email`, or `sites`. Note this document does NOT grant site access — member rows do | Read all user profiles; role writes still server-mediated | No access | Manage roles and deletion; site access is granted by writing member rows |
 | `users/{userId}/settings/{settingId}` | Read/write own settings only | Read/write own settings only | No access | Admin SDK bypass only |
 | `users/{userId}/devicePrefs/{docId}` | Read/write own device preferences only | Read/write own device preferences only | No access | Admin SDK bypass only |
 | `users/{userId}/api_keys/{keyId}` | Read own API key inventory; no direct write | Read own API key inventory only; no direct write | No access | Server/Admin SDK only |

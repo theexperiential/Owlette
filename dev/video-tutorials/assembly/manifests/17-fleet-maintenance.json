@@ -7,7 +7,12 @@
   "scenario": "dashboard-mixed-states",
   "script": "scripts/17-fleet-maintenance.md",
   "media_root": "C:\\Users\\admin\\Documents\\Git\\Owlette",
-  "narration_s": 204.852,
+  "narration_s": 223.433,
+  "main_card": {
+    "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-main.mp4",
+    "frames": 330,
+    "duration_s": 5.5
+  },
   "timeline": {
     "width": 1920,
     "height": 1080,
@@ -20,7 +25,7 @@
       "rel": "dev/video-tutorials/footage/web/17-fleet-maintenance.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\17-fleet-maintenance.mp4",
       "exists": true,
-      "duration_s": 226.933,
+      "duration_s": 230.833,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -31,7 +36,7 @@
       "rel": "dev/video-tutorials/footage/web/17-fleet-maintenance-b06-tokens.mp4",
       "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\web\\17-fleet-maintenance-b06-tokens.mp4",
       "exists": true,
-      "duration_s": 28.533,
+      "duration_s": 28.167,
       "width": 1920,
       "height": 1080,
       "fps": 60.0
@@ -45,14 +50,15 @@
       "direction": {
         "SCREEN": "dashboard, mixed fleet — several online, one offline, one stale. slow pan across the machine list."
       },
-      "start_s": 0.0,
-      "start_frame": 0,
+      "start_s": 5.5,
+      "start_frame": 330,
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b01.mp3",
       "mp3_name": "ep17-b01.mp3",
-      "duration_s": 14.028,
-      "duration_frames": 842,
-      "status": "ok"
+      "duration_s": 15.464,
+      "duration_frames": 928,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b02",
@@ -62,14 +68,20 @@
         "SCREEN": "deploy page (nav label \"deploy\"), one site selected. top-right cluster: the orange outlined `update owlette to v3.2.0` button with its count badge, beside `new deployment`. hold on the badge.",
         "NOTE": "the button is scoped to the selected site (`useMachines(currentSiteId)`) and renders only when at least one of that site's machines is outdated — the seed must include a machine behind `installer_metadata/latest`."
       },
-      "start_s": 14.028,
-      "start_frame": 842,
+      "start_s": 25.017,
+      "start_frame": 1501,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b02.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b02.mp3",
       "mp3_name": "ep17-b02.mp3",
-      "duration_s": 18.286,
-      "duration_frames": 1097,
-      "status": "ok"
+      "duration_s": 18.103,
+      "duration_frames": 1086,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b03",
@@ -78,14 +90,20 @@
       "direction": {
         "SCREEN": "site selector → `manage sites` → expand a site row (chevron) → the per-machine list: status dot, last seen, agent version column (`v3.2.0`, `v2.12.21`, `—`)."
       },
-      "start_s": 32.313,
-      "start_frame": 1939,
+      "start_s": 47.183,
+      "start_frame": 2831,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b03.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b03.mp3",
       "mp3_name": "ep17-b03.mp3",
-      "duration_s": 22.361,
-      "duration_frames": 1342,
-      "status": "ok"
+      "duration_s": 18.469,
+      "duration_frames": 1108,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b04",
@@ -94,14 +112,20 @@
       "direction": {
         "SCREEN": "click `update owlette` → dialog `update owlette agents` → the cyan \"what happens during an update\" banner → `deselect all` → tick one machine (row shows `current: v2.12.21 → latest: v3.2.0`) → `update 1 machine`."
       },
-      "start_s": 54.674,
-      "start_frame": 3280,
+      "start_s": 69.683,
+      "start_frame": 4181,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b04.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b04.mp3",
       "mp3_name": "ep17-b04.mp3",
-      "duration_s": 25.809,
-      "duration_frames": 1549,
-      "status": "ok"
+      "duration_s": 36.232,
+      "duration_frames": 2174,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b05",
@@ -110,14 +134,20 @@
       "direction": {
         "SCREEN": "reopen the dialog → `select all` → an offline row with its checkbox disabled and \"offline — must be online to receive an update\" → confirm → rows showing the `updating...` badge. cut to a row with the red `may have failed` badge and its `clear` button."
       },
-      "start_s": 80.483,
-      "start_frame": 4829,
+      "start_s": 109.967,
+      "start_frame": 6598,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b05.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b05.mp3",
       "mp3_name": "ep17-b05.mp3",
-      "duration_s": 22.361,
-      "duration_frames": 1342,
-      "status": "ok"
+      "duration_s": 8.568,
+      "duration_frames": 514,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b06",
@@ -125,16 +155,22 @@
       "screen_note": "admin → `agent tokens`. site selector, then the table: machine ID, version, status, created, last used. show the search box, the version filter, the `duplicates` toggle, and the `N live` count.",
       "direction": {
         "SCREEN": "admin → `agent tokens`. site selector, then the table: machine ID, version, status, created, last used. show the search box, the version filter, the `duplicates` toggle, and the `N live` count.",
-        "NOTE": "superadmin-only surface — capture with a superadmin session."
+        "NOTE": "superadmin-only surface — capture with a superadmin session, and the narration frames it explicitly as the OPERATOR'S view (superadmin is internal-only, never a public feature)."
       },
-      "start_s": 102.844,
-      "start_frame": 6171,
+      "start_s": 122.567,
+      "start_frame": 7354,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b06.mp4",
+        "frames": 205,
+        "duration_s": 3.433
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b06.mp3",
       "mp3_name": "ep17-b06.mp3",
-      "duration_s": 23.249,
-      "duration_frames": 1395,
-      "status": "ok"
+      "duration_s": 19.096,
+      "duration_frames": 1146,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b07",
@@ -144,14 +180,20 @@
         "SCREEN": "dashboard → machine row menu → `revoke token` → the dialog, holding on both buttons: `revoke current token` (amber) and `revoke all for hostname` (red).",
         "NOTE": "since e0c8341a this menu item and its route are both site-admin — film with an admin session on an assigned site, not a superadmin one."
       },
-      "start_s": 126.093,
-      "start_frame": 7566,
+      "start_s": 145.717,
+      "start_frame": 8743,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b07.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b07.mp3",
       "mp3_name": "ep17-b07.mp3",
-      "duration_s": 24.999,
-      "duration_frames": 1500,
-      "status": "ok"
+      "duration_s": 22.256,
+      "duration_frames": 1335,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b08",
@@ -160,14 +202,20 @@
       "direction": {
         "SCREEN": "deploy page → a deployment row → `uninstall software` dialog (machines, then software). cut to dashboard → machine menu → `remove machine` → the dialog's bullet list of what gets deleted."
       },
-      "start_s": 151.092,
-      "start_frame": 9066,
+      "start_s": 172.033,
+      "start_frame": 10322,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b08.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b08.mp3",
       "mp3_name": "ep17-b08.mp3",
-      "duration_s": 28.526,
-      "duration_frames": 1712,
-      "status": "ok"
+      "duration_s": 24.268,
+      "duration_frames": 1456,
+      "status": "ok",
+      "breath_s": 0.6
     },
     {
       "id": "b09",
@@ -176,14 +224,20 @@
       "direction": {
         "SCREEN": "montage — deploy page with no update button in the header (switch the site selector across two sites to show both clean), tokens page with a clean list, dashboard all green. end on the dashboard."
       },
-      "start_s": 179.618,
-      "start_frame": 10777,
+      "start_s": 200.367,
+      "start_frame": 12022,
+      "card": {
+        "path": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\footage\\cards\\17-fleet-maintenance-b09.mp4",
+        "frames": 207,
+        "duration_s": 3.45
+      },
       "spoken": true,
       "mp3": "C:\\Users\\admin\\Documents\\Git\\Owlette\\dev\\video-tutorials\\voiceover\\out\\17-fleet-maintenance\\ep17-b09.mp3",
       "mp3_name": "ep17-b09.mp3",
-      "duration_s": 25.234,
-      "duration_frames": 1514,
-      "status": "ok"
+      "duration_s": 22.465,
+      "duration_frames": 1348,
+      "status": "ok",
+      "breath_s": 0.6
     }
   ]
 }
