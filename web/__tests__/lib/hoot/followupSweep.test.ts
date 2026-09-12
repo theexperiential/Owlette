@@ -281,6 +281,25 @@ describe('fireDueFollowups', () => {
     expect(followups.get('fu-1')).toMatchObject({ status: 'fired', firedAt: expect.any(Date) });
   });
 
+  it('threads the prior turn record recovery index into the fired turn', async () => {
+    // The lock returns the whole prior record now; the runner still takes only
+    // the index, so a fired follow-up can splice in a dead turn's real results.
+    seedFollowup('fu-1');
+    acquireTurnLockMock.mockResolvedValue({
+      toolCommands: { call_1: { 'lobby-01': { commandId: 'cmd_1' } } },
+      fanOut: false,
+      resolvedMachineIds: ['lobby-01'],
+      messageId: 'msg_a',
+      pendingApprovals: [],
+    });
+
+    await sweep();
+
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      priorToolCommands: { call_1: { 'lobby-01': { commandId: 'cmd_1' } } },
+    });
+  });
+
   it('fires under the tier ceiling the scheduling turn recorded', async () => {
     // The owner is a site admin (tier 3 earned), so only the recorded ceiling
     // keeps a promise made by a tier-1-capped turn — a chat-scoped API key — from

@@ -223,9 +223,9 @@ async function dispatchFollowup(
   ];
 
   const turnId = generateTurnId();
-  let priorToolCommands;
+  let prior;
   try {
-    priorToolCommands = await acquireTurnLock(db, followup.chatId, {
+    prior = await acquireTurnLock(db, followup.chatId, {
       turnId,
       siteId: followup.siteId,
       machineId: followup.machineId,
@@ -252,7 +252,7 @@ async function dispatchFollowup(
       // and can never widen. Legacy docs carry none and fire as they always
       // did, on re-resolved access alone.
       ...(followup.maxToolTier ? { maxToolTier: followup.maxToolTier } : {}),
-      priorToolCommands,
+      priorToolCommands: prior?.toolCommands ?? null,
       // Nobody is watching the moment a follow-up fires — see the header.
       forceTier3Approval: true,
       source: 'followup',

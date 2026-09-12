@@ -301,9 +301,9 @@ export async function runHootOutput(
   // Cannot collide on a brand-new chat, but the lock doc IS what the client
   // watches to render a running turn.
   const turnId = generateTurnId();
-  let priorToolCommands;
+  let prior;
   try {
-    priorToolCommands = await acquireTurnLock(db, chatId, { turnId, siteId, machineId });
+    prior = await acquireTurnLock(db, chatId, { turnId, siteId, machineId });
   } catch (error) {
     return { status: 'failed', detail: 'turn_lock_failed', error: errorText(error) };
   }
@@ -324,7 +324,7 @@ export async function runHootOutput(
       // into `getToolsByTier` — an unattended turn either looks, or looks and
       // acts, and tier 3 stays unreachable either way (see UNATTENDED_MAX_TIER).
       maxToolTier: unattendedToolTier(args.allowActions === true),
-      priorToolCommands,
+      priorToolCommands: prior?.toolCommands ?? null,
       source: 'talon',
     });
 

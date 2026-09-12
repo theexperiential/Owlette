@@ -496,7 +496,15 @@ describe('the chat', () => {
 
 describe('the turn', () => {
   it('starts headless with the run identifiers, the talon source, and the recovery index', async () => {
-    mockAcquireTurnLock.mockResolvedValue({ call_1: { m1: { commandId: 'cmd_1' } } });
+    // The lock returns the whole prior turn record; only its recovery index is
+    // threaded into the runner here.
+    mockAcquireTurnLock.mockResolvedValue({
+      toolCommands: { call_1: { m1: { commandId: 'cmd_1' } } },
+      fanOut: false,
+      resolvedMachineIds: ['m1'],
+      messageId: null,
+      pendingApprovals: [],
+    });
 
     await runHootOutput(db, args());
 

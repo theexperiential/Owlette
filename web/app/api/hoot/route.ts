@@ -131,14 +131,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // acquireTurnLock returns the PRIOR turn's toolCommands recovery index
-    // (read inside the same claim transaction), so this turn can splice in real
-    // agent results for tool calls whose runner died — no separate pre-lock
-    // read (which would be a TOCTOU against the overwrite the claim performs).
+    // acquireTurnLock returns the PRIOR turn's record — including its
+    // toolCommands recovery index — read inside the same claim transaction, so
+    // this turn can splice in real agent results for tool calls whose runner
+    // died, with no separate pre-lock read (which would be a TOCTOU against the
+    // overwrite the claim performs).
     const turnId = generateTurnId();
-    let priorToolCommands;
+    let prior;
     try {
-      priorToolCommands = await acquireTurnLock(db, chatId, {
+      prior = await acquireTurnLock(db, chatId, {
         turnId,
         siteId,
         machineId,
@@ -185,7 +186,7 @@ export async function POST(request: NextRequest) {
       messages,
       userId,
       access: effectiveAccess,
-      priorToolCommands,
+      priorToolCommands: prior?.toolCommands ?? null,
     });
 
     // Client disconnect: cancel the HTTP tee branch so the response isn't held open.

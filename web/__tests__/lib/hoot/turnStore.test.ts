@@ -59,6 +59,9 @@ const store: StoreShape = {};
 /** When set, the next runTransaction rejects (simulated firestore outage). */
 let failNextTransaction = false;
 
+/** Same, for the one non-transactional read (`readTurnRecord`). */
+let failNextGet = false;
+
 function materialize(value: unknown): unknown {
   return value === '__SERVER_TS__' ? Timestamp.now() : value;
 }
@@ -113,9 +116,11 @@ function applyUpdateArgs(target: Record<string, unknown>, args: unknown[]) {
 interface FakeRef {
   _path: string;
   collection: (name: string) => { doc: (id: string) => FakeRef };
+  get: () => Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }>;
 }
 
-// All module IO is transactional, so refs only need a path + subcollection chain.
+// Every write is transactional; `readTurnRecord` is the one plain read, so refs
+// need a path, a subcollection chain and a `get`.
 function buildCollection(prefix: string) {
   return {
     doc: (id: string): FakeRef => {
@@ -123,6 +128,13 @@ function buildCollection(prefix: string) {
       return {
         _path: fullPath,
         collection: (sub: string) => buildCollection(`${fullPath}/${sub}`),
+        get: async () => {
+          if (failNextGet) {
+            failNextGet = false;
+            throw new Error('firestore unavailable');
+          }
+          return freshSnap(fullPath);
+        },
       };
     },
   };
@@ -169,11 +181,15 @@ import {
   recordToolCommand,
   finishTurn,
   generateTurnId,
+  readTurnRecord,
+  approvalRequestedIds,
   TurnActiveError,
+  ApprovalStaleError,
   TURN_STALE_MS,
   SNAPSHOT_THROTTLE_MS,
   _resetThrottleForTests,
 } from '@/lib/hoot/turnStore.server';
+import { SITE_TARGET_ID } from '@/lib/hoot/target';
 
 const CHAT_ID = 'chat_1';
 const SITE_ID = 'site-A';
@@ -189,6 +205,20 @@ function assistantMessage(text = 'hello'): UIMessage {
     role: 'assistant',
     parts: [{ type: 'text', text }],
   } as UIMessage;
+}
+
+/** An assistant message parked on one or more tier-3 approval requests. */
+function approvalMessage(id: string, ...toolCallIds: string[]): UIMessage {
+  return {
+    id,
+    role: 'assistant',
+    parts: toolCallIds.map((toolCallId) => ({
+      type: 'tool-restart_process',
+      toolCallId,
+      state: 'approval-requested',
+      input: {},
+    })),
+  } as unknown as UIMessage;
 }
 
 /** Seed a stream doc directly into the store (bypasses acquire). */
@@ -210,6 +240,7 @@ function seedStream(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k];
   failNextTransaction = false;
+  failNextGet = false;
   nowMs = T0;
   jest.spyOn(Date, 'now').mockImplementation(() => nowMs);
   _resetThrottleForTests();
@@ -332,7 +363,7 @@ describe('acquireTurnLock', () => {
       machineId: MACHINE_ID,
       supersede: true,
     });
-    expect(prior).toEqual({ tc_1: { [MACHINE_ID]: { commandId: 'cmd_1' } } });
+    expect(prior).toMatchObject({ toolCommands: { tc_1: { [MACHINE_ID]: { commandId: 'cmd_1' } } } });
     // The new doc starts with an empty index.
     expect(store[STREAM_PATH].toolCommands).toEqual({});
   });
@@ -354,6 +385,396 @@ describe('acquireTurnLock', () => {
       supersede: true,
     });
     expect(await writeSnapshot(fakeDb, CHAT_ID, 'turn_b', assistantMessage('fresh'))).toBe(true);
+  });
+});
+
+describe('acquireTurnLock — the turn target record', () => {
+  it('writes target and resolvedMachineIds inside the claim', async () => {
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'chat' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+    });
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'chat' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+    });
+  });
+
+  it('writes no target fields at all when the caller passes none', async () => {
+    // Firestore rejects nested `undefined`, and an absent field is what makes a
+    // record read back through the legacy `machineId` mapping.
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: MACHINE_ID,
+    });
+
+    expect('target' in store[STREAM_PATH]).toBe(false);
+    expect('resolvedMachineIds' in store[STREAM_PATH]).toBe(false);
+  });
+
+  it('refuses a target with no resolved list rather than recording "whatever was online"', async () => {
+    // The pair is one record: `resolvedMachineIds: null` reads back as the legacy
+    // "every online machine", so half a target would widen a recorded subset —
+    // and a resume would then inherit that widening.
+    await expect(
+      acquireTurnLock(fakeDb, CHAT_ID, {
+        turnId: 'turn_new',
+        siteId: SITE_ID,
+        machineId: SITE_TARGET_ID,
+        target: { machineIds: ['machine-1'], fanOut: false, source: 'chat' },
+      }),
+    ).rejects.toThrow('pass both or neither');
+
+    // Nothing was claimed.
+    expect(store[STREAM_PATH]).toBeUndefined();
+  });
+
+  it('refuses a resolved list with no target, instead of silently dropping it', async () => {
+    await expect(
+      acquireTurnLock(fakeDb, CHAT_ID, {
+        turnId: 'turn_new',
+        siteId: SITE_ID,
+        machineId: SITE_TARGET_ID,
+        resolvedMachineIds: ['machine-1'],
+      }),
+    ).rejects.toThrow('pass both or neither');
+    expect(store[STREAM_PATH]).toBeUndefined();
+  });
+
+  it('returns the prior record: recovery index, target, message id and pending approvals', async () => {
+    seedStream({
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'chat' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+      toolCommands: { tc_1: { 'machine-1': { commandId: 'cmd_1' } } },
+      message: approvalMessage('msg_a', 'call_1'),
+      pendingApprovals: ['call_1'],
+      status: 'complete',
+    });
+
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+    });
+
+    expect(prior).toEqual({
+      toolCommands: { tc_1: { 'machine-1': { commandId: 'cmd_1' } } },
+      fanOut: true,
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+      messageId: 'msg_a',
+      pendingApprovals: ['call_1'],
+    });
+  });
+
+  it('maps a legacy single-machine prior doc to that one machine, not a fan-out', async () => {
+    seedStream({ status: 'complete', message: assistantMessage() });
+
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: MACHINE_ID,
+    });
+
+    expect(prior).toMatchObject({
+      fanOut: false,
+      resolvedMachineIds: [MACHINE_ID],
+      messageId: 'msg_assistant_1',
+      pendingApprovals: [],
+    });
+  });
+
+  it('maps a legacy site-wide prior doc to null (whatever was online) and fan-out', async () => {
+    seedStream({ machineId: SITE_TARGET_ID, status: 'complete' });
+
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+    });
+
+    expect(prior).toMatchObject({ fanOut: true, resolvedMachineIds: null });
+  });
+
+  it('derives a legacy prior doc pending approvals from its stored message', async () => {
+    // Docs written before `pendingApprovals` existed still have to bind their
+    // approvals, and the snapshot is the only record of what was asked.
+    seedStream({
+      status: 'complete',
+      message: approvalMessage('msg_legacy', 'call_1', 'call_2'),
+    });
+
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: MACHINE_ID,
+    });
+
+    expect(prior).toMatchObject({
+      messageId: 'msg_legacy',
+      pendingApprovals: ['call_1', 'call_2'],
+    });
+  });
+
+  it('reads a corrupt resolvedMachineIds as the empty set, never as the whole site', async () => {
+    // Never widen: falling through to `machineId: '__site__'` here would turn a
+    // recorded subset into every machine in the site.
+    seedStream({
+      machineId: SITE_TARGET_ID,
+      status: 'complete',
+      resolvedMachineIds: ['machine-1', 'ok/../nope'],
+    });
+
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+    });
+
+    expect(prior).toMatchObject({ resolvedMachineIds: [] });
+  });
+
+  it('returns null when there is no prior doc', async () => {
+    const prior = await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_new',
+      siteId: SITE_ID,
+      machineId: MACHINE_ID,
+    });
+
+    expect(prior).toBeNull();
+  });
+});
+
+describe('acquireTurnLock — approval resume', () => {
+  /** A finished turn parked on `call_1`, targeting a two-machine subset. */
+  function seedApprovalTurn(overrides: Record<string, unknown> = {}) {
+    seedStream({
+      status: 'complete',
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'chat' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+      message: approvalMessage('msg_a', 'call_1'),
+      pendingApprovals: ['call_1'],
+      ...overrides,
+    });
+  }
+
+  function resumeLock(meta: Record<string, unknown> = {}) {
+    return acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_resume',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'] },
+      ...meta,
+    });
+  }
+
+  it('inherits the requesting turn target and records the resume source', async () => {
+    seedApprovalTurn();
+
+    await resumeLock();
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      turnId: 'turn_resume',
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'resume' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+    });
+  });
+
+  it('ignores a requested target — an approval is never re-aimed', async () => {
+    seedApprovalTurn();
+
+    await resumeLock({
+      target: { machineIds: null, fanOut: true, source: 'chat' },
+      resolvedMachineIds: ['machine-1', 'machine-2', 'machine-3'],
+    });
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      target: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'resume' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+    });
+  });
+
+  it('inherits a legacy single-machine prior as that machine alone', async () => {
+    seedStream({
+      status: 'complete',
+      message: approvalMessage('msg_a', 'call_1'),
+    });
+
+    await resumeLock({ machineId: MACHINE_ID });
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      target: { machineIds: [MACHINE_ID], fanOut: false, source: 'resume' },
+      resolvedMachineIds: [MACHINE_ID],
+    });
+  });
+
+  it('inherits a legacy site-wide prior as "whatever is online", re-checked by the caller', async () => {
+    seedStream({
+      status: 'complete',
+      machineId: SITE_TARGET_ID,
+      message: approvalMessage('msg_a', 'call_1'),
+    });
+
+    await resumeLock();
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      target: { machineIds: null, fanOut: true, source: 'resume' },
+      resolvedMachineIds: null,
+    });
+  });
+
+  it('refuses an approval whose requesting message is no longer the record (intervening turn)', async () => {
+    seedApprovalTurn();
+
+    // A follow-up turn ran in between and overwrote the record.
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_followup',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: null, fanOut: true, source: 'followup' },
+      resolvedMachineIds: ['machine-1', 'machine-2'],
+    });
+    await finishTurn(fakeDb, CHAT_ID, 'turn_followup', 'complete');
+
+    await expect(resumeLock()).rejects.toMatchObject({
+      name: 'ApprovalStaleError',
+      chatId: CHAT_ID,
+      reason: 'message_mismatch',
+    });
+    // Nothing was claimed: the intervening turn's record is untouched.
+    expect(store[STREAM_PATH]).toMatchObject({ turnId: 'turn_followup', status: 'complete' });
+  });
+
+  it('refuses an approval the record is not waiting on', async () => {
+    seedApprovalTurn();
+
+    await expect(
+      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: ['call_1', 'call_2'] } }),
+    ).rejects.toMatchObject({ name: 'ApprovalStaleError', reason: 'approval_missing' });
+    expect(store[STREAM_PATH].turnId).toBe('turn_old');
+  });
+
+  it('refuses a record from another site', async () => {
+    seedApprovalTurn({ siteId: 'site-B' });
+
+    await expect(resumeLock()).rejects.toMatchObject({
+      name: 'ApprovalStaleError',
+      reason: 'site_mismatch',
+    });
+  });
+
+  it('refuses when there is no record at all', async () => {
+    await expect(resumeLock()).rejects.toMatchObject({
+      name: 'ApprovalStaleError',
+      reason: 'no_prior_turn',
+    });
+    expect(store[STREAM_PATH]).toBeUndefined();
+  });
+
+  it('refuses an empty answer set rather than inheriting a target for nothing', async () => {
+    seedApprovalTurn();
+
+    await expect(
+      resumeLock({ resume: { messageId: 'msg_a', toolCallIds: [] } }),
+    ).rejects.toMatchObject({ name: 'ApprovalStaleError', reason: 'no_approvals' });
+  });
+
+  it('reports staleness rather than contention when the intervening turn is still running', async () => {
+    // `turn_active` would send the client into its supersede retry; a stale
+    // approval must never be retried into one.
+    seedApprovalTurn();
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_live',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+    });
+
+    await expect(resumeLock()).rejects.toThrow(ApprovalStaleError);
+  });
+
+  it('still refuses a busy chat with TurnActiveError when the binding holds', async () => {
+    seedApprovalTurn({ status: 'running', turnId: 'turn_old' });
+
+    await expect(resumeLock()).rejects.toThrow(TurnActiveError);
+  });
+});
+
+describe('readTurnRecord', () => {
+  it('reads the current record without a transaction', async () => {
+    (fakeDb.runTransaction as jest.Mock).mockClear();
+    seedStream({
+      status: 'complete',
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: ['machine-1'], fanOut: false, source: 'mention' },
+      resolvedMachineIds: ['machine-1'],
+      message: approvalMessage('msg_a', 'call_1'),
+      pendingApprovals: ['call_1'],
+    });
+
+    await expect(readTurnRecord(fakeDb, CHAT_ID)).resolves.toEqual({
+      toolCommands: {},
+      fanOut: false,
+      resolvedMachineIds: ['machine-1'],
+      messageId: 'msg_a',
+      pendingApprovals: ['call_1'],
+    });
+    expect(fakeDb.runTransaction).not.toHaveBeenCalled();
+  });
+
+  it('resolves null when the chat has never run a turn', async () => {
+    await expect(readTurnRecord(fakeDb, CHAT_ID)).resolves.toBeNull();
+  });
+
+  it('maps a legacy doc the same way the lock does', async () => {
+    seedStream({ status: 'complete', message: approvalMessage('msg_a', 'call_1') });
+
+    await expect(readTurnRecord(fakeDb, CHAT_ID)).resolves.toMatchObject({
+      fanOut: false,
+      resolvedMachineIds: [MACHINE_ID],
+      pendingApprovals: ['call_1'],
+    });
+  });
+
+  it('throws instead of reporting "no prior turn" when the read fails', async () => {
+    // This read gates a dispatch: a blip must not read as "nothing to bind to".
+    seedStream();
+    failNextGet = true;
+
+    await expect(readTurnRecord(fakeDb, CHAT_ID)).rejects.toThrow('firestore unavailable');
+  });
+});
+
+describe('approvalRequestedIds', () => {
+  it('collects approval-requested tool call ids, deduped and in part order', () => {
+    const message = {
+      id: 'msg_a',
+      role: 'assistant',
+      parts: [
+        { type: 'text', text: 'may I?' },
+        { type: 'tool-restart_process', toolCallId: 'call_2', state: 'approval-requested' },
+        { type: 'dynamic-tool', toolCallId: 'call_1', state: 'approval-requested' },
+        { type: 'tool-restart_process', toolCallId: 'call_2', state: 'approval-requested' },
+        // Answered, dispatched or finished parts are not pending.
+        { type: 'tool-get_system_info', toolCallId: 'call_3', state: 'approval-responded' },
+        { type: 'tool-get_system_info', toolCallId: 'call_4', state: 'output-available' },
+      ],
+    };
+
+    expect(approvalRequestedIds(message)).toEqual(['call_2', 'call_1']);
+  });
+
+  it('reads anything malformed as no pending approvals', () => {
+    expect(approvalRequestedIds(null)).toEqual([]);
+    expect(approvalRequestedIds({ id: 'm', role: 'assistant' })).toEqual([]);
+    expect(approvalRequestedIds({ parts: [{ type: 'tool-x', state: 'approval-requested' }] })).toEqual(
+      [],
+    );
   });
 });
 
@@ -625,5 +1046,63 @@ describe('finishTurn', () => {
 
     await expect(finishTurn(fakeDb, CHAT_ID, 'turn_old', 'complete')).resolves.toBe(false);
     expect(store[STREAM_PATH].status).toBe('running');
+  });
+
+  it('records the approvals the turn ended waiting on, with the terminal status', async () => {
+    seedStream();
+
+    expect(
+      await finishTurn(fakeDb, CHAT_ID, 'turn_old', 'complete', undefined, ['call_1', 'call_2']),
+    ).toBe(true);
+    expect(store[STREAM_PATH]).toMatchObject({
+      status: 'complete',
+      pendingApprovals: ['call_1', 'call_2'],
+    });
+    expect('error' in store[STREAM_PATH]).toBe(false);
+  });
+
+  it('leaves the field absent when the caller records nothing', async () => {
+    seedStream();
+
+    expect(await finishTurn(fakeDb, CHAT_ID, 'turn_old', 'complete')).toBe(true);
+    expect('pendingApprovals' in store[STREAM_PATH]).toBe(false);
+  });
+
+  it('writes no approvals when the terminal write itself is a no-op', async () => {
+    // Same guard as the status: a superseded runner must not stamp its
+    // approvals onto the turn that replaced it.
+    seedStream({ turnId: 'turn_new' });
+
+    expect(
+      await finishTurn(fakeDb, CHAT_ID, 'turn_old', 'complete', undefined, ['call_1']),
+    ).toBe(false);
+    expect('pendingApprovals' in store[STREAM_PATH]).toBe(false);
+  });
+
+  it('binds a resume to what it recorded, end to end', async () => {
+    // The whole point of the field: the snapshot pump is throttled, so the
+    // stored message may not carry the approval part the turn ended on.
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_ask',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+      target: { machineIds: ['machine-1'], fanOut: false, source: 'chat' },
+      resolvedMachineIds: ['machine-1'],
+    });
+    await writeSnapshot(fakeDb, CHAT_ID, 'turn_ask', approvalMessage('msg_a'));
+    await finishTurn(fakeDb, CHAT_ID, 'turn_ask', 'complete', undefined, ['call_1']);
+
+    await acquireTurnLock(fakeDb, CHAT_ID, {
+      turnId: 'turn_resume',
+      siteId: SITE_ID,
+      machineId: SITE_TARGET_ID,
+      resume: { messageId: 'msg_a', toolCallIds: ['call_1'] },
+    });
+
+    expect(store[STREAM_PATH]).toMatchObject({
+      turnId: 'turn_resume',
+      target: { machineIds: ['machine-1'], fanOut: false, source: 'resume' },
+      resolvedMachineIds: ['machine-1'],
+    });
   });
 });

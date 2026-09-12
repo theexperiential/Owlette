@@ -164,7 +164,8 @@ beforeEach(() => {
   mockIsMachineOnline.mockResolvedValue(true);
   mockIsHootEnabled.mockResolvedValue(true);
   mockGetOnlineMachines.mockResolvedValue([MACHINE]);
-  mockAcquireTurnLock.mockResolvedValue(undefined);
+  // `PriorTurn | null`; null is "this chat has never run a turn".
+  mockAcquireTurnLock.mockResolvedValue(null);
   mockStartTurn.mockReturnValue({ cancel: jest.fn(async () => {}) });
   mockFinishTurn.mockResolvedValue(true);
 });
@@ -270,6 +271,36 @@ describe('POST /api/hoot — turn-start guards', () => {
       expect.objectContaining({
         access: expect.objectContaining({ isSiteAdmin: true }),
       }),
+    );
+  });
+
+  it('threads the prior turn record recovery index into the runner', async () => {
+    // The lock now returns the whole prior record; the runner still takes only
+    // the index, and a chat with no prior turn passes null rather than undefined.
+    mockAcquireTurnLock.mockResolvedValue({
+      toolCommands: { call_1: { [MACHINE]: { commandId: 'cmd_1' } } },
+      fanOut: false,
+      resolvedMachineIds: [MACHINE],
+      messageId: 'msg_a',
+      pendingApprovals: ['call_1'],
+    });
+
+    await TURN(turnRequest());
+
+    expect(mockStartTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        priorToolCommands: { call_1: { [MACHINE]: { commandId: 'cmd_1' } } },
+      }),
+    );
+  });
+
+  it('passes null when the chat has no prior turn', async () => {
+    await TURN(turnRequest());
+
+    expect(mockStartTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ priorToolCommands: null }),
     );
   });
 
