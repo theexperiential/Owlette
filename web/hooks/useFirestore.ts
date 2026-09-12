@@ -1288,6 +1288,9 @@ export function useMachines(siteId: string) {
               online: isOnline,
               agent_version: data.agent_version,
               machineTimezone: typeof data.machine_timezone_iana === 'string' ? data.machine_timezone_iana : undefined,
+              // only an explicit false disables hoot — absent means enabled, matching
+              // the server's `isHootEnabled` (hoot-utils.server.ts)
+              cortexEnabled: data.cortexEnabled !== false,
               rebooting: data.rebooting,
               shuttingDown: data.shuttingDown,
               rebootScheduledAt: restartScheduledAt,
