@@ -10,6 +10,9 @@
  *
  * Also how a Claude 5 reply renders: "thinking..." while it holds only thinking, a
  * notice when it finishes empty, and a note (not a tool card) for an advisor call.
+ *
+ * And the OWL-47 approval gate: a live turn disarms approve/deny, because the
+ * persisted `approval-requested` part outlives the resume that is already running.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -238,6 +241,37 @@ describe('ChatWindow edit & resend', () => {
       renderChat({ onEditMessage: undefined });
       expect(screen.queryByRole('button', { name: 'edit message' })).toBeNull();
     });
+  });
+});
+
+describe('ChatWindow — the tier-3 approval gate (OWL-47)', () => {
+  const ASK = msg('u1', 'user', [{ type: 'text', text: 'restart the render node' }]);
+  const PENDING = {
+    type: 'tool-run_powershell',
+    toolCallId: 'tc1',
+    state: 'approval-requested',
+    input: { command: 'hostname' },
+    approval: { id: 'ap1' },
+  };
+  const waiting = [ASK, msg('a1', 'assistant', [PENDING])];
+
+  it('arms approve/deny while no turn is running', () => {
+    renderChat({ onToolApproval: jest.fn(), messages: waiting });
+
+    expect(screen.getByRole('button', { name: 'approve' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'deny' })).toBeInTheDocument();
+  });
+
+  it('disarms them while the turn runs on, and still draws the card', () => {
+    // A reload mid-resume: the persisted part still reads approval-requested
+    // although the approved tool is already executing server-side, so re-arming
+    // the buttons would let the same call be approved twice.
+    renderChat({ onToolApproval: jest.fn(), turnRunning: true, messages: waiting });
+
+    expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'deny' })).toBeNull();
+    expect(screen.queryByText(/approve to continue/)).toBeNull();
+    expect(screen.getByRole('button', { name: /run_powershell/ })).toBeInTheDocument();
   });
 });
 

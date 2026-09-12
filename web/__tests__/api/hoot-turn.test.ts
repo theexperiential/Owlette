@@ -11,6 +11,11 @@
  *                       must not manufacture a row.
  *
  * Neither emit may carry message content, and neither may change the response.
+ *
+ * The last describe pins three turn-start guards the route owns today and the
+ * multi-machine targeting refactor is about to move: the api-key tier ceiling, the
+ * cross-site chat guard, and the single-machine kill switch. Nothing else covers
+ * them, so a refactor could drop one silently.
  */
 
 import { NextRequest } from 'next/server';
@@ -234,6 +239,58 @@ describe('POST /api/hoot — turn-start audit', () => {
 
     const res = await TURN(turnRequest());
     expect(res.status).toBe(503);
+    expect(emitMutation).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/hoot — turn-start guards', () => {
+  it('hands an api-key caller an access level capped below site admin', async () => {
+    mockResolveAuth.mockResolvedValue(authedKey());
+
+    const res = await TURN(turnRequest());
+    expect(res.status).toBe(200);
+
+    // resolveHootMaxTier keys off isSiteAdmin alone, so clearing it here is the
+    // whole reason a chat-scoped key stays at tier 1 instead of inheriting the
+    // owner's admin role. The rest of the resolved access passes through.
+    expect(mockStartTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        access: { role: 'admin', isSuperadmin: false, isSiteAdmin: false, isSiteOwner: true },
+      }),
+    );
+  });
+
+  it('leaves a session caller on the access their role resolved to', async () => {
+    const res = await TURN(turnRequest());
+    expect(res.status).toBe(200);
+
+    expect(mockStartTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        access: expect.objectContaining({ isSiteAdmin: true }),
+      }),
+    );
+  });
+
+  it('refuses a chat that belongs to another site, even for its owner', async () => {
+    // Same user, different site: the runner persists via the admin SDK, so this
+    // route is the only gate against a chat being written under a foreign siteId.
+    chatDoc = { userId: 'user-1', siteId: 'site-b' };
+
+    const res = await TURN(turnRequest());
+    expect(res.status).toBe(403);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('refuses a single machine with hoot turned off, before claiming the lock', async () => {
+    mockIsHootEnabled.mockResolvedValue(false);
+
+    const res = await TURN(turnRequest());
+    expect(res.status).toBe(423);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
     expect(emitMutation).not.toHaveBeenCalled();
   });
 });
