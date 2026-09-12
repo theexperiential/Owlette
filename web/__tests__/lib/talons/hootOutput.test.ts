@@ -373,19 +373,70 @@ describe('site-wide pre-flight', () => {
     expect(mockStartTurn).toHaveBeenCalledTimes(1);
   });
 
-  it('does not consult the per-machine kill switch in site mode', async () => {
-    // This pre-flight asks only "is anything online". The kill switch is now
-    // enforced where the commands are queued — the runner drops hoot-off
-    // machines from the set it dispatches to (D-A) — so the run still reaches a
-    // turn, which then has nothing to do. Wave 4.2 moves this check onto the
-    // same listing and reports that as `skipped`.
+  it('drops a hoot-off machine from the set a site run fans out over', async () => {
+    // D-A: the kill switch is honoured on EVERY dispatch, site-wide talons
+    // included. `m2` is online and would have received every relayed tool call
+    // before this; now it is skipped, and the turn carries which machine it lost
+    // so the model can say so rather than quietly answering for a smaller fleet.
     fake.seeded.clear();
-    seedMachine({ online: true, cortexEnabled: false });
+    seedMachine({ online: true });
+    seedMachine({ online: true, cortexEnabled: false }, 'm2');
 
     const result = await runHootOutput(db, siteArgs());
 
-    expect(result).toEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
-    expect(mockStartTurn).toHaveBeenCalledTimes(1);
+    // The held-back machine travels back to the caller, which records it on the
+    // run: a fan-out that reached 1 of 2 machines must not read as a complete
+    // delivery once the turn is over.
+    expect(result).toEqual({
+      status: 'sent',
+      chatId: EXPECTED_CHAT_ID,
+      skippedMachineIds: ['m2'],
+    });
+    expect(startTurnParams().resolved).toEqual({
+      ids: ['m1'],
+      fanOut: true,
+      skipped: { offline: [], disabled: ['m2'] },
+    });
+  });
+
+  it('records no skipped list when the kill switch held nothing back', async () => {
+    // `toStrictEqual`: the field must be ABSENT, not present-and-undefined — a
+    // run that reached everything says nothing about skipping.
+    fake.seeded.clear();
+    seedMachine({ online: true });
+    seedMachine({ online: true }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toStrictEqual({ status: 'sent', chatId: EXPECTED_CHAT_ID });
+  });
+
+  it('skips without dispatching when every online machine has hoot switched off', async () => {
+    // `skipped`, not `failed`: an operator pausing hoot across the site is a
+    // deliberate act, and must not spend one of the ten runs that auto-disable
+    // the talon. Refusing here also keeps the empty chat and the claimed lock
+    // from being written for a turn with nothing to talk to.
+    fake.seeded.clear();
+    seedMachine({ online: true, cortexEnabled: false });
+    seedMachine({ online: true, cortexEnabled: false }, 'm2');
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({ status: 'skipped', detail: 'no_hoot_enabled_machines' });
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
+    expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  it('reports a sleeping site as offline even when its machines also have hoot off', async () => {
+    // Offline is classified first: "nobody is home" must never read back as
+    // "somebody switched hoot off", or the suggested fix is the wrong one.
+    fake.seeded.clear();
+    seedMachine({ online: false, cortexEnabled: false });
+
+    const result = await runHootOutput(db, siteArgs());
+
+    expect(result).toEqual({ status: 'skipped', detail: 'no_machines_online' });
   });
 
   it('leaves a failed site read on the failure counter', async () => {
@@ -432,6 +483,10 @@ describe('the chat', () => {
       siteId: SITE,
       userId: 'admin-uid',
       targetType: 'machine',
+      // The new list plus the legacy trio, written together by
+      // `chatTargetFields` so an old tab reading `targetMachineId` narrows to
+      // this machine instead of widening to the site.
+      targetMachineIds: ['m1'],
       targetMachineId: 'm1',
       machineName: 'LOBBY-01',
       title: 'talon: lobby wall check',
@@ -466,6 +521,7 @@ describe('the chat', () => {
 
     expect(chatDoc()).toMatchObject({
       targetType: 'site',
+      targetMachineIds: null,
       targetMachineId: null,
       machineName: 'All Machines',
     });
@@ -476,6 +532,21 @@ describe('the chat', () => {
       turnTarget: { machineIds: null, fanOut: true, source: 'talon' },
     });
     expect(startTurnParams().chatTarget).toBeUndefined();
+  });
+
+  it('keeps the machine display name as the chat label', async () => {
+    // A talon machine chat is labelled `LOBBY-01`, not `m1`: `machineName` is
+    // what the sidebar, the header and both sides of a share read, and the
+    // run carries the friendly name the engine already resolved.
+    await runHootOutput(db, args({ machineName: 'LOBBY-01' }));
+
+    expect(chatDoc()).toMatchObject({ targetMachineIds: ['m1'], machineName: 'LOBBY-01' });
+  });
+
+  it('labels the chat with the machine id when the run carries no display name', async () => {
+    await runHootOutput(db, args({ machineName: undefined }));
+
+    expect(chatDoc()).toMatchObject({ targetMachineIds: ['m1'], machineName: 'm1' });
   });
 
   it('fails without a lock or a turn when the chat cannot be written', async () => {

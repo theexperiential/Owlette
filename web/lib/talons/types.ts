@@ -345,6 +345,12 @@ export interface TalonRunOutput {
   detail?: string;
   /** Webhook outputs only. */
   httpStatus?: number;
+  /**
+   * Hoot outputs only: online machines a site-wide directive did not reach
+   * because hoot is switched off on them (D-A). Without it a fan-out that
+   * reached 2 of 5 machines reads on the run exactly like one that reached 5.
+   */
+  skippedMachineIds?: string[];
   error?: string;
   /**
    * Set when THIS output's failure cost the talon its enabled state — a run can

@@ -590,6 +590,30 @@ describe('outputs', () => {
     expect(runDocs()[0].chatId).toBe('talon_42_run-a');
   });
 
+  it('records the machines a site-wide hoot output could not reach', async () => {
+    // The kill switch thinning a fan-out (D-A) has to survive onto the run — an
+    // operator reading it afterwards must be able to tell a partial delivery
+    // from a complete one, which `sent` plus a chat id alone never said.
+    const talon = seedTalon('t1', {
+      outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
+    });
+    mockRunHootOutput.mockResolvedValue({
+      status: 'sent',
+      chatId: 'talon_42_run-a',
+      skippedMachineIds: ['m2'],
+    });
+
+    const summaries = await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(outputByType(summaries[0].outputs, 'cortex')).toEqual({
+      type: 'cortex',
+      status: 'sent',
+      detail: 'talon_42_run-a',
+      skippedMachineIds: ['m2'],
+    });
+    expect(runDocs()[0].outputs).toEqual(summaries[0].outputs);
+  });
+
   it('leaves the run chatId alone when the hoot turn could not be dispatched', async () => {
     // A failed hoot output's `detail` is a reason, not a chat id — stamping it
     // would put a dead link on the run.

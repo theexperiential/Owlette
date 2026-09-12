@@ -9,7 +9,8 @@
  * on the documented public contract and nothing else.
  *
  * Three mutually exclusive paths:
- *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools
+ *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools, over the
+ *     machines that are online AND have the hoot kill switch on (D-A)
  *   - single machine, local hoot + site-admin caller: the agent runs the llm and
  *     streams via firestore onSnapshot
  *   - single machine, fallback: server-side llm + tool relay
@@ -27,7 +28,7 @@ import {
   resolveHootMaxTier,
   isMachineOnline,
   isHootEnabled,
-  getOnlineMachines,
+  listSiteMachines,
   getHootRequireTier3Approval,
   buildExecutableTools,
 } from '@/lib/hoot-utils.server';
@@ -84,14 +85,33 @@ export async function runHootStream(
   const maxToolTier = req.maxToolTier ?? resolveHootMaxTier(access);
 
   if (isSiteMode) {
-    const onlineMachines = await getOnlineMachines(db, siteId);
-    if (onlineMachines.length === 0) {
+    const machines = await listSiteMachines(db, siteId);
+    const online = machines.filter((machine) => machine.online);
+    if (online.length === 0) {
       return {
         ok: false,
         status: 503,
         error: 'no machines are currently online in this site.',
       };
     }
+
+    // The per-machine kill switch reaches site mode too (D-A): a machine with
+    // hoot switched off receives nothing here, exactly as on the single-machine
+    // path below. Offline is classified first, so a machine that is both keeps
+    // its 503 and the "turn hoot back on" fix stays visible when it is the only
+    // thing in the way.
+    const dispatchMachines = online
+      .filter((machine) => machine.hootEnabled)
+      .map((machine) => machine.id);
+    if (dispatchMachines.length === 0) {
+      return {
+        ok: false,
+        status: 423,
+        error:
+          'hoot is disabled on every online machine in this site. re-enable it from the hoot header to deliver tool calls.',
+      };
+    }
+
     return {
       ok: true,
       response: handleSiteWideMode(
@@ -101,7 +121,7 @@ export async function runHootStream(
         messages,
         chatId,
         maxToolTier,
-        onlineMachines,
+        dispatchMachines,
         access.role,
         req.onAssistantText,
       ),
@@ -439,12 +459,12 @@ function handleSiteWideMode(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
-  onlineMachines: string[],
+  dispatchMachines: string[],
   userRole: string | null,
   onAssistantText?: (text: string) => Promise<void> | void,
 ): Response {
   return wrapWithAssistantTap(
-    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, onlineMachines, userRole),
+    runSiteWideMode(db, userId, siteId, messages, chatId, maxToolTier, dispatchMachines, userRole),
     onAssistantText,
   );
 }
@@ -456,7 +476,8 @@ async function runSiteWideMode(
   messages: ModelMessage[],
   chatId: string,
   maxToolTier: ToolTier,
-  onlineMachines: string[],
+  /** Online AND hoot-enabled — the kill switch is applied before we get here. */
+  dispatchMachines: string[],
   userRole: string | null,
 ): Promise<Response> {
   const [llmConfig, requireTier3Approval] = await Promise.all([
@@ -471,7 +492,7 @@ async function runSiteWideMode(
     chatId,
     toolDefs,
     true,
-    onlineMachines,
+    dispatchMachines,
     { userId, userRole, requireTier3Approval },
   );
 

@@ -13,8 +13,9 @@
  * Target pre-flight: the run then checks the same things `/api/hoot` checks
  * before it commits a turn — a machine-scoped run that its machine is online
  * and the per-machine hoot kill switch is not engaged
- * ({@link checkMachineGuards}); a site-wide run that the site has at least one
- * machine online ({@link checkSiteGuards}). Every refusal is `skipped`.
+ * ({@link checkMachineGuards}); a site-wide run that at least one machine in the
+ * site is online with that same kill switch on ({@link checkSiteGuards}). Every
+ * refusal is `skipped`.
  *
  * One fresh chat per run (`chats/talon_{ms}_{runId}`): the turn store holds one
  * lock per chat, so two runs sharing a chat would race for it. The chat is also
@@ -44,11 +45,13 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
 import type { ToolTier } from '@/lib/mcp-tools';
-import { getOnlineMachines, isHootEnabled, isMachineOnline } from '@/lib/hoot-utils.server';
+import { isHootEnabled, isMachineOnline, listSiteMachines } from '@/lib/hoot-utils.server';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { acquireTurnLock, generateTurnId } from '@/lib/hoot/turnStore.server';
 import {
+  chatTargetFields,
   SITE_TARGET_ID,
+  type HootTarget,
   type ResolvedTargets,
   type TurnTargetRecord,
 } from '@/lib/hoot/target';
@@ -91,7 +94,16 @@ export interface RunHootOutputArgs {
  * `AUTO_DISABLE_AFTER_FAILURES` counts.
  */
 export type RunHootOutputResult =
-  | { status: 'sent'; chatId: string }
+  | {
+      status: 'sent';
+      chatId: string;
+      /**
+       * Online machines a site-wide run did NOT reach because the kill switch is
+       * engaged on them (D-A). Omitted when it took nothing out, so an
+       * all-machines run records exactly what it always did.
+       */
+      skippedMachineIds?: string[];
+    }
   | { status: 'skipped'; detail: string }
   | {
       status: 'failed';
@@ -151,34 +163,56 @@ async function checkMachineGuards(
   return null;
 }
 
+/** What a site-wide run will dispatch to, and what the pre-flight took out. */
+interface SiteDispatchSet {
+  /** Online with hoot enabled — the set the turn fans out over. */
+  machineIds: string[];
+  /** Online machines the kill switch removed, carried so the turn can say so. */
+  hootDisabled: string[];
+}
+
 /**
  * Pre-flight a site-wide run the way `/api/hoot` pre-flights site mode: at least
- * one machine online. Without it the turn runner throws
- * `No machines are currently online in this site.` INSIDE an already-locked
- * turn, so a talon firing against a sleeping site leaves an empty chat and a
- * claimed lock behind on every run while still reporting the turn dispatched.
+ * one machine online, and the per-machine kill switch applied to it. Without it
+ * the turn runner throws `No machines are currently online in this site.` INSIDE
+ * an already-locked turn, so a talon firing against a sleeping site leaves an
+ * empty chat and a claimed lock behind on every run while still reporting the
+ * turn dispatched.
  *
- * `skipped`, matching {@link checkMachineGuards}: an away site is not a talon
+ * The kill switch is read from the SAME listing (D-A), not a second pass of
+ * per-machine reads: hoot-off machines drop out of the dispatch set, and a site
+ * whose every online machine has hoot off refuses here rather than reaching a
+ * turn with nothing to talk to.
+ *
+ * Both refusals are `skipped`, matching {@link checkMachineGuards}: an away site
+ * — or one an operator has deliberately paused hoot across — is not a talon
  * fault and must not spend one of the `AUTO_DISABLE_AFTER_FAILURES` lives.
- *
- * This pre-flight asks only "is anything online". The per-machine kill switch is
- * now enforced where the commands are actually queued — the runner drops
- * hoot-off machines from the set it dispatches to (D-A) — so a site run against
- * an all-hoot-off site still reaches a turn that then has nothing to do. Wave
- * 4.2 moves this check onto the same listing and reports that as `skipped`.
  *
  * @returns the refusal to record, or the machines the turn will fan out to.
  */
 async function checkSiteGuards(
   db: Firestore,
   siteId: string,
-): Promise<{ refusal: RunHootOutputResult } | { onlineMachines: string[] }> {
+): Promise<{ refusal: RunHootOutputResult } | { dispatch: SiteDispatchSet }> {
   try {
-    const onlineMachines = await getOnlineMachines(db, siteId);
-    if (onlineMachines.length === 0) {
+    const machines = await listSiteMachines(db, siteId);
+    const online = machines.filter((machine) => machine.online);
+    // Offline is classified first, so a site that is simply asleep never reads
+    // back as "somebody switched hoot off".
+    if (online.length === 0) {
       return { refusal: { status: 'skipped', detail: 'no_machines_online' } };
     }
-    return { onlineMachines };
+
+    const machineIds: string[] = [];
+    const hootDisabled: string[] = [];
+    for (const machine of online) {
+      if (machine.hootEnabled) machineIds.push(machine.id);
+      else hootDisabled.push(machine.id);
+    }
+    if (machineIds.length === 0) {
+      return { refusal: { status: 'skipped', detail: 'no_hoot_enabled_machines' } };
+    }
+    return { dispatch: { machineIds, hootDisabled } };
   } catch (error) {
     // Same classification as the machine guards: a failed read is transient and
     // decides nothing about the site.
@@ -271,32 +305,36 @@ export async function runHootOutput(
   if (machineRefusal) return machineRefusal;
 
   const isSiteMode = !args.machineId;
-  let onlineMachines: string[] = [];
+  let siteDispatch: SiteDispatchSet = { machineIds: [], hootDisabled: [] };
   if (isSiteMode) {
     const siteGuards = await checkSiteGuards(db, siteId);
     if ('refusal' in siteGuards) return siteGuards.refusal;
-    onlineMachines = siteGuards.onlineMachines;
+    siteDispatch = siteGuards.dispatch;
   }
 
   const access = author.access;
   const machineId = args.machineId ?? SITE_TARGET_ID;
-  const machineName = args.machineName || args.machineId || '';
   const chatId = `talon_${Date.now()}_${runId}`;
 
-  // A site-scoped talon run fans out, exactly as it always has; a machine-scoped
-  // one is the single path. The runner re-checks this set against what is online
-  // and hoot-enabled when the turn starts, which is where the kill switch (D-A)
-  // reaches a site-wide talon — this pre-flight still only asks "is anything
-  // online", and Wave 4.2 moves it onto the same listing.
+  /** `null` = the whole site, dynamically; a machine run names its one machine. */
+  const target: HootTarget = { machineIds: isSiteMode ? null : [machineId] };
+
+  // A site-scoped talon run fans out over what the pre-flight left — online with
+  // hoot enabled (D-A); a machine-scoped one is the single path. The runner
+  // re-checks the set at turn start, so a machine that drops off in between
+  // still leaves it.
   const turnTarget: TurnTargetRecord = {
-    machineIds: isSiteMode ? null : [machineId],
+    machineIds: target.machineIds,
     fanOut: isSiteMode,
     source: 'talon',
   };
   const resolved: ResolvedTargets = {
-    ids: isSiteMode ? onlineMachines : [machineId],
+    ids: isSiteMode ? siteDispatch.machineIds : [machineId],
     fanOut: isSiteMode,
-    skipped: { offline: [], disabled: [] },
+    // The machines the kill switch took out travel with the turn, so the model
+    // is told what it is NOT talking to instead of answering for a smaller fleet
+    // than the operator thinks it asked about.
+    skipped: { offline: [], disabled: siteDispatch.hootDisabled },
   };
 
   // Create the chat BEFORE the turn: the runner then sees an existing doc and
@@ -310,9 +348,10 @@ export async function runHootOutput(
         source: 'talon',
         siteId,
         userId: author.userId,
-        targetType: isSiteMode ? 'site' : 'machine',
-        targetMachineId: isSiteMode ? null : machineId,
-        machineName: isSiteMode ? 'All Machines' : machineName,
+        // The machine's display name, not its id: a talon machine chat is
+        // labelled `LOBBY-01` everywhere the stored `machineName` is read,
+        // including both sides of a share.
+        ...chatTargetFields(target, args.machineName ? { label: args.machineName } : undefined),
         title: `talon: ${talon.name}`,
         talonId: talon.id,
         runId,
@@ -353,6 +392,7 @@ export async function runHootOutput(
       turnTarget,
       // No `chatTarget`: this chat's target fields are written above, with the
       // machine's display name, and the runner must not overwrite that label.
+      //
       // Two ceilings and nothing else, on purpose (decided 2026-08-15): the
       // default is read-only, and the per-talon `let hoot act` opt-in raises it
       // to tier 2. There is deliberately NO finer per-call cap to thread down
@@ -375,8 +415,26 @@ export async function runHootOutput(
 
   logger.info(`Talon ${talon.id} started hoot turn in chat ${chatId}`, {
     context: 'talons/hoot',
-    data: { siteId, runId, machineId, turnId },
+    data: {
+      siteId,
+      runId,
+      machineId,
+      turnId,
+      // Only when the kill switch actually took something out. The run record
+      // carries the same list for the operator; this is the server-side trail.
+      ...(siteDispatch.hootDisabled.length > 0
+        ? { hootDisabledMachines: siteDispatch.hootDisabled }
+        : {}),
+    },
   });
 
-  return { status: 'sent', chatId };
+  // A site-wide run that reached 2 of 5 machines has to be readable as such on
+  // the run afterwards — `sent` with a chat id alone doesn't say it.
+  return {
+    status: 'sent',
+    chatId,
+    ...(siteDispatch.hootDisabled.length > 0
+      ? { skippedMachineIds: siteDispatch.hootDisabled }
+      : {}),
+  };
 }

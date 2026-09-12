@@ -485,7 +485,8 @@ describe('listSiteMachines', () => {
       // Absent `cortexEnabled` is enabled — machines that predate the kill
       // switch must keep receiving tool calls (mirrors isHootEnabled).
       { id: 'kiosk-03', online: true },
-      // Absent `online` is offline, mirroring getOnlineMachines' `?? false`.
+      // Absent `online` is offline: a machine doc that has never reported in is
+      // not a dispatch target.
       { id: 'kiosk-04' },
     ]);
 

@@ -505,28 +505,6 @@ export async function getHootRequireTier3Approval(
   }
 }
 
-/** All online machines for a site. */
-export async function getOnlineMachines(
-  db: FirebaseFirestore.Firestore,
-  siteId: string
-): Promise<string[]> {
-  const machinesSnapshot = await db
-    .collection('sites')
-    .doc(siteId)
-    .collection('machines')
-    .get();
-
-  const onlineMachines: string[] = [];
-  for (const doc of machinesSnapshot.docs) {
-    const data = doc.data();
-    const online = data.online ?? false;
-    if (online) {
-      onlineMachines.push(doc.id);
-    }
-  }
-  return onlineMachines;
-}
-
 /** One machine of a site, with the two facts a dispatch turns on. */
 export interface SiteMachineSummary {
   id: string;
@@ -539,9 +517,9 @@ export interface SiteMachineSummary {
  * Every machine in a site, in ONE collection read.
  *
  * Resolving a SET through `isMachineOnline` + `isHootEnabled` would cost two
- * document reads per machine, and `getOnlineMachines` returns ids without the
- * kill switch. Those three stay: hootStream, autonomous hoot and talons resolve
- * one machine (or one online list) at a time and are not on this path.
+ * document reads per machine. Those two stay for the single-machine callers that
+ * are not on this path: hootStream's machine mode and the talon runner's
+ * per-machine pre-flight each check one named machine.
  */
 export async function listSiteMachines(
   db: FirebaseFirestore.Firestore,

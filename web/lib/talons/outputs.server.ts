@@ -487,12 +487,20 @@ async function executeHootOutput(
   });
 
   if (result.status === 'sent') {
-    return { type: 'cortex', status: 'sent', detail: result.chatId };
+    return {
+      type: 'cortex',
+      status: 'sent',
+      detail: result.chatId,
+      // Present only when the kill switch thinned a site-wide fan-out, so a
+      // partial delivery is readable on the run instead of looking complete.
+      ...(result.skippedMachineIds ? { skippedMachineIds: result.skippedMachineIds } : {}),
+    };
   }
   // Nothing was attempted and nothing is wrong with the talon — the machine is
-  // offline, hoot is switched off on it, or (site-wide) no machine in the site
-  // is online. Same class as the command output's `machine_offline` skip, so it
-  // must not reach the auto-disable counter.
+  // offline, hoot is switched off on it, or (site-wide) nothing in the site is
+  // online or every online machine has hoot switched off. Same class as the
+  // command output's `machine_offline` skip, so it must not reach the
+  // auto-disable counter.
   if (result.status === 'skipped') {
     return { type: 'cortex', status: 'skipped', detail: result.detail };
   }
