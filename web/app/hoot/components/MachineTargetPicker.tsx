@@ -1,0 +1,162 @@
+'use client';
+
+import React from 'react';
+import { ChevronDown, Globe, Monitor } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { formatTargetLabel, toggleAll, toggleMachine, type HootTarget } from '@/lib/hoot/target';
+
+/** One row: the id IS the target, the two flags are the status text beside it. */
+export interface MachineTargetOption {
+  id: string;
+  online: boolean;
+  hootEnabled: boolean;
+}
+
+interface MachineTargetPickerProps {
+  machines: MachineTargetOption[];
+  selection: HootTarget;
+  onChange: (next: HootTarget) => void;
+}
+
+/**
+ * Why a machine can't take this turn, as TEXT rather than a colour: the rows are
+ * the only place a skipped machine is named before the turn is sent, and a dot
+ * says nothing to a screen reader or to anyone reading the menu in a hurry. Both
+ * reasons show when both apply — an offline machine with hoot off stays skipped
+ * after it comes back.
+ */
+function statusText(machine: MachineTargetOption): string | null {
+  const reasons: string[] = [];
+  if (!machine.online) reasons.push('offline');
+  if (!machine.hootEnabled) reasons.push('hoot off');
+  return reasons.length > 0 ? reasons.join(', ') : null;
+}
+
+/**
+ * The small print beside a row's name. `--muted-foreground` over the focused
+ * row's `--accent` fill is 4.37:1 in the app's forced-dark theme — under the
+ * 4.5:1 that axe's `color-contrast` rule enforces on /hoot — so the focused row
+ * alone gets a lighter tone and every other row keeps the muted hierarchy.
+ * Radix focuses a row on pointer move, so this covers hover too; the rows carry
+ * `group` for it.
+ */
+const STATUS_TEXT_CLASS = 'text-xs text-muted-foreground group-focus:text-accent-foreground/80';
+
+/**
+ * The header's "which machines does this chat talk to" control: a checkbox menu
+ * over the site's machines, with a tri-state "all machines" master row.
+ *
+ * "All" is DYNAMIC (`machineIds: null`), so the master row is not a shortcut for
+ * ticking every box — it is a different value, and the reducers in
+ * `lib/hoot/target.ts` own the difference. Unticking one machine spells the rest
+ * out; ticking the last missing one collapses back to null.
+ */
+export function MachineTargetPicker({ machines, selection, onChange }: MachineTargetPickerProps) {
+  const siteMachineIds = machines.map((machine) => machine.id);
+  const selected = selection.machineIds;
+  const isTicked = (id: string) => selected === null || selected.includes(id);
+
+  // Tri-state master row. An explicit set that covers every machine reads as
+  // ticked, not mixed: `normalizeSelection` collapses that set to null, but a
+  // selection restored from a chat doc reaches this render before the machine
+  // list it would be normalized against.
+  const tickedCount = machines.filter((machine) => isTicked(machine.id)).length;
+  const allChecked: boolean | 'indeterminate' =
+    selected === null || (machines.length > 0 && tickedCount === machines.length)
+      ? true
+      : tickedCount === 0
+        ? false
+        : 'indeterminate';
+
+  const siteOnlineCount = machines.filter((machine) => machine.online).length;
+  // The trigger's count is REACHABILITY of the current target, not its size: how
+  // many of the ticked machines are online. For "all machines" that is the site's
+  // online count, which is the number the old single-select trigger showed.
+  const targetOnlineCount = machines.filter(
+    (machine) => machine.online && isTicked(machine.id),
+  ).length;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        {/* `w-full max-w-[220px] min-w-0` rather than a hard `w-[220px]`: the
+            control shares a row with the sidebar toggle and the approval/power
+            toggles, which at a 390px viewport leaves it well under 220px.
+            Capping keeps the desktop width identical while letting the trigger
+            shrink and its label truncate. `min-w-0` is required — a flex item's
+            automatic minimum size would otherwise hold it at its content width
+            and push the row into the horizontal overflow the mobile gate fails
+            on. `aria-label` is how four e2e specs find this control. */}
+        <Button
+          variant="secondary"
+          aria-label="hoot target"
+          className="w-full max-w-[220px] min-w-0 justify-between border border-border font-normal"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {selected === null ? (
+              <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <span className="truncate">{formatTargetLabel(selected)}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            ({targetOnlineCount})
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </span>
+        </Button>
+      </DropdownMenuTrigger>
+
+      <DropdownMenuContent align="start" className="w-[240px]">
+        <DropdownMenuCheckboxItem
+          className="group"
+          checked={allChecked}
+          // `preventDefault` keeps the menu open. Picking a set takes several
+          // clicks, and Radix closes the menu on any select event it is left to
+          // handle — so a reopen per machine would be the cost of not doing this.
+          onSelect={(event) => {
+            event.preventDefault();
+            onChange(toggleAll(selection, siteMachineIds));
+          }}
+        >
+          <span className="flex-1 truncate">all machines</span>
+          <span className={STATUS_TEXT_CLASS}>{siteOnlineCount} online</span>
+        </DropdownMenuCheckboxItem>
+
+        <DropdownMenuSeparator />
+
+        {machines.length === 0 ? (
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+            no machines in this site
+          </DropdownMenuLabel>
+        ) : (
+          machines.map((machine) => {
+            const status = statusText(machine);
+            return (
+              <DropdownMenuCheckboxItem
+                key={machine.id}
+                className="group"
+                checked={isTicked(machine.id)}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  onChange(toggleMachine(selection, machine.id, siteMachineIds));
+                }}
+              >
+                <span className="flex-1 truncate">{machine.id}</span>
+                {status !== null && <span className={STATUS_TEXT_CLASS}>{status}</span>}
+              </DropdownMenuCheckboxItem>
+            );
+          })
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
