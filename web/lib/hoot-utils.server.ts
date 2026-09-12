@@ -23,6 +23,14 @@ import {
   scheduleFollowup,
   type CancelFollowupOutcome,
 } from '@/lib/hoot/followupStore.server';
+import {
+  MAX_TARGET_MACHINES,
+  SITE_TARGET_ID,
+  effectiveFanOut,
+  isValidMachineId,
+  type HootTarget,
+  type ResolvedTargets,
+} from '@/lib/hoot/target';
 import type { TalonStoreContext } from '@/lib/talons/store.server';
 
 /**
@@ -45,9 +53,6 @@ export const SERVER_SIDE_TOOLS: ReadonlySet<string> = new Set([
   'schedule_followup',
   'cancel_followup',
 ]);
-
-/** Sentinel `machineId` for a site-wide chat (mirrors /api/hoot + the runner). */
-const SITE_TARGET_ID = '__site__';
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
@@ -115,8 +120,14 @@ export interface BuildExecutableToolsOptions {
    *  `__site__` for a site-wide chat. Defaulted from `buildExecutableTools`'
    *  positional args — `machineIds` cannot supply it, because site mode passes
    *  the fanned-out online machines rather than the sentinel. Read only by
-   *  `schedule_followup`. */
+   *  `schedule_followup`, and only when `followupTarget` is absent. */
   chatMachineId?: string;
+  /** This turn's target, recorded on whatever `schedule_followup` writes so the
+   *  follow-up fires where it was promised (D-D). Wins over `chatMachineId`,
+   *  which can only say "one machine" or "the whole site": without it a subset
+   *  turn would schedule a SITE-WIDE follow-up, since fan-out defaults to the
+   *  sentinel. */
+  followupTarget?: HootTarget;
   /** This turn's effective tool-tier ceiling — what `access` earns, already
    *  intersected with any caller cap. Recorded by `schedule_followup` on the
    *  follow-up doc so the turn it fires later cannot out-reach the turn that
@@ -514,6 +525,185 @@ export async function getOnlineMachines(
     }
   }
   return onlineMachines;
+}
+
+/** One machine of a site, with the two facts a dispatch turns on. */
+export interface SiteMachineSummary {
+  id: string;
+  online: boolean;
+  /** `cortexEnabled !== false` — absent means on, mirroring {@link isHootEnabled}. */
+  hootEnabled: boolean;
+}
+
+/**
+ * Every machine in a site, in ONE collection read.
+ *
+ * Resolving a SET through `isMachineOnline` + `isHootEnabled` would cost two
+ * document reads per machine, and `getOnlineMachines` returns ids without the
+ * kill switch. Those three stay: hootStream, autonomous hoot and talons resolve
+ * one machine (or one online list) at a time and are not on this path.
+ */
+export async function listSiteMachines(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+): Promise<SiteMachineSummary[]> {
+  const snapshot = await db
+    .collection('sites')
+    .doc(siteId)
+    .collection('machines')
+    .get();
+
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      online: !!data.online,
+      hootEnabled: data.cortexEnabled !== false,
+    };
+  });
+}
+
+/** What a turn asks to target, before the site has been consulted. */
+export interface ResolveHootTargetsRequest {
+  /** The chat's selection: `null` = every machine in the site, dynamically. */
+  requested: string[] | null;
+  /** `@machine` ids parsed from THIS turn's message. They REPLACE `requested`
+   *  for this turn only (D-3), so a mention can name an unticked machine. */
+  mentions?: string[];
+}
+
+/**
+ * Why {@link resolveHootTargets} refused. Each reason is paired with the status
+ * the caller returns, and `machineIds` names the machines that caused it so the
+ * refusal can say which — never a second read to find out.
+ */
+export type ResolveTargetsFailure =
+  | { ok: false; status: 400; reason: 'invalid_target' | 'unknown_machine'; machineIds: string[] }
+  | { ok: false; status: 423; reason: 'hoot_disabled'; machineIds: string[] }
+  | { ok: false; status: 503; reason: 'machine_offline' | 'no_machines'; machineIds: string[] };
+
+export type ResolveTargetsResult =
+  | { ok: true; resolved: ResolvedTargets }
+  | ResolveTargetsFailure;
+
+/** Validated, deduped, capped id list — or null when the list is unusable. */
+function readTargetIds(value: unknown): string[] | null {
+  // `[]` is never a valid target (see target.ts): it has no legacy encoding, and
+  // an empty set reaching dispatch would read as "all machines" downstream.
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TARGET_MACHINES) {
+    return null;
+  }
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (!isValidMachineId(entry)) return null;
+    if (!ids.includes(entry)) ids.push(entry);
+  }
+  return ids;
+}
+
+/**
+ * The machines a turn dispatches to, resolved once against the site's listing.
+ *
+ * The single decision point: the route, follow-ups and talons all come through
+ * here, so the kill switch (D-A) and the offline rules (D-B) cannot drift apart
+ * between paths. It only ever NARROWS — an id this site cannot name is a 400,
+ * never a fallback to "all machines".
+ *
+ * Skipped machines are reported rather than refused, unless nothing is left:
+ * 423 when the kill switch is the whole reason, 503 otherwise. A machine the
+ * user NAMED with `@` is refused outright, since silently dropping it would
+ * answer a question about a different machine.
+ */
+export async function resolveHootTargets(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  request: ResolveHootTargetsRequest,
+): Promise<ResolveTargetsResult> {
+  // `null` is the one widening value and it is not a list, so it skips the id
+  // validation rather than failing it.
+  const wantsAll = request.requested === null;
+  const requested = wantsAll ? null : readTargetIds(request.requested);
+  const mentionsGiven = Array.isArray(request.mentions) && request.mentions.length > 0;
+  const mentions = mentionsGiven ? readTargetIds(request.mentions) : null;
+  if ((!wantsAll && requested === null) || (mentionsGiven && mentions === null)) {
+    // Malformed before any read: a `/` in an id would be a path traversal
+    // against `sites/{siteId}/machines`, so it never reaches Firestore.
+    return { ok: false, status: 400, reason: 'invalid_target', machineIds: [] };
+  }
+
+  const machines = await listSiteMachines(db, siteId);
+  const byId = new Map(machines.map((machine) => [machine.id, machine]));
+
+  if (mentions) {
+    const unknown = mentions.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      return { ok: false, status: 400, reason: 'unknown_machine', machineIds: unknown };
+    }
+    // Offline before the kill switch — the order `/api/hoot` has always checked
+    // a single machine in, so a machine that is both keeps its 503.
+    const offline = mentions.filter((id) => !byId.get(id)!.online);
+    if (offline.length > 0) {
+      return { ok: false, status: 503, reason: 'machine_offline', machineIds: offline };
+    }
+    const disabled = mentions.filter((id) => !byId.get(id)!.hootEnabled);
+    if (disabled.length > 0) {
+      return { ok: false, status: 423, reason: 'hoot_disabled', machineIds: disabled };
+    }
+    return {
+      ok: true,
+      resolved: {
+        ids: mentions,
+        fanOut: effectiveFanOut({ machineIds: mentions }, machines.length),
+        skipped: { offline: [], disabled: [] },
+      },
+    };
+  }
+
+  if (requested !== null) {
+    const unknown = requested.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      // Includes another site's machine: the listing is this site's, so a
+      // foreign id is simply absent. Refusing beats quietly dropping it.
+      return { ok: false, status: 400, reason: 'unknown_machine', machineIds: unknown };
+    }
+  }
+
+  // A ticked machine that is offline or hoot-off is SKIPPED and reported (D-B),
+  // so one dead wall doesn't cost the user the rest of the fleet. Offline is
+  // classified first, keeping the status `/api/hoot` returns for a machine that
+  // is both.
+  const ids: string[] = [];
+  const offline: string[] = [];
+  const disabled: string[] = [];
+  for (const id of requested ?? machines.map((machine) => machine.id)) {
+    const machine = byId.get(id)!;
+    if (!machine.online) offline.push(id);
+    else if (!machine.hootEnabled) disabled.push(id);
+    else ids.push(id);
+  }
+
+  if (ids.length === 0) {
+    // Nothing left: 423 only when the kill switch is the WHOLE reason, so a
+    // half-offline set still reads as "nothing is online".
+    if (offline.length === 0 && disabled.length > 0) {
+      return { ok: false, status: 423, reason: 'hoot_disabled', machineIds: disabled };
+    }
+    return offline.length > 0
+      ? { ok: false, status: 503, reason: 'machine_offline', machineIds: offline }
+      : { ok: false, status: 503, reason: 'no_machines', machineIds: [] };
+  }
+
+  return {
+    ok: true,
+    resolved: {
+      ids,
+      // fanOut follows what was REQUESTED, not what survived: a two-machine turn
+      // with one machine offline still reports per machine, and a one-machine
+      // site asking for "all" stays on the single path.
+      fanOut: effectiveFanOut({ machineIds: requested }, machines.length),
+      skipped: { offline, disabled },
+    },
+  };
 }
 
 /** Queue an MCP tool call for an agent via Firestore and wait for the result. */
@@ -1485,6 +1675,24 @@ function resolveFollowupRunAt(params: Record<string, unknown>, now: number): Fol
   return { ok: true, runAt: new Date(parsed) };
 }
 
+/**
+ * The target a follow-up is filed against: this turn's own, when the caller
+ * threaded one, else the legacy single-`machineId` view (`__site__`, or one id).
+ * An empty explicit set is a caller bug with no safe encoding, so it reads as
+ * "no target" — the tool refuses — rather than widening to the whole site.
+ */
+function followupTargetFor(options: BuildExecutableToolsOptions): HootTarget | null {
+  const target = options.followupTarget;
+  if (target) {
+    if (target.machineIds === null) return { machineIds: null };
+    return target.machineIds.length > 0 ? { machineIds: [...target.machineIds] } : null;
+  }
+
+  const machineId = options.chatMachineId?.trim();
+  if (!machineId) return null;
+  return machineId === SITE_TARGET_ID ? { machineIds: null } : { machineIds: [machineId] };
+}
+
 async function executeScheduleFollowupTool(
   db: FirebaseFirestore.Firestore,
   siteId: string,
@@ -1493,8 +1701,8 @@ async function executeScheduleFollowupTool(
 ): Promise<unknown> {
   const chatId = options.chatId?.trim();
   const userId = options.userId?.trim();
-  const machineId = options.chatMachineId?.trim();
-  if (!chatId || !userId || !machineId) return followupUnavailableResult();
+  const target = followupTargetFor(options);
+  if (!chatId || !userId || !target) return followupUnavailableResult();
 
   const note = typeof params.note === 'string' ? params.note.trim() : '';
   if (!note) {
@@ -1524,7 +1732,7 @@ async function executeScheduleFollowupTool(
     const scheduled = await scheduleFollowup(db, {
       chatId,
       siteId,
-      machineId,
+      target,
       userId,
       note,
       runAt: schedule.runAt,
@@ -1665,8 +1873,9 @@ export function buildExecutableTools(
 ) {
   // Server-side tools only see `options`, so fold the positional chatId in. An
   // explicit `options.chatId` wins, attributing the loop to a different chat.
-  // `chatMachineId` is the chat's target as the follow-up store records it —
-  // the sentinel in site mode, where the positional machineId may be blank.
+  // `chatMachineId` is the one-machine-or-whole-site view of the target — the
+  // sentinel in site mode, where the positional machineId may be blank. A caller
+  // that knows the real set passes `followupTarget`, which wins over it.
   const serverSideOptions: BuildExecutableToolsOptions = {
     ...options,
     chatId: options.chatId ?? chatId,

@@ -21,6 +21,7 @@
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { timestampToMs } from '@/lib/firestoreTime.server';
+import { neverWidenLegacyMachineId, type HootTarget } from '@/lib/hoot/target';
 import type { ToolTier } from '@/lib/mcp-tools';
 
 /** Data at rest — see the WIRE_NAMES note above before renaming. */
@@ -32,7 +33,18 @@ export type FollowupStatus = 'scheduled' | 'fired' | 'cancelled' | 'failed';
 export interface FollowupDoc {
   chatId: string;
   siteId: string;
-  /** `__site__` for a site-wide chat, mirroring the runner's sentinel. */
+  /**
+   * The scheduling turn's target: `null` = every machine in the site,
+   * dynamically. Absent on docs written before targets were recorded, which the
+   * sweep reads through {@link FollowupDoc.machineId} instead.
+   */
+  targetMachineIds?: string[] | null;
+  /**
+   * Never-widened mirror of {@link FollowupDoc.targetMachineIds}: `__site__` for
+   * a site-wide chat, else the target's FIRST machine. A sweep that predates the
+   * list — an older instance during a rollback — reads this one, and must fire a
+   * subset follow-up on one machine rather than across the site.
+   */
   machineId: string;
   userId: string;
   note: string;
@@ -57,7 +69,8 @@ export interface FollowupDoc {
 export interface ScheduleFollowupInput {
   chatId: string;
   siteId: string;
-  machineId: string;
+  /** Both stored target fields come from this one value — see {@link FollowupDoc}. */
+  target: HootTarget;
   userId: string;
   note: string;
   runAt: Date;
@@ -121,7 +134,10 @@ export async function scheduleFollowup(
   const doc: FollowupDoc = {
     chatId: input.chatId,
     siteId: input.siteId,
-    machineId: input.machineId,
+    // Both fields are derived here, from the one target, so no caller can write
+    // a legacy `machineId` that reaches further than the list beside it.
+    targetMachineIds: input.target.machineIds,
+    machineId: neverWidenLegacyMachineId(input.target),
     userId: input.userId,
     note: input.note,
     runAt: input.runAt,

@@ -143,10 +143,41 @@ function createProcessConfigDb(processes: unknown[]) {
   return { db, configDoc };
 }
 
+/** One machine document under `sites/{siteId}/machines`, as stored. */
+type MachineFixture = { id: string; online?: unknown; cortexEnabled?: unknown };
+
+/**
+ * A db whose only readable path is `sites/{siteId}/machines`, counting the
+ * collection reads — resolving a set is specified to cost exactly one.
+ */
+function createSiteMachinesDb(machines: MachineFixture[]) {
+  const machinesGet = jest.fn(async () => ({
+    docs: machines.map(({ id, ...data }) => ({ id, data: () => data })),
+  }));
+
+  const db = {
+    collection: jest.fn((name: string) => {
+      if (name !== 'sites') throw new Error(`unexpected collection: ${name}`);
+      return {
+        doc: jest.fn(() => ({
+          collection: jest.fn((child: string) => {
+            if (child !== 'machines') throw new Error(`unexpected subcollection: ${child}`);
+            return { get: machinesGet };
+          }),
+        })),
+      };
+    }),
+  } as unknown as FirebaseFirestore.Firestore;
+
+  return { db, machinesGet };
+}
+
 import {
   executeToolOnAgent,
   executeExistingCommand,
   buildExecutableTools,
+  listSiteMachines,
+  resolveHootTargets,
   assertLlmKeyAvailable,
   resolveLlmConfig,
   resolveSiteKeyOwner,
@@ -163,6 +194,7 @@ import {
 
 import { allTools } from '@/lib/mcp-tools';
 import { decryptApiKey } from '@/lib/llm-encryption.server';
+import { MAX_TARGET_MACHINES } from '@/lib/hoot/target';
 
 beforeEach(() => {
   mockCreateProcess.mockReset();
@@ -443,6 +475,313 @@ describe('executeExistingCommand', () => {
 
 // buildExecutableTools
 
+// listSiteMachines / resolveHootTargets
+
+describe('listSiteMachines', () => {
+  it('reads the site once and reports both dispatch facts per machine', async () => {
+    const { db, machinesGet } = createSiteMachinesDb([
+      { id: 'kiosk-01', online: true, cortexEnabled: true },
+      { id: 'kiosk-02', online: false, cortexEnabled: false },
+      // Absent `cortexEnabled` is enabled — machines that predate the kill
+      // switch must keep receiving tool calls (mirrors isHootEnabled).
+      { id: 'kiosk-03', online: true },
+      // Absent `online` is offline, mirroring getOnlineMachines' `?? false`.
+      { id: 'kiosk-04' },
+    ]);
+
+    await expect(listSiteMachines(db, 's1')).resolves.toEqual([
+      { id: 'kiosk-01', online: true, hootEnabled: true },
+      { id: 'kiosk-02', online: false, hootEnabled: false },
+      { id: 'kiosk-03', online: true, hootEnabled: true },
+      { id: 'kiosk-04', online: false, hootEnabled: true },
+    ]);
+    expect(machinesGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an empty site as no machines', async () => {
+    const { db } = createSiteMachinesDb([]);
+    await expect(listSiteMachines(db, 's1')).resolves.toEqual([]);
+  });
+});
+
+/**
+ * The one place that decides which machines a turn dispatches to. What is pinned
+ * here: it never widens (an id the site cannot name is a 400, never a fallback
+ * to every machine), it skips offline and hoot-off machines rather than failing
+ * (D-A/D-B) until nothing is left, it refuses a machine the user NAMED with `@`,
+ * and fan-out follows what was REQUESTED so a one-machine site keeps the single
+ * path.
+ */
+describe('resolveHootTargets', () => {
+  const FLEET: MachineFixture[] = [
+    { id: 'kiosk-01', online: true, cortexEnabled: true },
+    { id: 'kiosk-02', online: true, cortexEnabled: true },
+    { id: 'kiosk-03', online: true, cortexEnabled: true },
+  ];
+
+  it('resolves "all machines" to every online, hoot-enabled machine', async () => {
+    const { db, machinesGet } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', { requested: null });
+
+    expect(result).toEqual({
+      ok: true,
+      resolved: {
+        ids: ['kiosk-01', 'kiosk-02', 'kiosk-03'],
+        fanOut: true,
+        skipped: { offline: [], disabled: [] },
+      },
+    });
+    // One collection read for the whole set — not two document reads each.
+    expect(machinesGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves an explicit subset, in the order it was asked for', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', { requested: ['kiosk-03', 'kiosk-01'] });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-03', 'kiosk-01'], fanOut: true } });
+  });
+
+  it('keeps a single explicit machine off the fan-out path', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', { requested: ['kiosk-02'] });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-02'], fanOut: false } });
+  });
+
+  it('resolves "all machines" on a one-machine site to the single path', async () => {
+    // Process context in the prompt, unwrapped tool output, the power toggle and
+    // the exact offline copy e2e pins all hang off fanOut.
+    const { db } = createSiteMachinesDb([{ id: 'only-01', online: true }]);
+
+    const result = await resolveHootTargets(db, 's1', { requested: null });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['only-01'], fanOut: false } });
+  });
+
+  it('dedupes a repeated id instead of dispatching to it twice', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', {
+      requested: ['kiosk-01', 'kiosk-01', 'kiosk-02'],
+    });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-01', 'kiosk-02'] } });
+  });
+
+  it.each([
+    ['an unknown machine', ['kiosk-01', 'kiosk-99'], ['kiosk-99']],
+    // A foreign machine is simply absent from THIS site's listing.
+    ['another site\'s machine', ['lobby-pa-01'], ['lobby-pa-01']],
+  ])('refuses %s with 400 and never widens to the site', async (_label, requested, offenders) => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    await expect(resolveHootTargets(db, 's1', { requested })).resolves.toEqual({
+      ok: false,
+      status: 400,
+      reason: 'unknown_machine',
+      machineIds: offenders,
+    });
+  });
+
+  it.each([
+    ['a path separator in an id', ['../../sites/other/machines/x']],
+    ['an id with a slash', ['kiosk-01/commands']],
+    ['a non-string id', [42]],
+    ['the site sentinel as an id', ['__site__']],
+    ['an empty set', []],
+    ['a set past the cap', Array.from({ length: MAX_TARGET_MACHINES + 1 }, (_, i) => `kiosk-${i}`)],
+  ])('refuses %s with 400 before reading the site', async (_label, requested) => {
+    const { db, machinesGet } = createSiteMachinesDb(FLEET);
+
+    await expect(
+      resolveHootTargets(db, 's1', { requested: requested as string[] }),
+    ).resolves.toEqual({ ok: false, status: 400, reason: 'invalid_target', machineIds: [] });
+    // A malformed id would be a path traversal against sites/{id}/machines.
+    expect(machinesGet).not.toHaveBeenCalled();
+  });
+
+  it('accepts a set at exactly the cap', async () => {
+    const fleet = Array.from({ length: MAX_TARGET_MACHINES }, (_, i) => ({
+      id: `kiosk-${i}`,
+      online: true,
+    }));
+    const { db } = createSiteMachinesDb(fleet);
+
+    const result = await resolveHootTargets(db, 's1', { requested: fleet.map((m) => m.id) });
+
+    expect(result).toMatchObject({ ok: true });
+    expect((result as { resolved: { ids: string[] } }).resolved.ids).toHaveLength(
+      MAX_TARGET_MACHINES,
+    );
+  });
+
+  it('skips an offline machine and reports it, rather than failing the turn', async () => {
+    const { db } = createSiteMachinesDb([
+      { id: 'kiosk-01', online: true },
+      { id: 'kiosk-02', online: false },
+    ]);
+
+    const result = await resolveHootTargets(db, 's1', { requested: ['kiosk-01', 'kiosk-02'] });
+
+    expect(result).toEqual({
+      ok: true,
+      resolved: {
+        ids: ['kiosk-01'],
+        // Two machines were asked for, so the turn still reports per machine.
+        fanOut: true,
+        skipped: { offline: ['kiosk-02'], disabled: [] },
+      },
+    });
+  });
+
+  it('skips a hoot-off machine inside "all machines" (D-A)', async () => {
+    // The kill switch used to be honoured only on single-machine turns, so a
+    // site-wide chat queued commands on a machine whose owner had turned hoot off.
+    const { db } = createSiteMachinesDb([
+      { id: 'kiosk-01', online: true },
+      { id: 'kiosk-02', online: true, cortexEnabled: false },
+    ]);
+
+    const result = await resolveHootTargets(db, 's1', { requested: null });
+
+    expect(result).toEqual({
+      ok: true,
+      resolved: {
+        ids: ['kiosk-01'],
+        fanOut: true,
+        skipped: { offline: [], disabled: ['kiosk-02'] },
+      },
+    });
+  });
+
+  it('refuses with 503 when every requested machine is offline', async () => {
+    const { db } = createSiteMachinesDb([
+      { id: 'kiosk-01', online: false },
+      { id: 'kiosk-02', online: false },
+    ]);
+
+    await expect(resolveHootTargets(db, 's1', { requested: null })).resolves.toEqual({
+      ok: false,
+      status: 503,
+      reason: 'machine_offline',
+      machineIds: ['kiosk-01', 'kiosk-02'],
+    });
+  });
+
+  it('refuses with 423 when the kill switch is the whole reason', async () => {
+    const { db } = createSiteMachinesDb([{ id: 'kiosk-01', online: true, cortexEnabled: false }]);
+
+    await expect(resolveHootTargets(db, 's1', { requested: ['kiosk-01'] })).resolves.toEqual({
+      ok: false,
+      status: 423,
+      reason: 'hoot_disabled',
+      machineIds: ['kiosk-01'],
+    });
+  });
+
+  it('prefers 503 over 423 for a machine that is both offline and hoot-off', async () => {
+    // `/api/hoot` has always checked offline before the kill switch, so the
+    // single-machine status code must not move.
+    const { db } = createSiteMachinesDb([{ id: 'kiosk-01', online: false, cortexEnabled: false }]);
+
+    await expect(resolveHootTargets(db, 's1', { requested: ['kiosk-01'] })).resolves.toMatchObject({
+      status: 503,
+      reason: 'machine_offline',
+    });
+  });
+
+  it('refuses with 503 when the site has no machines at all', async () => {
+    const { db } = createSiteMachinesDb([]);
+
+    await expect(resolveHootTargets(db, 's1', { requested: null })).resolves.toEqual({
+      ok: false,
+      status: 503,
+      reason: 'no_machines',
+      machineIds: [],
+    });
+  });
+
+  it('narrows a site-wide turn to the mentioned machine', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', {
+      requested: null,
+      mentions: ['kiosk-02'],
+    });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-02'], fanOut: false } });
+  });
+
+  it('narrows to a mentioned machine the selection had unticked', async () => {
+    // A mention applies to this turn only (D-3); it replaces the selection
+    // rather than intersecting with it.
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', {
+      requested: ['kiosk-01'],
+      mentions: ['kiosk-03'],
+    });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-03'] } });
+  });
+
+  it('narrows to the union of several mentions', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', {
+      requested: null,
+      mentions: ['kiosk-03', 'kiosk-01'],
+    });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-03', 'kiosk-01'], fanOut: true } });
+  });
+
+  it('ignores an empty mention list and keeps the selection', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    const result = await resolveHootTargets(db, 's1', { requested: ['kiosk-01'], mentions: [] });
+
+    expect(result).toMatchObject({ ok: true, resolved: { ids: ['kiosk-01'] } });
+  });
+
+  it.each([
+    ['offline', { id: 'kiosk-02', online: false }, 503, 'machine_offline'],
+    ['hoot-off', { id: 'kiosk-02', online: true, cortexEnabled: false }, 423, 'hoot_disabled'],
+  ])(
+    'refuses a mentioned machine that is %s instead of silently skipping it',
+    async (_label, machine, status, reason) => {
+      // The user named this machine, so answering about a different one would be
+      // worse than refusing (D-B).
+      const { db } = createSiteMachinesDb([{ id: 'kiosk-01', online: true }, machine]);
+
+      await expect(
+        resolveHootTargets(db, 's1', { requested: null, mentions: ['kiosk-02'] }),
+      ).resolves.toEqual({ ok: false, status, reason, machineIds: ['kiosk-02'] });
+    },
+  );
+
+  it('refuses an unknown mentioned machine with 400', async () => {
+    const { db } = createSiteMachinesDb(FLEET);
+
+    await expect(
+      resolveHootTargets(db, 's1', { requested: null, mentions: ['kiosk-99'] }),
+    ).resolves.toMatchObject({ status: 400, reason: 'unknown_machine', machineIds: ['kiosk-99'] });
+  });
+
+  it('refuses a malformed mention with 400 before reading the site', async () => {
+    const { db, machinesGet } = createSiteMachinesDb(FLEET);
+
+    await expect(
+      resolveHootTargets(db, 's1', { requested: null, mentions: ['kiosk-01/commands'] }),
+    ).resolves.toMatchObject({ status: 400, reason: 'invalid_target' });
+    expect(machinesGet).not.toHaveBeenCalled();
+  });
+});
+
 describe('buildExecutableTools', () => {
   it('creates an executable tool for each definition', () => {
     const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', 'm1', 'c1', allTools);
@@ -605,10 +944,11 @@ describe('buildExecutableTools', () => {
 
 /**
  * The tool layer owns: the delay/at arithmetic and its bounds, the exactly-one-of
- * gate, the `__site__` target a site-wide chat is recorded under, the refusal
- * when there is no chat identity to own the future turn, and the mapping of
- * every `cancelFollowup` outcome to something the model can read. The store owns
- * everything past that, so it is mocked.
+ * gate, the target a follow-up is filed against (the turn's own when it has one,
+ * else the one-machine-or-whole-site fallback), the refusal when there is no
+ * chat identity to own the future turn, and the mapping of every
+ * `cancelFollowup` outcome to something the model can read. The store owns
+ * everything past that — the never-widen legacy field included — so it is mocked.
  */
 describe('follow-up tools', () => {
   const NOW = Date.parse('2026-08-20T09:00:00.000Z');
@@ -660,7 +1000,7 @@ describe('follow-up tools', () => {
     expect(mockScheduleFollowup).toHaveBeenCalledWith(storeDb, {
       chatId: 'chat-1',
       siteId: 's1',
-      machineId: 'm1',
+      target: { machineIds: ['m1'] },
       userId: 'uid_alice',
       note: 'check whether the TD install finished',
       runAt: new Date('2026-08-20T09:30:00.000Z'),
@@ -708,7 +1048,7 @@ describe('follow-up tools', () => {
     expect(mockScheduleFollowup.mock.calls[0][1]).not.toHaveProperty('watchCommandId');
   });
 
-  it('records a site-wide chat under the `__site__` sentinel, not a fanned-out machine', async () => {
+  it('records a site-wide chat as the dynamic "all machines" target, not a fanned-out machine', async () => {
     // site mode hands executeServerSideTool the online machine list, so the
     // target has to arrive by its own route or every site chat's follow-up
     // would be filed against whichever machine happened to be first.
@@ -717,7 +1057,47 @@ describe('follow-up tools', () => {
       delay_minutes: 60,
     });
 
-    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({ machineId: '__site__' });
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({
+      target: { machineIds: null },
+    });
+  });
+
+  it('files the follow-up against the turn\'s own target, not the site sentinel', async () => {
+    // A subset turn runs in fan-out mode, where the legacy `chatMachineId` can
+    // only say `__site__`. Without the turn's target the promise would come back
+    // across the WHOLE site — including machines the user never ticked.
+    await followupTools(
+      { ...CHAT_OPTIONS, followupTarget: { machineIds: ['m2', 'm3'] } },
+      { siteMode: true },
+    ).schedule_followup.execute({ note: 'check both walls again', delay_minutes: 20 });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({
+      target: { machineIds: ['m2', 'm3'] },
+    });
+  });
+
+  it('lets the turn\'s target narrow a single-machine chat too', async () => {
+    await followupTools({
+      ...CHAT_OPTIONS,
+      followupTarget: { machineIds: ['m9'] },
+    }).schedule_followup.execute({ note: 'check back', delay_minutes: 5 });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({
+      target: { machineIds: ['m9'] },
+    });
+  });
+
+  it('refuses an empty target rather than filing a follow-up with no machines', async () => {
+    // An empty selection is allowed transiently in the picker with send
+    // disabled; reaching a write path with one is a bug, and the store's legacy
+    // field would have to widen it to the site.
+    const result = await followupTools({
+      ...CHAT_OPTIONS,
+      followupTarget: { machineIds: [] },
+    }).schedule_followup.execute({ note: 'check back', delay_minutes: 5 });
+
+    expect(result).toMatchObject({ ok: false, error: 'followup_unavailable' });
+    expect(mockScheduleFollowup).not.toHaveBeenCalled();
   });
 
   it('records the turn\'s tier ceiling so the fired turn cannot out-reach it', async () => {

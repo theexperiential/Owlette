@@ -121,7 +121,7 @@ describe('scheduleFollowup', () => {
     const result = await scheduleFollowup(db, {
       chatId: 'chat-1',
       siteId: 'node-pa',
-      machineId: 'lobby-01',
+      target: { machineIds: ['lobby-01'] },
       userId: 'user-1',
       note: 'check whether the render finished',
       runAt,
@@ -131,6 +131,7 @@ describe('scheduleFollowup', () => {
     expect(added).toHaveBeenCalledWith({
       chatId: 'chat-1',
       siteId: 'node-pa',
+      targetMachineIds: ['lobby-01'],
       machineId: 'lobby-01',
       userId: 'user-1',
       note: 'check whether the render finished',
@@ -140,11 +141,67 @@ describe('scheduleFollowup', () => {
     });
   });
 
+  it('records a subset target under a legacy machineId that cannot widen', async () => {
+    // The legacy field is what a sweep on an older instance reads (a rollback, a
+    // half-finished deploy). Left as the site sentinel, a follow-up scheduled in
+    // a two-machine chat would fire across the WHOLE site; the target's first
+    // machine makes the worst case a narrowing, never a widening.
+    await scheduleFollowup(db, {
+      chatId: 'chat-1',
+      siteId: 'node-pa',
+      target: { machineIds: ['kiosk-02', 'kiosk-03'] },
+      userId: 'user-1',
+      note: 'check both walls again',
+      runAt: new Date(),
+    });
+
+    expect(added).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetMachineIds: ['kiosk-02', 'kiosk-03'],
+        machineId: 'kiosk-02',
+      }),
+    );
+  });
+
+  it('records a site-wide target as the dynamic null plus the sentinel', async () => {
+    // `null` stays null so a machine added later joins the follow-up (D-D), and
+    // the sentinel keeps an old sweep firing site-wide, exactly as asked.
+    await scheduleFollowup(db, {
+      chatId: 'chat-1',
+      siteId: 'node-pa',
+      target: { machineIds: null },
+      userId: 'user-1',
+      note: 'sweep the fleet again',
+      runAt: new Date(),
+    });
+
+    expect(added).toHaveBeenCalledWith(
+      expect.objectContaining({ targetMachineIds: null, machineId: '__site__' }),
+    );
+  });
+
+  it('refuses an empty target rather than writing one that reads as site-wide', async () => {
+    // `[]` has no legacy encoding: `machineId` would have to be the sentinel, so
+    // an empty selection would come back as every machine in the site.
+    await expect(
+      scheduleFollowup(db, {
+        chatId: 'chat-1',
+        siteId: 'node-pa',
+        target: { machineIds: [] },
+        userId: 'user-1',
+        note: 'check back',
+        runAt: new Date(),
+      }),
+    ).rejects.toThrow(/empty machine set/);
+
+    expect(added).not.toHaveBeenCalled();
+  });
+
   it('stores watchCommandId only when one was given', async () => {
     await scheduleFollowup(db, {
       chatId: 'chat-1',
       siteId: 'node-pa',
-      machineId: 'lobby-01',
+      target: { machineIds: ['lobby-01'] },
       userId: 'user-1',
       note: 'report when the install lands',
       runAt: new Date(),
@@ -163,7 +220,7 @@ describe('scheduleFollowup', () => {
     const base = {
       chatId: 'chat-1',
       siteId: 'node-pa',
-      machineId: 'lobby-01',
+      target: { machineIds: ['lobby-01'] },
       userId: 'user-1',
       note: 'check back on the install',
       runAt: new Date(),
