@@ -12,9 +12,11 @@ interface HootApprovalToggleProps {
 
 /**
  * Site-wide admin toggle for the tier-3 approval gate. When ON (default),
- * privileged tool calls pause for in-chat approval and admin single-machine
- * chats route server-side so the gate can fire. Turning it OFF restores local
- * Hoot's lower latency at the cost of the safety gate.
+ * privileged tool calls pause for in-chat approval before they run. Turning it
+ * OFF drops that gate, and on the PUBLIC conversations API it re-opens the
+ * lower-latency local hoot path (`lib/hootStream.server.ts:156-162`). The
+ * dashboard chat is unaffected either way: it always runs server-side through
+ * `lib/hoot/turnRunner.server.ts`.
  */
 export function HootApprovalToggle({ siteId }: HootApprovalToggleProps) {
   const { requireApproval } = useHootApprovalSetting(siteId);
@@ -88,7 +90,7 @@ export function HootApprovalToggle({ siteId }: HootApprovalToggleProps) {
         onOpenChange={setConfirmOpen}
         title="disable tier-3 approval site-wide?"
         description={
-          'privileged tool calls (run_powershell, execute_script, restart, etc.) will run immediately without in-chat approval for everyone on this site. admin single-machine chats may also resume using local hoot. only turn this off if the approval prompts are getting in the way.'
+          'privileged tool calls (run_powershell, execute_script, restart, etc.) will run immediately without in-chat approval for everyone on this site. the lower-latency local hoot path also becomes available again on the public conversations API; the dashboard chat is unaffected. only turn this off if the approval prompts are getting in the way.'
         }
         confirmText="disable approval"
         cancelText="cancel"
