@@ -1012,7 +1012,10 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                     >
                       <CollapsibleTrigger asChild>
                         <button
-                          className="w-full flex items-center gap-1 px-3 py-2.5 mt-1.5 first:mt-0 cursor-pointer hover:bg-accent/30 transition-colors"
+                          // btn-sweep, not a flat hover tint: these are the only
+                          // clickable rows in the sidebar that were fading in a
+                          // colour while every Button in the app sweeps.
+                          className="btn-sweep w-full flex items-center gap-1 px-3 py-2.5 mt-1.5 first:mt-0 cursor-pointer"
                         >
                           <ChevronRight className={`h-3 w-3 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/50'}`} />
                           <span className={`text-xs font-medium uppercase tracking-wider ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground'}`}>
@@ -1086,28 +1089,37 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               row wraps instead: the target selector, the offline warning and the
               approval/power toggles cannot share a single 366px line. */}
           <div className="min-h-12 md:h-12 px-3 py-2 md:py-0 border-b border-border flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-2">
-            {/* Mobile: the only entry point to conversation history and "new
-                conversation", both of which live in the sheet at this width. */}
-            <button
+            {/* Two icon controls, one per breakpoint: below `md` the only entry
+                point to conversation history and "new conversation" (both live
+                in the sheet at that width), above it the sidebar collapse. Both
+                take the same props and classes as the sidebar header's search
+                and collapse-all icons — one family of icon controls across the
+                two panes, sharing the ghost sweep and the 32px box instead of
+                each holding a hover tint of its own. */}
+            <Button
               onClick={() => setMobileConversationsOpen(true)}
+              variant="ghost"
+              size="icon"
               aria-label="conversations"
-              className="md:hidden p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+              className="md:hidden h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
             >
               <PanelLeftOpen className="h-4 w-4" />
-            </button>
+            </Button>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <Button
                   onClick={() => setSidebarOpen((prev) => !prev)}
+                  variant="ghost"
+                  size="icon"
                   aria-label={sidebarOpen ? 'hide hoot sidebar' : 'show hoot sidebar'}
-                  className="hidden md:flex p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+                  className="hidden md:inline-flex h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                 >
                   {sidebarOpen ? (
                     <PanelLeftClose className="h-4 w-4" />
                   ) : (
                     <PanelLeftOpen className="h-4 w-4" />
                   )}
-                </button>
+                </Button>
               </TooltipTrigger>
               <TooltipContent>
                 <p>{sidebarOpen ? 'hide sidebar' : 'show sidebar'}</p>
