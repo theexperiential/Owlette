@@ -53,6 +53,14 @@ interface ChatInputProps {
    * wired targeting yet is unaffected.
    */
   mentionOptions?: MentionMachine[];
+  /**
+   * Refuse to send even when there is something to send: the chat has no
+   * machines to send TO — an empty selection, or a stored target that could not
+   * be read (D-G, and the fail-closed read in `lib/hoot/target.ts`). Typing
+   * stays available, because picking machines is what clears it, and the caller
+   * says WHY beside the picker the user fixes it in.
+   */
+  sendDisabled?: boolean;
 }
 
 export function ChatInput({
@@ -65,6 +73,7 @@ export function ChatInput({
   onPasteImage,
   onRemoveImage,
   mentionOptions = NO_MENTION_OPTIONS,
+  sendDisabled = false,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
@@ -110,7 +119,7 @@ export function ChatInput({
   }, [input]);
 
   const canSend =
-    (input.trim() || pendingImages.some((i) => !i.uploading)) && !isLoading;
+    (input.trim() || pendingImages.some((i) => !i.uploading)) && !isLoading && !sendDisabled;
 
   const hasMentionOptions = mentionOptions.length > 0;
 

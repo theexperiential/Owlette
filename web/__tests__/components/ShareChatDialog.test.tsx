@@ -276,7 +276,7 @@ describe('ShareChatDialog', () => {
 
     expect(screen.getByText("your messages and hoot's replies, as text")).toBeInTheDocument();
     expect(screen.getByText('the title "deployment triage"')).toBeInTheDocument();
-    expect(screen.getByText('the machine name "STUDIO-01"')).toBeInTheDocument();
+    expect(screen.getByText('the target name "STUDIO-01"')).toBeInTheDocument();
     // One tool call in the fixture, one image.
     expect(
       screen.getByText('tool calls as one line each — name and outcome (1 collapsed)'),
@@ -347,11 +347,22 @@ describe('ShareChatDialog', () => {
     expect(screen.queryByText('tool inputs and outputs')).toBeNull();
   });
 
-  it('omits the machine-name line for a chat with no target', async () => {
+  it('omits the target-name line for a chat with no target', async () => {
     renderDialog({ targetLabel: null });
 
     await screen.findByRole('dialog');
-    expect(screen.queryByText(/the machine name/)).toBeNull();
+    expect(screen.queryByText(/the target name/)).toBeNull();
+  });
+
+  // A chat can target a SET of machines, whose stored label is the collapsed
+  // list `chatTargetFields` writes. The line names whatever the label says
+  // instead of calling it one machine's name.
+  it('names a multi-machine target as it is stored', async () => {
+    const { user } = renderDialog({ targetLabel: 'STUDIO-01, STUDIO-02 +3' });
+
+    await screen.findByRole('dialog');
+    await user.click(screen.getByRole('button', { name: 'more' }));
+    expect(screen.getByText('the target name "STUDIO-01, STUDIO-02 +3"')).toBeInTheDocument();
   });
 
   it('previews the conversation text and the tool NAME — never the tool output', async () => {

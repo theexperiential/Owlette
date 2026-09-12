@@ -1,10 +1,32 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 import { TEST_USERS } from '../../helpers/seed';
 import {
   clearHootFixture,
   seedHootFixture,
 } from '../../helpers/coverageSeed';
+
+/**
+ * Leave exactly one machine ticked in the OPEN target picker, from whatever the
+ * picker started on.
+ *
+ * Not simply "clear the master row, then tick": the ticked set is persisted as
+ * the user's site preference the moment it changes, so the picker does NOT open
+ * on "all machines" a second time — not on a CI retry, and not in a later test
+ * on the same account. "all machines" is tri-state, and from anything less than
+ * everything it ticks all rather than clearing (`toggleAll`, web/lib/hoot/target.ts),
+ * so a fixed two-click recipe would leave several machines ticked and no
+ * single-machine affordances to assert. Filling it first when it isn't full
+ * makes the clearing click deterministic from any state.
+ */
+async function aimAtOnly(page: Page, machine: RegExp): Promise<void> {
+  const allMachines = page.getByRole('menuitemcheckbox', { name: /^all machines/i });
+  if ((await allMachines.getAttribute('aria-checked')) !== 'true') {
+    await allMachines.click();
+  }
+  await allMachines.click();
+  await page.getByRole('menuitemcheckbox', { name: machine }).click();
+}
 
 test.describe('hoot key guard', () => {
   test.use(roleState('member'));
@@ -52,16 +74,24 @@ test.describe('hoot conversations and controls', () => {
     await expect(page.getByText('Deployment RCA')).toHaveCount(0);
   });
 
-  test('switches between site and machine targets and surfaces offline warnings', async ({ page }) => {
+  test('narrows the target to one machine and surfaces offline warnings', async ({ page }) => {
     await page.goto('/hoot');
-    await expect(page.getByLabel(/hoot target/i)).toBeVisible();
+    const target = page.getByLabel(/hoot target/i);
+    await expect(target).toBeVisible();
 
-    await page.getByLabel(/hoot target/i).click();
-    await page.getByRole('option', { name: /e2e-cortex-machine/i }).click();
+    // The picker is a checkbox menu and "all machines" is a value of its own,
+    // not a ticked box per machine — so clearing the master row is what leaves
+    // ONE machine ticked, and one machine is what the per-machine controls
+    // (the power toggle, the single-machine offline copy) render for. The menu
+    // stays open across toggles on purpose, hence one open and an Escape.
+    await target.click();
+    await aimAtOnly(page, /^e2e-cortex-machine/i);
+    await page.keyboard.press('Escape');
     await expect(page.getByText(/hoot active/i)).toBeVisible();
 
-    await page.getByLabel(/hoot target/i).click();
-    await page.getByRole('option', { name: /e2e-cortex-offline/i }).click();
+    await target.click();
+    await aimAtOnly(page, /^e2e-cortex-offline/i);
+    await page.keyboard.press('Escape');
     await expect(page.getByText(/machine is offline/i)).toBeVisible();
   });
 

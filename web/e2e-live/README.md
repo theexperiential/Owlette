@@ -165,9 +165,17 @@ never the model's wording.
 ### hoot — [`specs/hoot.spec.ts`](specs/hoot.spec.ts)
 
 As `smoke-siteadmin` (site admin of `smoke-live`, so tier-3 tools are on offer), each check in a
-new chat aimed at `smoke-stub-01`, which the target picker must list online. Every prompt names
-its tool, and every `POST /api/hoot` must target `smoke-live` / `smoke-stub-01` with exactly one
-question and answer 200.
+new chat aimed at `smoke-stub-01`, which the target picker must list online and with hoot on.
+Aiming clears the tri-state "all machines" row and then ticks the stub. The row is filled first
+when it opens partial — the ticked set is stored as the user's site preference, so it does not open
+full after the first chat, and from a partial set that row ticks all rather than clearing. Because
+`smoke-live` holds exactly that one machine, the tick collapses back to the dynamic "all machines"
+(a set covering the site is stored as `null`), which the server resolves to the same single
+machine. A site left holding a machine stranded by an earlier run gives the explicit subset
+instead, so the body assertion accepts either shape: `target.machineIds` `null` with the legacy
+`machineId` `__site__`, or `[smoke-stub-01]` with `machineId` `smoke-stub-01` — never a subset
+beside a widening legacy field. Every prompt names its tool, and every `POST /api/hoot` must carry
+`smoke-live` and exactly one question, and answer 200.
 
 - **Tool call** — "Use your get_system_info tool on this machine…". The turn's
   `chats/{id}/stream/current` ends `complete`, the stub log shows a completed `get_system_info`

@@ -283,8 +283,12 @@ export function ShareChatDialog({
                   preview's height. Clipped visually only: the full title is
                   still in the DOM for a screen reader. */}
               <li className="truncate">the title &quot;{snapshot.title}&quot;</li>
+              {/* One line for every shape the label takes: a machine, a set of
+                  them ("kiosk-01, kiosk-02 +3") or "All Machines". It is the
+                  chat's stored `machineName`, which a multi-machine chat writes
+                  as that collapsed list (chatTargetFields, lib/hoot/target.ts). */}
               {snapshot.targetLabel !== null && (
-                <li>the machine name &quot;{snapshot.targetLabel}&quot;</li>
+                <li>the target name &quot;{snapshot.targetLabel}&quot;</li>
               )}
               <li>
                 tool calls as one line each — name and outcome (

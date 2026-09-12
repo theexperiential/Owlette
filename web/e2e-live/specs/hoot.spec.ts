@@ -306,14 +306,32 @@ function isPostTo(pathname: string): (request: Request) => boolean {
 /** /hoot in a fresh page is a new chat. Aim it at the stub, which the picker must list online. */
 async function openChatOnStub(page: Page): Promise<void> {
   await page.goto('/hoot');
-  const target = page.getByRole('main').getByRole('combobox', { name: 'hoot target' });
+  const target = page.getByRole('main').getByRole('button', { name: 'hoot target' });
   await target.click();
-  const option = page.getByRole('option', { name: STUB_MACHINE_ID });
-  await expect(option, `${STUB_MACHINE_ID} is not a hoot target; is the stub agent running?`).toBeVisible();
+  const row = page.getByRole('menuitemcheckbox', { name: new RegExp(`^${STUB_MACHINE_ID}`) });
+  await expect(row, `${STUB_MACHINE_ID} is not a hoot target; is the stub agent running?`).toBeVisible();
   // The picker's online rule is the dashboard's: the flag plus a heartbeat younger than 300 s.
-  await expect(option, `${STUB_MACHINE_ID} is listed offline; its heartbeat stopped`).not.toContainText('offline');
-  await option.click();
-  await expect(target).toContainText(STUB_MACHINE_ID);
+  await expect(row, `${STUB_MACHINE_ID} is listed offline; its heartbeat stopped`).not.toContainText('offline');
+  // D-A: a machine with hoot switched off is skipped at dispatch, so a turn aimed at one would
+  // never reach the stub.
+  await expect(row, `hoot is switched off on ${STUB_MACHINE_ID}`).not.toContainText('hoot off');
+  // The rows are checkboxes, so clicking the stub while it is already ticked would UNtick it:
+  // clear the master row, then tick the stub. AIMED_AT_STUB says what that leaves.
+  //
+  // The master row is NOT reliably full when the picker opens — the ticked set is stored as this
+  // user's site preference the moment it changes, and this helper runs several times per run. It
+  // is tri-state, and from anything less than everything it ticks ALL rather than clearing
+  // (`toggleAll`, web/lib/hoot/target.ts), so filling it first when it isn't full is what makes
+  // the clearing click deterministic. On a site left holding a machine stranded by an earlier run,
+  // a fixed two-click recipe aimed the second chat at the STRANDED machine instead.
+  const allMachines = page.getByRole('menuitemcheckbox', { name: /^all machines/ });
+  if ((await allMachines.getAttribute('aria-checked')) !== 'true') {
+    await allMachines.click();
+  }
+  await allMachines.click();
+  await row.click();
+  await page.keyboard.press('Escape');
+  await expect(target).toContainText(new RegExp(`${STUB_MACHINE_ID}|all machines`));
 }
 
 /** The body POST /api/hoot carries (buildHootRequestBody, web/lib/hoot/requestBody.ts). */
@@ -321,8 +339,26 @@ interface HootRequestBody {
   chatId?: unknown;
   siteId?: unknown;
   machineId?: unknown;
+  target?: { machineIds?: unknown; mentions?: unknown };
   messages?: unknown;
 }
+
+/**
+ * The two shapes a chat aimed at the stub can send: the new target field, plus the legacy single
+ * `machineId` an instance still running the old route would read.
+ *
+ * smoke-live holds exactly one machine, so ticking it IS "all machines" — a set covering the site
+ * collapses back to the dynamic null (`normalizeSelection`), which the server resolves to that one
+ * machine (`effectiveFanOut`, web/lib/hoot/target.ts). A site left holding a machine stranded by an
+ * earlier run yields the explicit subset instead. Neither can reach anything but the stub — a
+ * stranded machine has no agent, so it is offline and skipped — and neither widens: the legacy
+ * field carries the sentinel only when the target really is every machine, and otherwise narrows
+ * to one id.
+ */
+const AIMED_AT_STUB = [
+  { machineIds: null, machineId: '__site__' },
+  { machineIds: [STUB_MACHINE_ID], machineId: STUB_MACHINE_ID },
+];
 
 /**
  * Send `prompt` from the composer and return the id of the chat it went to. The request the
@@ -342,10 +378,15 @@ async function sendPrompt(page: Page, prompt: string): Promise<string> {
   const questions = Array.isArray(body.messages)
     ? body.messages.filter((message: { role?: unknown } | null) => message?.role === 'user').length
     : 0;
-  expect({ siteId: body.siteId, machineId: body.machineId, questions }, 'POST /api/hoot').toEqual({
+  expect({ siteId: body.siteId, questions }, 'POST /api/hoot').toEqual({
     siteId: SITE_ID,
-    machineId: STUB_MACHINE_ID,
     questions: 1,
+  });
+  // A missing `target.machineIds` fails this rather than reading as "all machines": toEqual
+  // treats an absent property as undefined, which matches neither shape.
+  expect(AIMED_AT_STUB, 'POST /api/hoot target').toContainEqual({
+    machineIds: body.target?.machineIds,
+    machineId: body.machineId,
   });
   if (typeof body.chatId !== 'string' || body.chatId === '') {
     throw new Error('POST /api/hoot carried no chatId');

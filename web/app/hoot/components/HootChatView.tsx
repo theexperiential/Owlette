@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
-import { useOwletteChat, type ChatConversation } from '@/hooks/useHoot';
+import { useOwletteChat, type ChatConversation, type ChatLoadedTarget } from '@/hooks/useHoot';
 import {
   useHootSidebarPrefs,
   HOOT_SIDEBAR_DEFAULT_WIDTH,
@@ -22,7 +22,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ChatWindow } from './ChatWindow';
 import { ChatInput } from './ChatInput';
-import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
+import { MachineTargetPicker } from './MachineTargetPicker';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
 import { ShareChatDialog } from './ShareChatDialog';
@@ -30,7 +30,13 @@ import { ConversationResizeHandle } from './ConversationResizeHandle';
 import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
-import type { HootTarget } from '@/lib/hoot/target';
+import {
+  SITE_TARGET_ID,
+  effectiveFanOut,
+  formatTargetLabel,
+  normalizeSelection,
+  type HootTarget,
+} from '@/lib/hoot/target';
 import type { LastMachineSelection } from '@/contexts/AuthContext';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { HootIcon } from '@/components/icons/HootIcon';
@@ -45,18 +51,56 @@ const SIDEBAR_RESIZE_STEP = 16;
 const PANEL_WIDTH_VAR = '--hoot-panel-w';
 
 /**
- * Wave 4.3 adapters. The chat hook targets a SET of machines now; this screen
- * still drives one id through `MachineSelector`, so the two are bridged here
- * until 6.1 swaps in the checkbox picker and drops both helpers.
+ * Every machine in the site, DYNAMICALLY (`machineIds: null`) — what a chat
+ * targets until the user says otherwise, and what a machine added later joins.
  */
-function targetFor(machineId: string): HootTarget {
-  return machineId === SITE_TARGET_ID ? { machineIds: null } : { machineIds: [machineId] };
+const ALL_MACHINES: HootTarget = { machineIds: null };
+
+/**
+ * Nothing ticked. Legal while the user is picking (D-G) and while a chat's own
+ * target is unreadable — send is refused either way, and it is never persisted
+ * or dispatched.
+ */
+const NO_MACHINES: HootTarget = { machineIds: [] };
+
+/**
+ * The cross-device preference (`users/{uid}.lastMachineIds[siteId]`) as a
+ * target. Entries predating multi-machine targeting are a single id or the site
+ * sentinel; AuthContext has already dropped anything that is neither a string
+ * nor a non-empty list of them. `null` means "no usable preference stored".
+ */
+function storedSelectionToTarget(stored: LastMachineSelection | undefined): HootTarget | null {
+  if (typeof stored === 'string') {
+    return stored === SITE_TARGET_ID ? ALL_MACHINES : { machineIds: [stored] };
+  }
+  if (Array.isArray(stored) && stored.length > 0) return { machineIds: [...stored] };
+  return null;
 }
 
-/** The stored selection can be a set; this screen takes its first machine. */
-function firstMachineId(selection: LastMachineSelection | undefined): string | undefined {
-  if (typeof selection === 'string') return selection;
-  return Array.isArray(selection) ? selection[0] : undefined;
+/** The inverse: "all machines" keeps writing the sentinel old entries used. */
+function selectionToStored(target: HootTarget): LastMachineSelection {
+  return target.machineIds ?? SITE_TARGET_ID;
+}
+
+/**
+ * A conversation row's target, for the sidebar. `targetMachineIds` is null both
+ * for a site-wide chat and for a doc whose target could not be read, so the
+ * stored type breaks the tie rather than labelling an unreadable chat "all
+ * machines" — the one label that would overstate its reach.
+ */
+function conversationTargetLabel(conversation: ChatConversation): string {
+  const ids = conversation.targetMachineIds;
+  if (ids !== null) {
+    // A talon machine chat stores the machine's DISPLAY name rather than its id
+    // (`hootOutput.server.ts`), and that is the label it carries everywhere else
+    // — both sides of a share included. It stands in for ONE id only: for two or
+    // more, the stored name is the same collapsed list `formatTargetLabel`
+    // builds, and for a site chat it is `All Machines` in title case.
+    if (ids.length === 1 && conversation.machineName) return conversation.machineName;
+    return formatTargetLabel(ids);
+  }
+  if (conversation.targetType === 'site') return formatTargetLabel(null);
+  return conversation.machineName || 'unknown machine';
 }
 
 function timeAgo(date: Date): string {
@@ -126,7 +170,15 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isSuperadmin);
 
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
-  const [selectedMachineId, setSelectedMachineId] = useState<string>(SITE_TARGET_ID);
+  // What the user ticked, verbatim. Pruning against the site's machines happens
+  // in a memo below, never here: a selection restored from a chat doc arrives
+  // before the machine listing it would be pruned against.
+  const [selection, setSelection] = useState<HootTarget>(ALL_MACHINES);
+  // The chat whose stored target could not be read, if any. Such a chat refuses
+  // to build a request body at all (requestBody.ts), so the header says so and
+  // send stays off until the user picks machines — never a silent fall back to
+  // every machine in the site.
+  const [unreadableChatId, setUnreadableChatId] = useState<string | null>(null);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<'profile' | 'hoot'>('profile');
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
@@ -197,43 +249,83 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  const { machines } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading } = useMachines(currentSiteId);
+
+  const siteMachineIds = useMemo(() => machines.map((m) => m.machineId), [machines]);
+  // An EMPTY listing counts as "not known yet", not as "this site has none":
+  // the listener returns empty for a site still attaching (and for every render
+  // with no Firestore configured), and pruning against it would empty a valid
+  // selection. A site that really has no machines can't be sent to anyway.
+  const machinesLoaded = !machinesLoading && machines.length > 0;
+  // The header's selection as it applies to THIS site: ids that have left it
+  // drop out, and a set covering every machine collapses back to the dynamic
+  // "all". A memo, not an effect — deriving state in an effect is both a render
+  // loop and a lint error (react-hooks/set-state-in-effect).
+  const siteSelection = useMemo(
+    () => normalizeSelection(selection, siteMachineIds, machinesLoaded),
+    [selection, siteMachineIds, machinesLoaded],
+  );
+  // One shape for the picker and the composer's `@` vocabulary. `cortexEnabled`
+  // is the kill switch (absent means on, matching the server's default).
+  const machineOptions = useMemo(
+    () =>
+      machines.map((m) => ({
+        id: m.machineId,
+        online: m.online,
+        hootEnabled: m.cortexEnabled !== false,
+      })),
+    [machines],
+  );
+
+  // Set once a loaded chat has handed over its own selection, so the stored
+  // preference below can't overwrite it when the sites list resolves late. The
+  // pin — not the header — addresses a send, so a header that disagreed with it
+  // would name machines the next turn doesn't reach.
+  const selectionAdoptedRef = useRef(false);
+
+  // Site of a deep-linked chat the header could not follow yet, applied below
+  // once the sites listing lands. A chat read is ONE Firestore hop and fires on
+  // mount; `useSites` is two behind it (the user doc and the membership listener
+  // first), so on a cold load `sites` is still empty when the chat arrives and
+  // "is this site one of mine" cannot be answered. Dropping the site there left
+  // the header on `lastSiteId` with the chat's own machines pruned away against
+  // it — a conversation open with send disabled and a picker naming another
+  // site's machines.
+  const pendingChatSiteIdRef = useRef<string | null>(null);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
-    if (sites.length > 0 && !currentSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      const siteId = savedSite && sites.some((s) => s.id === savedSite) ? savedSite : sites[0].id;
-      setCurrentSiteId(siteId);
-      const savedMachineId = firstMachineId(lastMachineIds[siteId]);
-      if (savedMachineId) setSelectedMachineId(savedMachineId);
+    if (sites.length === 0 || currentSiteId) return;
+
+    // A chat the URL points at outranks the stored preference: it is the thing
+    // on screen, and its machines are the ones the picker has to show.
+    const pendingChatSiteId = pendingChatSiteIdRef.current;
+    if (pendingChatSiteId && sites.some((s) => s.id === pendingChatSiteId)) {
+      pendingChatSiteIdRef.current = null;
+      setCurrentSiteId(pendingChatSiteId);
+      return;
     }
+
+    const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
+    const siteId = savedSite && sites.some((s) => s.id === savedSite) ? savedSite : sites[0].id;
+    setCurrentSiteId(siteId);
+    if (selectionAdoptedRef.current) return;
+    const stored = storedSelectionToTarget(lastMachineIds[siteId]);
+    if (stored) setSelection(stored);
   }, [sites, currentSiteId, lastSiteId, lastMachineIds]);
 
   const handleSiteChange = (siteId: string) => {
-    const nextMachineId = firstMachineId(lastMachineIds[siteId]) || SITE_TARGET_ID;
+    const nextSelection = storedSelectionToTarget(lastMachineIds[siteId]) ?? ALL_MACHINES;
     setCurrentSiteId(siteId);
-    setSelectedMachineId(nextMachineId);
+    setSelection(nextSelection);
     updateLastSite(siteId);
-    // Start a fresh chat, mirroring the machine selector: the active chat is
-    // bound to the OLD site (it already left the sidebar and can't be sent to),
-    // so keeping it in front only invites a cross-site send (OWL-48).
-    handleNewChat({ siteId, selection: targetFor(nextMachineId) });
+    // Start a fresh chat. Unlike a change of TARGET — which continues the
+    // conversation in place — the active chat is bound to the OLD site (it has
+    // already left the sidebar and can't be sent to), so keeping it in front
+    // only invites a cross-site send (OWL-48).
+    handleNewChat({ siteId, selection: nextSelection });
   };
 
-  // Reset to "All Machines" if the saved machine no longer exists on this site
-  useEffect(() => {
-    if (
-      selectedMachineId !== SITE_TARGET_ID &&
-      machines.length > 0 &&
-      !machines.some((m) => m.machineId === selectedMachineId)
-    ) {
-      setSelectedMachineId(SITE_TARGET_ID);
-    }
-  }, [machines, selectedMachineId]);
-
-  const isSiteMode = selectedMachineId === SITE_TARGET_ID;
-  const selectedMachine = !isSiteMode ? machines.find((m) => m.machineId === selectedMachineId) : null;
   const suppressNextChatRouteRef = useRef(false);
   const skipNextLandingResetRef = useRef(false);
   // Id of the routed chat we've navigated away from while the URL still points at
@@ -252,17 +344,158 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     }
   }, [initialChatId, router]);
 
-  const selection = useMemo(() => targetFor(selectedMachineId), [selectedMachineId]);
-  const siteMachineIds = useMemo(() => machines.map((m) => m.machineId), [machines]);
+  // A chat carries its own target: adopt it into the header so the picker shows
+  // what the next turn in THIS conversation will reach. Deliberately not
+  // persisted — opening a conversation is not a change of preference.
+  const handleChatLoaded = useCallback((loaded: ChatLoadedTarget) => {
+    // A deep link can point at a chat in another site. Follow it in the header
+    // rather than showing this site's machines beside that chat's transcript —
+    // the conversation stays pinned to its own site either way (OWL-48), and
+    // following it must NOT start a new chat. Before the sites listing lands the
+    // header can't move yet, so the site is remembered and the restore effect
+    // above applies it.
+    if (loaded.siteId && loaded.siteId !== currentSiteId) {
+      if (sites.some((s) => s.id === loaded.siteId)) {
+        pendingChatSiteIdRef.current = null;
+        setCurrentSiteId(loaded.siteId);
+      } else {
+        pendingChatSiteIdRef.current = loaded.siteId;
+      }
+    } else {
+      pendingChatSiteIdRef.current = null;
+    }
+    if (loaded.target === 'invalid') {
+      // The picker ticks NOTHING for this chat (see `target` below) — it must
+      // not show machines this chat would reach, least of all "all machines".
+      // The site selection underneath is deliberately left standing: it is what
+      // the NEXT conversation starts from, and the paths that start one from
+      // here (browser-back, deleting this chat) never reach `handleNewChat`.
+      setUnreadableChatId(loaded.chatId);
+      return;
+    }
+    // Only a chat that HAS a readable selection hands one over; an unreadable
+    // one must still let the site's stored preference land underneath it.
+    selectionAdoptedRef.current = true;
+    setUnreadableChatId(null);
+    setSelection(loaded.target);
+  }, [currentSiteId, sites]);
 
   const chat = useOwletteChat({
     siteId: currentSiteId,
-    selection,
+    // The SITE selection, not what the picker shows: this is what a new chat is
+    // pinned from, and the paths that start one without going through
+    // `handleNewChat` (the landing reset, `deleteChat`) read exactly this. An
+    // unreadable chat's empty picker is display state and must not follow them
+    // into the next conversation.
+    selection: siteSelection,
     siteMachineIds,
     onChatPersisted: handleChatPersisted,
+    onChatLoaded: handleChatLoaded,
   });
   const activeChatId = chat.chatId;
   const loadChat = chat.loadChat;
+  const retargetActiveChat = chat.retargetActiveChat;
+
+  // Scoped to the chat it was read from, so it retires with that conversation:
+  // starting, deleting or opening another chat drops it without a reset of its
+  // own — including the browser-back landing reset, which never goes through
+  // handleNewChat.
+  const targetUnreadable = unreadableChatId !== null && unreadableChatId === chat.chatId;
+
+  // What the picker shows and what the next turn in THIS chat reaches. A chat
+  // whose stored target could not be read ticks nothing — derived rather than
+  // written into `selection`, so leaving that conversation restores the site's
+  // selection instead of carrying an empty picker into the next one.
+  const target = targetUnreadable ? NO_MACHINES : siteSelection;
+
+  // Keep the open chat's pin in step with a selection the SITE pruned. The pin
+  // is what a send is addressed with (OWL-48) and nothing else re-reads it, so
+  // a stored preference — or a chat's own stored target — naming a machine that
+  // has since left the site would otherwise sit there while the picker showed
+  // only the survivors, and every turn in that chat would 400 on the unknown id
+  // with nothing on screen to explain it.
+  //
+  // `normalizeSelection` returns the SAME object when it changed nothing
+  // (target.ts), so this fires exactly when pruning happened; `retargetActiveChat`
+  // writes a ref, so there is no render to loop on, and its own guard leaves a
+  // chat pinned to another site alone. Two cases are skipped because re-aiming
+  // them would replace a specific refusal with a vaguer one: an unreadable chat,
+  // whose pin is the fail-closed `'invalid'`, and a selection that pruned away
+  // to NOTHING, which has no encoding at all (D-G) and already shows as "pick at
+  // least one machine to send" with send disabled.
+  useEffect(() => {
+    if (!machinesLoaded || targetUnreadable || siteSelection === selection) return;
+    if (siteSelection.machineIds !== null && siteSelection.machineIds.length === 0) return;
+    retargetActiveChat(siteSelection);
+  }, [machinesLoaded, retargetActiveChat, selection, siteSelection, targetUnreadable]);
+
+  // Ticking a machine re-aims the conversation you are in: same id, same
+  // history, and the NEXT turn goes to the new set. It must never call
+  // handleNewChat — that was the one-target-per-chat model, where the only way
+  // to change target was to abandon the conversation.
+  const handleTargetChange = useCallback((next: HootTarget) => {
+    setSelection(next);
+    // The user has now said what this chat targets, so the unreadable stored
+    // one no longer decides anything.
+    setUnreadableChatId(null);
+    // D-G: an empty set is a transient picking state, never a preference.
+    const isEmpty = next.machineIds !== null && next.machineIds.length === 0;
+    if (currentSiteId && !isEmpty) {
+      updateLastMachine(currentSiteId, selectionToStored(next));
+    }
+    retargetActiveChat(next);
+  }, [currentSiteId, retargetActiveChat, updateLastMachine]);
+
+  // Which machines this selection points at. "All" is dynamic, so it is the
+  // whole listing — including any machine that joined the site since.
+  const targetedMachines = useMemo(() => {
+    const ids = target.machineIds;
+    return ids === null ? machines : machines.filter((m) => ids.includes(m.machineId));
+  }, [machines, target]);
+
+  // The single-machine path — process context in the prompt, unwrapped tool
+  // output, the power toggle and the exact offline copy — keys off the
+  // EFFECTIVE set, which is how a ONE-MACHINE SITE keeps it while showing "all
+  // machines" (the same rule the server resolves a turn with).
+  const singleTargetMachine =
+    !effectiveFanOut(target, machines.length) && targetedMachines.length === 1
+      ? targetedMachines[0]
+      : null;
+
+  // `[]` is legal while the user is picking (D-G) — with send disabled, and
+  // never persisted or sent.
+  const isEmptySelection = target.machineIds !== null && target.machineIds.length === 0;
+  const sendDisabled = targetUnreadable || isEmptySelection;
+
+  const targetWarning = useMemo((): string | null => {
+    if (targetUnreadable) return 'pick machines for this chat — its saved target could not be read';
+    if (isEmptySelection) return 'pick at least one machine to send';
+    // Nothing to say about reachability until this site's machines are known.
+    if (targetedMachines.length === 0) return null;
+
+    if (singleTargetMachine) {
+      // Pinned verbatim by e2e, and the copy this screen has always shown for a
+      // single machine.
+      if (!singleTargetMachine.online) {
+        return 'machine is offline — tool calls will not be delivered';
+      }
+      if (singleTargetMachine.cortexEnabled === false) {
+        return 'hoot is off on this machine — tool calls will not be delivered';
+      }
+      return null;
+    }
+
+    const offline = targetedMachines.filter((m) => !m.online).length;
+    const hootOff = targetedMachines.filter((m) => m.online && m.cortexEnabled === false).length;
+    const skipped = offline + hootOff;
+    if (skipped === 0) return null;
+    if (skipped === targetedMachines.length) {
+      return hootOff === 0
+        ? 'no machines online — tool calls will not be delivered'
+        : 'no machines with hoot on are online — tool calls will not be delivered';
+    }
+    return `${skipped} of ${targetedMachines.length} machines will be skipped — offline or hoot off`;
+  }, [targetUnreadable, isEmptySelection, targetedMachines, singleTargetMachine]);
 
   useEffect(() => {
     // Pathname committed (initialChatId moved off the stale id) — navigation
@@ -384,6 +617,9 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
       router.push('/hoot');
     }
 
+    // No selection override for the unreadable case: the empty picker is
+    // display state, and the hook already holds this site's selection — the
+    // same value the landing reset and `deleteChat` start their chat from.
     chat.startNewChat(overrides);
     sidebarScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [chat, initialChatId, router]);
@@ -877,29 +1113,14 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                 <p>{sidebarOpen ? 'hide sidebar' : 'show sidebar'}</p>
               </TooltipContent>
             </Tooltip>
-            <MachineSelector
-              machines={machines.map((m) => ({
-                id: m.machineId,
-                name: m.machineId,
-                online: m.online,
-              }))}
-              selectedMachineId={selectedMachineId}
-              onSelect={(id) => {
-                setSelectedMachineId(id);
-                updateLastMachine(currentSiteId, id);
-                handleNewChat({ selection: targetFor(id) });
-              }}
+            <MachineTargetPicker
+              machines={machineOptions}
+              selection={target}
+              onChange={handleTargetChange}
             />
 
-            {!isSiteMode && selectedMachine && !selectedMachine.online && (
-              <span className="text-xs text-yellow-500">
-                machine is offline — tool calls will not be delivered
-              </span>
-            )}
-            {isSiteMode && machines.length > 0 && machines.filter((m) => m.online).length === 0 && (
-              <span className="text-xs text-yellow-500">
-                no machines online — tool calls will not be delivered
-              </span>
+            {targetWarning && (
+              <span className="min-w-0 text-xs text-yellow-500">{targetWarning}</span>
             )}
 
             <div className="ml-auto flex items-center gap-2">
@@ -923,8 +1144,8 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               {currentSiteId && isSiteAdmin(currentSiteId) && (
                 <HootApprovalToggle siteId={currentSiteId} />
               )}
-              {!isSiteMode && selectedMachine && (
-                <HootPowerToggle siteId={currentSiteId} machine={selectedMachine} />
+              {currentSiteId && singleTargetMachine && (
+                <HootPowerToggle siteId={currentSiteId} machine={singleTargetMachine} />
               )}
             </div>
           </div>
@@ -940,7 +1161,10 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               onOpenSettings={() => setAccountSettingsOpen(true)}
               onToolApproval={(id, approved) => chat.addToolApprovalResponse({ id, approved })}
               onEditMessage={chat.editMessage}
-              approvalTargetLabel={isSiteMode ? 'all machines' : selectedMachineId}
+              /* Fallback only: a message stamped with its own turn metadata
+                 names the machines THAT turn reached (5.3). This labels the
+                 older ones, which carry none. */
+              approvalTargetLabel={formatTargetLabel(target.machineIds)}
               toolCommands={chat.toolCommands}
               onCancelTool={handleCancelTool}
               cancelPendingCommandIds={cancelPendingCommandIds}
@@ -1034,6 +1258,11 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               pendingImages={chat.pendingImages}
               onPasteImage={chat.handlePasteImage}
               onRemoveImage={chat.removePendingImage}
+              mentionOptions={machineOptions}
+              /* No target, no send: an empty selection has no encoding and an
+                 unreadable one refuses to build a body at all (requestBody.ts).
+                 `targetWarning` beside the picker says which it is. */
+              sendDisabled={sendDisabled}
             />
           )}
         </main>
@@ -1307,7 +1536,7 @@ function ConversationItem({
             )}
           </div>
           <p className="text-xs text-muted-foreground flex items-center gap-1">
-            <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
+            <span className="truncate">{conversationTargetLabel(conversation)}</span>
             <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
           </p>
         </div>

@@ -114,14 +114,17 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         await expect(settingsDialog).not.toBeVisible();
         await page.waitForTimeout(400);
 
-        // [b03] point it at something (~18.7s). Opening the selector is enough —
-        // switching the target here would reset the chat before b04 films it.
+        // [b03] point it at something (~18.7s). Opening the picker is enough —
+        // the master row is what the narration is about, and leaving the chat's
+        // target alone keeps b04's thread intact.
         const machineSelector = page.getByLabel('hoot target');
         await centerInView(page, machineSelector);
         await highlight(page, machineSelector, 1800);
         await clickWithCursor(page, machineSelector);
         await page.waitForTimeout(400);
-        const allMachinesOption = page.getByRole('option', { name: /All Machines/i }).first();
+        const allMachinesOption = page
+          .getByRole('menuitemcheckbox', { name: /^all machines/i })
+          .first();
         await expect(allMachinesOption).toBeVisible();
         await highlight(page, allMachinesOption, 1600);
         await narrate(page, 'b03 all machines vs one machine', 4.2);
@@ -188,18 +191,25 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         await highlight(page, approvalToggle, 2400);
         await narrate(page, 'b06 role ceiling + the site-wide approval gate', 12);
 
-        // The per-machine switch only renders for a SINGLE selected machine, so
-        // the target has to move off "all machines". Switching the target opens
-        // a FRESH conversation and empties the thread — that is the product
-        // behaviour b03 already narrated, so it reads as intentional here rather
-        // than as the chat losing its history.
+        // The per-machine switch only renders for a SINGLE targeted machine, so
+        // the target has to move off "all machines": clear the master row, then
+        // tick the one machine. The conversation itself stays put now — a tick
+        // re-aims the open chat instead of starting another. (The b03/b06
+        // narration still says switching opens a fresh conversation; Task 7.1
+        // flags that line for the next render.)
         const machineSelectorAgain = page.getByLabel('hoot target');
         await clickWithCursor(page, machineSelectorAgain);
         await page.waitForTimeout(400);
         await clickWithCursor(
           page,
-          page.getByRole('option', { name: /media-server-stage/i }).first(),
+          page.getByRole('menuitemcheckbox', { name: /^all machines/i }).first(),
         );
+        await page.waitForTimeout(300);
+        await clickWithCursor(
+          page,
+          page.getByRole('menuitemcheckbox', { name: /^media-server-stage/i }).first(),
+        );
+        await page.keyboard.press('Escape');
         await page.waitForTimeout(600);
         const hootToggle = page.getByRole('button', { name: /hoot (active|inactive)/i });
         await expect(hootToggle).toBeVisible();
