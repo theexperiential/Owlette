@@ -21,7 +21,11 @@
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { timestampToMs } from '@/lib/firestoreTime.server';
-import { neverWidenLegacyMachineId, type HootTarget } from '@/lib/hoot/target';
+import {
+  SITE_TARGET_ID,
+  neverWidenLegacyMachineId,
+  type HootTarget,
+} from '@/lib/hoot/target';
 import type { ToolTier } from '@/lib/mcp-tools';
 
 /** Data at rest — see the WIRE_NAMES note above before renaming. */
@@ -49,7 +53,10 @@ export interface FollowupDoc {
   userId: string;
   note: string;
   runAt: unknown;
-  /** A command whose completion fires this follow-up early. */
+  /**
+   * A command whose completion fires this follow-up early. Only meaningful for
+   * a single-machine target — see {@link watchedMachineId}.
+   */
   watchCommandId?: string;
   /**
    * The scheduling turn's effective tool-tier ceiling. The fired turn is capped
@@ -106,6 +113,39 @@ const LIST_LIMIT = 50;
 
 export function followupsCollection(db: Firestore) {
   return db.collection(FOLLOWUPS_COLLECTION);
+}
+
+/**
+ * The target a follow-up was scheduled against (D-D). Reading the doc's own
+ * shape lives here, beside the writer that produced it.
+ *
+ * The recorded list wins whenever it is present — including an explicit `null`,
+ * the dynamic "every machine in the site", which is why the check is on
+ * `undefined` and not on truthiness. Docs written before targets were recorded
+ * carry only the legacy `machineId`, which reads as one machine or the site.
+ */
+export function scheduledTarget(followup: FollowupDoc): HootTarget {
+  if (followup.targetMachineIds !== undefined) {
+    return { machineIds: followup.targetMachineIds };
+  }
+  return followup.machineId === SITE_TARGET_ID
+    ? { machineIds: null }
+    : { machineIds: [followup.machineId] };
+}
+
+/**
+ * The machine an early fire may watch, or `null` when there is none.
+ *
+ * `watchCommandId` names ONE entry in ONE machine's `commands/completed`
+ * document, so it can only stand in for the schedule when the follow-up targets
+ * exactly one machine. A subset or site-wide follow-up has no single command
+ * that means "the work finished" — watching its first machine would fire the
+ * turn while the others were still running — so it waits for its own `runAt`.
+ */
+export function watchedMachineId(followup: FollowupDoc): string | null {
+  if (!followup.watchCommandId) return null;
+  const ids = scheduledTarget(followup).machineIds;
+  return ids !== null && ids.length === 1 ? ids[0] : null;
 }
 
 function toSummary(id: string, data: FollowupDoc): FollowupSummary {

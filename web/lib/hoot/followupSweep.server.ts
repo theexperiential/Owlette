@@ -27,6 +27,12 @@
  * `schedule_followup`. So the scheduling turn's own ceiling rides on the doc
  * (`maxToolTier`) and the fire takes the lower of the two.
  *
+ * The TARGET is re-validated the same way and from the same place: a follow-up
+ * fires on the set it was scheduled with (D-D) — not on the chat's current
+ * selection, which may have moved since — minus whatever has left the site,
+ * gone offline or had hoot switched off in the meantime. Nothing left fails the
+ * follow-up instead of starting a turn that can reach nobody.
+ *
  * Tier 3 always waits for a person (plan decision 9). Unlike a talon this is a
  * forced approval gate, not a tier-2 ceiling: the model may still reach for a
  * tier-3 tool, and the turn parks at approval-requested for the owner to answer
@@ -61,11 +67,17 @@ import {
   TurnActiveError,
 } from '@/lib/hoot/turnStore.server';
 import {
-  SITE_TARGET_ID,
+  formatTargetLabel,
   neverWidenLegacyMachineId,
   type HootTarget,
+  type ResolvedTargets,
 } from '@/lib/hoot/target';
-import { followupsCollection, type FollowupDoc } from '@/lib/hoot/followupStore.server';
+import {
+  followupsCollection,
+  scheduledTarget,
+  watchedMachineId,
+  type FollowupDoc,
+} from '@/lib/hoot/followupStore.server';
 import logger from '@/lib/logger';
 
 /** Turns started per sweep; a backlog drains over the following minutes. */
@@ -137,24 +149,28 @@ function readChatHistory(chat: Record<string, unknown>): UIMessage[] {
  * Has the command this follow-up is watching reached a terminal state? Best
  * effort — a read failure just means no early fire this minute.
  *
- * Site-wide chats are skipped: one `watchCommandId` cannot name a command
- * across a fan-out, so those follow-ups wait for their `runAt`.
+ * Only a single-machine follow-up has a command to watch ({@link
+ * watchedMachineId}); every other one waits for its `runAt`.
  */
 async function watchedCommandFinished(db: Firestore, followup: FollowupDoc): Promise<boolean> {
-  if (!followup.watchCommandId || followup.machineId === SITE_TARGET_ID) return false;
+  // `watchedMachineId` already requires the command id; it is re-read here only
+  // so the lookup below narrows to a string.
+  const machineId = watchedMachineId(followup);
+  const commandId = followup.watchCommandId;
+  if (!machineId || !commandId) return false;
 
   try {
     const snapshot = await db
       .collection('sites')
       .doc(followup.siteId)
       .collection('machines')
-      .doc(followup.machineId)
+      .doc(machineId)
       .collection('commands')
       .doc('completed')
       .get();
 
     if (!snapshot.exists) return false;
-    const entry = (snapshot.data() ?? {})[followup.watchCommandId] as
+    const entry = (snapshot.data() ?? {})[commandId] as
       | Record<string, unknown>
       | undefined;
     const status = entry?.status;
@@ -164,19 +180,52 @@ async function watchedCommandFinished(db: Firestore, followup: FollowupDoc): Pro
   }
 }
 
+/** A follow-up's target as it stands at fire time, or why it can no longer fire. */
+type FollowupTargetResolution =
+  | { ok: true; target: HootTarget; resolved: ResolvedTargets }
+  | { ok: false; turnError: string };
+
 /**
- * The target a follow-up was scheduled against. The recorded list wins whenever
- * it is present — including an explicit `null`, which is the dynamic "every
- * machine in the site". Docs written before targets were recorded have only the
- * legacy single `machineId`, which reads as one machine or the whole site.
+ * Where the follow-up was promised (D-D), re-validated NOW.
+ *
+ * A machine that has LEFT the site since scheduling — decommissioned, or moved
+ * to another site, either way absent from this site's listing — drops out
+ * instead of failing the whole follow-up: a promise made about three walls is
+ * still worth keeping on the two that remain. Offline and hoot-off machines are
+ * the resolver's business and are skipped there (D-A/D-B). Only when nothing
+ * survives does the follow-up fail, which beats starting a turn whose tools
+ * would queue commands under a machine document that no longer exists.
  */
-function scheduledTarget(followup: FollowupDoc): HootTarget {
-  if (followup.targetMachineIds !== undefined) {
-    return { machineIds: followup.targetMachineIds };
+async function resolveFollowupTarget(
+  db: Firestore,
+  siteId: string,
+  target: HootTarget,
+): Promise<FollowupTargetResolution> {
+  const outcome = await resolveHootTargets(db, siteId, { requested: target.machineIds });
+  if (outcome.ok) return { ok: true, target, resolved: outcome.resolved };
+
+  // `unknown_machine` is the one refusal a follow-up outlives, and only for an
+  // explicit set: the dynamic "all machines" cannot name one. The resolver says
+  // WHICH ids the site could not, so the retry costs one more listing read and
+  // can only ever narrow. Every other refusal stands as it is.
+  if (outcome.reason !== 'unknown_machine' || target.machineIds === null) {
+    return { ok: false, turnError: outcome.reason };
   }
-  return followup.machineId === SITE_TARGET_ID
-    ? { machineIds: null }
-    : { machineIds: [followup.machineId] };
+
+  const gone = new Set(outcome.machineIds);
+  const remaining = target.machineIds.filter((id) => !gone.has(id));
+  if (remaining.length === 0) {
+    return {
+      ok: false,
+      turnError: `target_machines_gone: ${formatTargetLabel(outcome.machineIds)}`,
+    };
+  }
+
+  const narrowed: HootTarget = { machineIds: remaining };
+  const retry = await resolveHootTargets(db, siteId, { requested: remaining });
+  return retry.ok
+    ? { ok: true, target: narrowed, resolved: retry.resolved }
+    : { ok: false, turnError: retry.reason };
 }
 
 /**
@@ -234,16 +283,9 @@ async function dispatchFollowup(
     return { outcome: 'failed', turnError: 'chat_owner_mismatch' };
   }
 
-  // Where it was promised (D-D), re-validated now: machines that went offline or
-  // had hoot switched off since are dropped, and a target with nothing left
-  // fails the follow-up rather than dispatching into a turn that can reach
-  // nobody.
-  const target = scheduledTarget(followup);
-  const outcome = await resolveHootTargets(db, followup.siteId, {
-    requested: target.machineIds,
-  });
-  if (!outcome.ok) {
-    return { outcome: 'failed', turnError: outcome.reason };
+  const targets = await resolveFollowupTarget(db, followup.siteId, scheduledTarget(followup));
+  if (!targets.ok) {
+    return { outcome: 'failed', turnError: targets.turnError };
   }
 
   const messages = [
@@ -256,8 +298,8 @@ async function dispatchFollowup(
   // with, which is not necessarily the chat's current selection, and firing must
   // not move that selection behind the owner's back.
   const turnTarget = {
-    machineIds: target.machineIds,
-    fanOut: outcome.resolved.fanOut,
+    machineIds: targets.target.machineIds,
+    fanOut: targets.resolved.fanOut,
     source: 'followup' as const,
   };
 
@@ -267,9 +309,9 @@ async function dispatchFollowup(
     prior = await acquireTurnLock(db, followup.chatId, {
       turnId,
       siteId: followup.siteId,
-      machineId: neverWidenLegacyMachineId(target),
+      machineId: neverWidenLegacyMachineId(targets.target),
       target: turnTarget,
-      resolvedMachineIds: outcome.resolved.ids,
+      resolvedMachineIds: targets.resolved.ids,
     });
   } catch (error) {
     // A person is mid-conversation in this chat. Superseding them for a
@@ -286,7 +328,7 @@ async function dispatchFollowup(
       messages,
       userId: followup.userId,
       access,
-      resolved: outcome.resolved,
+      resolved: targets.resolved,
       turnTarget,
       // The scheduling turn's ceiling, which `startTurn` then intersects with
       // what access earns now — so the fire is capped by the lower of the two

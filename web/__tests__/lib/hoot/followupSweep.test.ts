@@ -11,6 +11,11 @@
  * runs) under the scheduling turn's recorded tier ceiling (a capped turn cannot
  * promise itself the owner's reach), and a live turn is never superseded — the
  * follow-up goes back to `scheduled` and waits.
+ *
+ * The target is re-resolved the same way: the fire lands on the set the
+ * scheduling turn was aimed at, minus whatever has left the site, gone offline
+ * or had hoot switched off — and fails rather than dispatching when nothing is
+ * left. An early fire is gated on that set naming exactly ONE machine.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -364,6 +369,108 @@ describe('fireDueFollowups', () => {
     });
   });
 
+  it('fires a legacy follow-up on the one machine its legacy field names', async () => {
+    // No `targetMachineIds`: a doc written before targets were recorded reads as
+    // that single machine, never as the site.
+    seedFollowup('fu-1');
+
+    await sweep();
+
+    expect(resolveHootTargetsMock).toHaveBeenCalledWith(db, 'node-pa', {
+      requested: ['lobby-01'],
+    });
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      turnTarget: { machineIds: ['lobby-01'], fanOut: false, source: 'followup' },
+    });
+  });
+
+  it('drops a machine that has left the site and fires on the rest', async () => {
+    // Decommissioned, or moved to another site: either way it is absent from the
+    // listing. The promise is still worth keeping on the machine that remains.
+    seedFollowup(
+      'fu-1',
+      followup({ targetMachineIds: ['lobby-01', 'lobby-gone'], machineId: 'lobby-01' }),
+    );
+    resolveHootTargetsMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        reason: 'unknown_machine',
+        machineIds: ['lobby-gone'],
+      })
+      .mockResolvedValueOnce(resolvedOn(['lobby-01']));
+
+    const counts = await sweep();
+
+    expect(counts).toMatchObject({ due: 1, fired: 1, failed: 0 });
+    expect(resolveHootTargetsMock).toHaveBeenNthCalledWith(2, db, 'node-pa', {
+      requested: ['lobby-01'],
+    });
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      resolved: { ids: ['lobby-01'], fanOut: false },
+      turnTarget: { machineIds: ['lobby-01'], fanOut: false, source: 'followup' },
+    });
+    expect(acquireTurnLockMock.mock.calls[0][2]).toMatchObject({
+      machineId: 'lobby-01',
+      resolvedMachineIds: ['lobby-01'],
+    });
+  });
+
+  it('fails a follow-up whose machines have all left the site', async () => {
+    // Nothing to narrow to, so there is no second resolve — and no turn, which
+    // would otherwise queue commands under machine documents that are gone.
+    seedFollowup(
+      'fu-1',
+      followup({ targetMachineIds: ['gone-01', 'gone-02'], machineId: 'gone-01' }),
+    );
+    resolveHootTargetsMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      reason: 'unknown_machine',
+      machineIds: ['gone-01', 'gone-02'],
+    });
+
+    const counts = await sweep();
+
+    expect(counts).toMatchObject({ due: 1, fired: 0, failed: 1 });
+    expect(resolveHootTargetsMock).toHaveBeenCalledTimes(1);
+    expect(acquireTurnLockMock).not.toHaveBeenCalled();
+    expect(startTurnMock).not.toHaveBeenCalled();
+    expect(followups.get('fu-1')).toMatchObject({
+      status: 'failed',
+      // Readable on the record the owner can see: which machines went missing.
+      turnError: 'target_machines_gone: gone-01, gone-02',
+    });
+  });
+
+  it('dispatches to nothing on a target machine with hoot switched off', async () => {
+    // D-A at the dispatch layer: the kill switch removes the machine from the
+    // resolved set, so no command is queued for it — while the promise stays
+    // recorded against the set it was made on.
+    seedFollowup(
+      'fu-1',
+      followup({ targetMachineIds: ['lobby-01', 'lobby-02'], machineId: 'lobby-01' }),
+    );
+    resolveHootTargetsMock.mockResolvedValue({
+      ok: true,
+      resolved: { ids: ['lobby-01'], fanOut: true, skipped: { offline: [], disabled: ['lobby-02'] } },
+    });
+
+    await sweep();
+
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({
+      resolved: {
+        ids: ['lobby-01'],
+        fanOut: true,
+        skipped: { offline: [], disabled: ['lobby-02'] },
+      },
+      turnTarget: { machineIds: ['lobby-01', 'lobby-02'], fanOut: true, source: 'followup' },
+    });
+    expect(acquireTurnLockMock.mock.calls[0][2]).toMatchObject({
+      resolvedMachineIds: ['lobby-01'],
+    });
+  });
+
   it('fails a follow-up whose machines are all unreachable, instead of dispatching', async () => {
     seedFollowup('fu-1');
     resolveHootTargetsMock.mockResolvedValue({
@@ -438,6 +545,47 @@ describe('fireDueFollowups', () => {
 
     expect(counts).toMatchObject({ due: 0 });
     expect(completedGet).not.toHaveBeenCalled();
+  });
+
+  it('does not chase a watched command for a multi-machine follow-up', async () => {
+    // The legacy `machineId` narrows a subset to its FIRST machine, so gating on
+    // it would fire the turn the moment that one machine finished — while the
+    // rest of the set was still working.
+    seedFollowup(
+      'fu-1',
+      followup({
+        targetMachineIds: ['lobby-01', 'lobby-02'],
+        machineId: 'lobby-01',
+        runAt: new Date(Date.now() + 30 * MIN),
+        watchCommandId: 'cmd-42',
+      }),
+    );
+    completed.set('node-pa/lobby-01', { 'cmd-42': { status: 'completed' } });
+
+    const counts = await sweep();
+
+    expect(counts).toMatchObject({ due: 0, fired: 0 });
+    expect(completedGet).not.toHaveBeenCalled();
+    expect(followups.get('fu-1')?.status).toBe('scheduled');
+  });
+
+  it('chases the watched command of a recorded single-machine follow-up', async () => {
+    seedFollowup(
+      'fu-1',
+      followup({
+        targetMachineIds: ['lobby-02'],
+        machineId: 'lobby-02',
+        runAt: new Date(Date.now() + 30 * MIN),
+        watchCommandId: 'cmd-42',
+      }),
+    );
+    completed.set('node-pa/lobby-02', { 'cmd-42': { status: 'completed' } });
+    resolveHootTargetsMock.mockResolvedValue(resolvedOn(['lobby-02']));
+
+    const counts = await sweep();
+
+    expect(counts).toMatchObject({ due: 1, fired: 1 });
+    expect(completedGet).toHaveBeenCalledWith('node-pa', 'lobby-02', 'completed');
   });
 
   it('lets only one of two overlapping sweeps fire the same follow-up', async () => {

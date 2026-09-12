@@ -7,6 +7,9 @@
  * `scheduleFollowup` writes, that `cancelFollowup` is owner-gated AND loses
  * cleanly to a sweep that already claimed the doc, and the query
  * `listChatFollowups` issues (the shape the composite index is cut for).
+ *
+ * Plus the two readers the sweep fires through: the target a doc was scheduled
+ * against, and whether it has a single command an early fire may watch.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -24,6 +27,9 @@ import {
   cancelFollowup,
   listChatFollowups,
   scheduleFollowup,
+  scheduledTarget,
+  watchedMachineId,
+  type FollowupDoc,
 } from '@/lib/hoot/followupStore.server';
 
 /** Follow-up docs by id; transactions read and write through this map. */
@@ -311,5 +317,86 @@ describe('listChatFollowups', () => {
     const [summary] = await listChatFollowups(db, 'chat-1', { status: 'failed' });
 
     expect(summary).toMatchObject({ watchCommandId: 'cmd-42', turnError: 'chat_deleted' });
+  });
+});
+
+/** A stored doc, typed — the two readers take the document, not the summary. */
+function storedDoc(overrides: Partial<FollowupDoc> = {}): FollowupDoc {
+  return {
+    chatId: 'chat-1',
+    siteId: 'node-pa',
+    machineId: 'lobby-01',
+    userId: 'user-1',
+    note: 'check whether the render finished',
+    runAt: new Date(),
+    status: 'scheduled',
+    createdAt: '__SERVER_TS__',
+    ...overrides,
+  };
+}
+
+describe('scheduledTarget', () => {
+  it('reads the recorded set, not the narrowing legacy field beside it', () => {
+    // The legacy `machineId` is the first of the set (never-widen). Reading it
+    // instead of the list would fire a two-machine promise on one machine.
+    expect(
+      scheduledTarget(
+        storedDoc({ targetMachineIds: ['lobby-01', 'lobby-02'], machineId: 'lobby-01' }),
+      ),
+    ).toEqual({ machineIds: ['lobby-01', 'lobby-02'] });
+  });
+
+  it('keeps a recorded site-wide target dynamic', () => {
+    // `null` is a recorded value, not a missing one, so a machine added since
+    // scheduling joins the fire (D-D).
+    expect(
+      scheduledTarget(storedDoc({ targetMachineIds: null, machineId: '__site__' })),
+    ).toEqual({ machineIds: null });
+  });
+
+  it('falls back to the legacy machineId on a doc written before targets', () => {
+    expect(scheduledTarget(storedDoc())).toEqual({ machineIds: ['lobby-01'] });
+    expect(scheduledTarget(storedDoc({ machineId: '__site__' }))).toEqual({ machineIds: null });
+  });
+});
+
+describe('watchedMachineId', () => {
+  it('names the machine to watch for a single-machine follow-up', () => {
+    expect(
+      watchedMachineId(
+        storedDoc({ targetMachineIds: ['lobby-02'], machineId: 'lobby-02', watchCommandId: 'c1' }),
+      ),
+    ).toBe('lobby-02');
+  });
+
+  it('reads the legacy machineId when no target was recorded', () => {
+    expect(watchedMachineId(storedDoc({ watchCommandId: 'c1' }))).toBe('lobby-01');
+  });
+
+  it('refuses to watch one command on behalf of a multi-machine follow-up', () => {
+    // The gate that matters: the legacy field would hand back `lobby-01` here,
+    // firing the turn the moment ONE of the two machines finished.
+    expect(
+      watchedMachineId(
+        storedDoc({
+          targetMachineIds: ['lobby-01', 'lobby-02'],
+          machineId: 'lobby-01',
+          watchCommandId: 'c1',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it('refuses a site-wide follow-up, recorded or legacy', () => {
+    expect(
+      watchedMachineId(
+        storedDoc({ targetMachineIds: null, machineId: '__site__', watchCommandId: 'c1' }),
+      ),
+    ).toBeNull();
+    expect(watchedMachineId(storedDoc({ machineId: '__site__', watchCommandId: 'c1' }))).toBeNull();
+  });
+
+  it('is null when there is no command to watch at all', () => {
+    expect(watchedMachineId(storedDoc())).toBeNull();
   });
 });
