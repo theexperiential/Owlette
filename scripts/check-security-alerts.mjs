@@ -420,9 +420,18 @@ function checkScanningAlerts(repo, findings, branch, gitRef) {
       alerts = ghJson(['api', '--paginate', `repos/${repo}/${kind}/alerts?state=open&per_page=100${refParam}`]);
     } catch (err) {
       // A repo with the feature switched off answers 404; that is not a finding.
-      if (/404|not enabled|disabled/i.test(err.message)) {
+      //
+      // A 403 on SECRET scanning is a platform limit, not a broken check: there
+      // is no GITHUB_TOKEN permission key that grants it, so in Actions this
+      // feed can never be read. Blocking on a condition nobody can satisfy
+      // would pin the gate red forever, which is the failure this whole script
+      // exists to prevent. Push protection is the live control there anyway;
+      // this read was only ever a backstop. Everything else still fails closed.
+      const unreadable = /403|not accessible/i.test(err.message);
+      if (/404|not enabled|disabled/i.test(err.message) || (kind === 'secret-scanning' && unreadable)) {
         findings.push(finding('warn', `verify:${kind}`,
-          `${kind} returned 404 — feature disabled, or unreadable with this token. Not checked.`));
+          `${kind} not checked (${err.message.includes('403') ? 'GITHUB_TOKEN cannot read this feed' : 'feature disabled or absent'}) `
+          + '— review it on github.com/security by hand.'));
         continue;
       }
       findings.push(finding('block', `verify:${kind}`, `could not read ${kind} alerts: ${err.message}`));
