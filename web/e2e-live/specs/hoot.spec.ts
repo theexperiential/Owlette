@@ -315,20 +315,12 @@ async function openChatOnStub(page: Page): Promise<void> {
   // D-A: a machine with hoot switched off is skipped at dispatch, so a turn aimed at one would
   // never reach the stub.
   await expect(row, `hoot is switched off on ${STUB_MACHINE_ID}`).not.toContainText('hoot off');
-  // The rows are checkboxes, so clicking the stub while it is already ticked would UNtick it:
-  // clear the master row, then tick the stub. AIMED_AT_STUB says what that leaves.
-  //
-  // The master row is NOT reliably full when the picker opens — the ticked set is stored as this
-  // user's site preference the moment it changes, and this helper runs several times per run. It
-  // is tri-state, and from anything less than everything it ticks ALL rather than clearing
-  // (`toggleAll`, web/lib/hoot/target.ts), so filling it first when it isn't full is what makes
-  // the clearing click deterministic. On a site left holding a machine stranded by an earlier run,
-  // a fixed two-click recipe aimed the second chat at the STRANDED machine instead.
-  const allMachines = page.getByRole('menuitemcheckbox', { name: /^all machines/ });
-  if ((await allMachines.getAttribute('aria-checked')) !== 'true') {
-    await allMachines.click();
-  }
-  await allMachines.click();
+  // A row has two targets: its checkbox column toggles that machine within the set, its NAME
+  // selects only it. Playwright clicks an element's centre, which lands on the name — so this is
+  // one click and needs no starting state. That matters here: the ticked set is stored as this
+  // user's site preference the moment it changes, this helper runs several times per run, and a
+  // recipe that assumed the picker opened full aimed the second chat at a machine stranded by an
+  // earlier run. AIMED_AT_STUB says what a single click leaves.
   await row.click();
   await page.keyboard.press('Escape');
   await expect(target).toContainText(new RegExp(`${STUB_MACHINE_ID}|all machines`));
@@ -367,7 +359,7 @@ const AIMED_AT_STUB = [
  */
 async function sendPrompt(page: Page, prompt: string): Promise<string> {
   const chat = page.getByRole('main');
-  await chat.getByPlaceholder(/ask about/i).fill(prompt);
+  await chat.getByLabel('chat message').fill(prompt);
   const sent = page.waitForRequest(isPostTo('/api/hoot'));
   // Pending until awaited below: a click that throws first must not leave it to reject unhandled.
   sent.catch(() => undefined);
@@ -511,7 +503,7 @@ test.describe('hoot on the stub machine', () => {
     withdrawal.catch(() => undefined);
     await expect(stop).toBeHidden({ timeout: STOP_TIMEOUT_MS });
     expect((await stopped).status(), 'POST /api/hoot/stop').toBe(200);
-    await expect(chat.getByPlaceholder(/ask about/i)).toBeEditable();
+    await expect(chat.getByLabel('chat message')).toBeEditable();
     // Only the stop route writes 'cancelled' (app/api/hoot/stop/route.ts), for the turn it names.
     await expect
       .poll(() => readTurn(chatId), {

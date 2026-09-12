@@ -11,7 +11,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { formatTargetLabel, toggleAll, toggleMachine, type HootTarget } from '@/lib/hoot/target';
+import {
+  formatTargetLabel,
+  normalizeSelection,
+  toggleAll,
+  toggleMachine,
+  type HootTarget,
+} from '@/lib/hoot/target';
 
 /** One row: the id IS the target, the two flags are the status text beside it. */
 export interface MachineTargetOption {
@@ -59,7 +65,33 @@ const STATUS_TEXT_CLASS = 'text-xs text-muted-foreground group-focus:text-accent
  * `lib/hoot/target.ts` own the difference. Unticking one machine spells the rest
  * out; ticking the last missing one collapses back to null.
  */
+/**
+ * Which of a row's two jobs the last interaction asked for. A row is ONE
+ * `menuitemcheckbox` — putting a real checkbox control inside a menu item would
+ * be the nested-interactive violation the /hoot axe gate fails on — so the two
+ * jobs are told apart by what was hit, and the answer is stashed here for the
+ * `onSelect` that follows.
+ *
+ * Pointer: the box toggles this machine within the set, the name selects only
+ * it. Keyboard keeps parity rather than losing half the control: Space is the
+ * checkbox's own key and toggles, Enter is the row's primary action and selects
+ * only that machine.
+ */
+type RowIntent = 'toggle' | 'only';
+
 export function MachineTargetPicker({ machines, selection, onChange }: MachineTargetPickerProps) {
+  const intentRef = React.useRef<RowIntent>('toggle');
+
+  const noteIntentFromPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target as Element | null;
+    intentRef.current = target?.closest('[data-checkbox-box]') ? 'toggle' : 'only';
+  };
+
+  const noteIntentFromKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === ' ') intentRef.current = 'toggle';
+    else if (event.key === 'Enter') intentRef.current = 'only';
+  };
+
   const siteMachineIds = machines.map((machine) => machine.id);
   const selected = selection.machineIds;
   const isTicked = (id: string) => selected === null || selected.includes(id);
@@ -119,12 +151,21 @@ export function MachineTargetPicker({ machines, selection, onChange }: MachineTa
         <DropdownMenuCheckboxItem
           className="group"
           checked={allChecked}
+          onPointerDown={noteIntentFromPointer}
+          onKeyDown={noteIntentFromKey}
           // `preventDefault` keeps the menu open. Picking a set takes several
           // clicks, and Radix closes the menu on any select event it is left to
           // handle — so a reopen per machine would be the cost of not doing this.
           onSelect={(event) => {
             event.preventDefault();
-            onChange(toggleAll(selection, siteMachineIds));
+            // The name means "talk to everything", which is the dynamic null —
+            // not a set that happens to cover today's machines. The box keeps
+            // the checkbox's own meaning: all on, or all off.
+            onChange(
+              intentRef.current === 'only'
+                ? { machineIds: null }
+                : toggleAll(selection, siteMachineIds),
+            );
           }}
         >
           <span className="flex-1 truncate">all machines</span>
@@ -145,9 +186,18 @@ export function MachineTargetPicker({ machines, selection, onChange }: MachineTa
                 key={machine.id}
                 className="group"
                 checked={isTicked(machine.id)}
+                onPointerDown={noteIntentFromPointer}
+                onKeyDown={noteIntentFromKey}
                 onSelect={(event) => {
                   event.preventDefault();
-                  onChange(toggleMachine(selection, machine.id, siteMachineIds));
+                  // The name is the fast path off "all machines": this one, and
+                  // nothing else. `normalizeSelection` keeps a one-machine site
+                  // on the dynamic null rather than freezing today's only id.
+                  onChange(
+                    intentRef.current === 'only'
+                      ? normalizeSelection({ machineIds: [machine.id] }, siteMachineIds, true)
+                      : toggleMachine(selection, machine.id, siteMachineIds),
+                  );
                 }}
               >
                 <span className="flex-1 truncate">{machine.id}</span>
@@ -156,6 +206,7 @@ export function MachineTargetPicker({ machines, selection, onChange }: MachineTa
             );
           })
         )}
+
       </DropdownMenuContent>
     </DropdownMenu>
   );

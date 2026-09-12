@@ -97,6 +97,17 @@ function row(name: string) {
   return screen.getByRole('menuitemcheckbox', { name });
 }
 
+/**
+ * The row's checkbox column — the half that TOGGLES. Clicking the row anywhere
+ * else means "just this machine", so a test that means to add one to the set has
+ * to hit this, exactly as a user does.
+ */
+function box(name: string): HTMLElement {
+  const column = row(name).querySelector('[data-checkbox-box]');
+  if (column === null) throw new Error(`row "${name}" has no checkbox column`);
+  return column as HTMLElement;
+}
+
 describe('MachineTargetPicker trigger', () => {
   it('is named for the e2e locator and shows the label with the online count', () => {
     const { trigger } = renderPicker(ALL);
@@ -153,7 +164,7 @@ describe('MachineTargetPicker rows', () => {
   it('spells out the rest of the site when one machine is unticked from "all"', async () => {
     const { user, onChange } = await openPicker(ALL);
 
-    await user.click(row('kiosk-02 offline'));
+    await user.click(box('kiosk-02 offline'));
 
     expect(onChange).toHaveBeenCalledWith({ machineIds: ['kiosk-01', 'kiosk-03'] });
   });
@@ -161,7 +172,7 @@ describe('MachineTargetPicker rows', () => {
   it('collapses back to dynamic "all" when the last missing machine is ticked', async () => {
     const { user, onChange } = await openPicker({ machineIds: ['kiosk-01', 'kiosk-02'] });
 
-    await user.click(row('kiosk-03 hoot off'));
+    await user.click(box('kiosk-03 hoot off'));
 
     expect(onChange).toHaveBeenCalledWith({ machineIds: null });
   });
@@ -169,20 +180,50 @@ describe('MachineTargetPicker rows', () => {
   it('stays open across several toggles', async () => {
     const { user, onChange } = await openPicker(ALL);
 
-    await user.click(row('kiosk-02 offline'));
+    await user.click(box('kiosk-02 offline'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
 
-    await user.click(row('kiosk-03 hoot off'));
+    await user.click(box('kiosk-03 hoot off'));
 
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(onChange).toHaveBeenNthCalledWith(2, { machineIds: ['kiosk-01'] });
   });
 
-  it('toggles from the keyboard, with the menu and the focused row intact', async () => {
-    // The mouse path above goes through Radix's click handler; a keyboard
-    // Enter is a different code path into the same `onSelect`, and the wave's
-    // success criterion is an a11y one. Focus has to survive the re-render too
-    // — losing it would send the next arrow key to <body>.
+  it('selects ONLY that machine when its name is clicked', async () => {
+    // The fast path off "all machines", and the behaviour the old single-select
+    // dropdown had: clicking a name means "talk to this one", not "add it".
+    const { user, onChange } = await openPicker(ALL);
+
+    await user.click(row('kiosk-02 offline'));
+
+    expect(onChange).toHaveBeenCalledWith({ machineIds: ['kiosk-02'] });
+  });
+
+  it('drops the rest of an existing set when a name is clicked', async () => {
+    const { user, onChange } = await openPicker({ machineIds: ['kiosk-01', 'kiosk-03'] });
+
+    await user.click(row('kiosk-01'));
+
+    expect(onChange).toHaveBeenCalledWith({ machineIds: ['kiosk-01'] });
+  });
+
+  it('keeps a one-machine site on dynamic "all" when its name is clicked', async () => {
+    // Freezing the only id would stop a machine added tomorrow from being
+    // targeted — `normalizeSelection` collapses a set covering the site to null.
+    const { user, onChange } = await openPicker(
+      { machineIds: [] },
+      [{ id: 'kiosk-01', online: true, hootEnabled: true }],
+    );
+
+    await user.click(row('kiosk-01'));
+
+    expect(onChange).toHaveBeenCalledWith({ machineIds: null });
+  });
+
+  it('toggles with Space and selects only with Enter, keeping the menu and focus', async () => {
+    // Keyboard parity for the pointer's two halves: Space is the checkbox's own
+    // key, Enter is the row's primary action. Focus has to survive the
+    // re-render too — losing it would send the next arrow key to <body>.
     const { user, onChange, trigger } = renderPicker(ALL);
 
     trigger.focus();
@@ -193,11 +234,16 @@ describe('MachineTargetPicker rows', () => {
     const first = row('kiosk-01');
     expect(first).toHaveFocus();
 
-    await user.keyboard('{Enter}');
+    await user.keyboard('[Space]');
 
-    expect(onChange).toHaveBeenCalledWith({ machineIds: ['kiosk-02', 'kiosk-03'] });
+    expect(onChange).toHaveBeenNthCalledWith(1, { machineIds: ['kiosk-02', 'kiosk-03'] });
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(first).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+
+    expect(onChange).toHaveBeenNthCalledWith(2, { machineIds: ['kiosk-01'] });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
   it('says so when the site has no machines', async () => {
@@ -223,10 +269,10 @@ describe('MachineTargetPicker "all machines" master row', () => {
     expect(row('kiosk-01').querySelector('.lucide-check')).toBeInTheDocument();
   });
 
-  it('clears the selection when everything is ticked', async () => {
+  it('clears the selection when its box is unticked', async () => {
     const { user, onChange } = await openPicker(ALL);
 
-    await user.click(row(MASTER_ROW));
+    await user.click(box(MASTER_ROW));
 
     expect(onChange).toHaveBeenCalledWith({ machineIds: [] });
   });
@@ -237,12 +283,22 @@ describe('MachineTargetPicker "all machines" master row', () => {
 
     expect(master).toHaveAttribute('aria-checked', 'false');
 
-    await user.click(master);
+    await user.click(box(MASTER_ROW));
 
     expect(onChange).toHaveBeenCalledWith({ machineIds: null });
   });
 
   it('ticks every machine from a mixed selection', async () => {
+    const { user, onChange } = await openPicker({ machineIds: ['kiosk-01'] });
+
+    await user.click(box(MASTER_ROW));
+
+    expect(onChange).toHaveBeenCalledWith({ machineIds: null });
+  });
+
+  it('goes back to dynamic "all" when its name is clicked, from any set', async () => {
+    // The name means "talk to everything", so it is the dynamic null — not a
+    // set that happens to cover today's machines.
     const { user, onChange } = await openPicker({ machineIds: ['kiosk-01'] });
 
     await user.click(row(MASTER_ROW));

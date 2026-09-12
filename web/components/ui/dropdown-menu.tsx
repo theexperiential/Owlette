@@ -92,24 +92,51 @@ function DropdownMenuCheckboxItem({
     <DropdownMenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
-        "focus:bg-accent focus:text-accent-foreground relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        // btn-sweep for the pointer, the flat accent fill for the keyboard.
+        // Radix focuses an item on pointermove, so a plain `focus:bg-accent`
+        // painted a flat tint the moment the mouse arrived and the app's sweep
+        // never showed. Scoping the fill to focus-visible leaves arrow-key
+        // navigation its strong highlight and gives the mouse the sweep.
+        "btn-sweep focus-visible:bg-accent focus-visible:text-accent-foreground relative flex cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-2 pl-11 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       checked={checked}
       {...props}
     >
-      <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
-        {/* Radix renders the indicator for `indeterminate` as well as for
-            `true`, so a tri-state row needs its own glyph: a check would tell
-            the user every machine under it is ticked when only some are.
-            `aria-checked="mixed"` is set by Radix — this is the visual half. */}
-        <DropdownMenuPrimitive.ItemIndicator>
-          {checked === "indeterminate" ? (
-            <MinusIcon className="size-4" />
-          ) : (
-            <CheckIcon className="size-4" />
+      {/* A hit COLUMN, not a bare glyph. The box is drawn for every row, ticked
+          or not — an indicator that only exists when checked leaves an unticked
+          row visually empty, and nothing then says the row is checkable at all.
+
+          The column is a separate target from the rest of the row: it carries
+          its own hover tint and a divider, so the two halves look like the two
+          different actions they are, and `data-checkbox-box` lets a consumer
+          tell them apart (the glyph inside stays pointer-transparent via the
+          item's `[&_svg]` rule, so it is never the event target). A consumer
+          that doesn't look is unaffected — the click bubbles to the item. */}
+      <span
+        data-checkbox-box=""
+        className="absolute inset-y-0 left-0 flex w-9 items-center justify-center rounded-l-sm border-r border-border/70 transition-colors hover:bg-accent/60"
+      >
+        <span
+          className={cn(
+            "flex size-4 items-center justify-center rounded-[4px] border transition-colors",
+            checked
+              ? "border-accent-cyan bg-accent-cyan/15 text-accent-cyan"
+              : "border-muted-foreground/50 bg-transparent",
           )}
-        </DropdownMenuPrimitive.ItemIndicator>
+        >
+          {/* Radix renders the indicator for `indeterminate` as well as for
+              `true`, so a tri-state row needs its own glyph: a check would tell
+              the user every machine under it is ticked when only some are.
+              `aria-checked="mixed"` is set by Radix — this is the visual half. */}
+          <DropdownMenuPrimitive.ItemIndicator>
+            {checked === "indeterminate" ? (
+              <MinusIcon className="size-3" />
+            ) : (
+              <CheckIcon className="size-3" />
+            )}
+          </DropdownMenuPrimitive.ItemIndicator>
+        </span>
       </span>
       {children}
     </DropdownMenuPrimitive.CheckboxItem>

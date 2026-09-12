@@ -7,25 +7,29 @@ import {
 } from '../../helpers/coverageSeed';
 
 /**
- * Leave exactly one machine ticked in the OPEN target picker, from whatever the
- * picker started on.
+ * Leave exactly one machine ticked, from whatever the picker started on, and
+ * close the menu again.
  *
- * Not simply "clear the master row, then tick": the ticked set is persisted as
- * the user's site preference the moment it changes, so the picker does NOT open
- * on "all machines" a second time — not on a CI retry, and not in a later test
- * on the same account. "all machines" is tri-state, and from anything less than
- * everything it ticks all rather than clearing (`toggleAll`, web/lib/hoot/target.ts),
- * so a fixed two-click recipe would leave several machines ticked and no
- * single-machine affordances to assert. Filling it first when it isn't full
- * makes the clearing click deterministic from any state.
+ * A row has two targets: its checkbox column toggles that machine within the
+ * set, its NAME selects only it. Playwright clicks an element's centre, which
+ * lands on the name, so ONE click gets there and needs no starting state — which
+ * matters, because the ticked set persists as the user's site preference the
+ * moment it changes, so the picker does not open on "all machines" a second
+ * time (not on a CI retry, and not in a later test on the same account).
+ *
+ * Opening is conditional because selecting does NOT close the menu (picking a
+ * set takes several clicks, so `onSelect` preventDefaults) — a second
+ * unconditional click on the trigger would toggle an already-open menu shut.
  */
 async function aimAtOnly(page: Page, machine: RegExp): Promise<void> {
-  const allMachines = page.getByRole('menuitemcheckbox', { name: /^all machines/i });
-  if ((await allMachines.getAttribute('aria-checked')) !== 'true') {
-    await allMachines.click();
+  const row = page.getByRole('menuitemcheckbox', { name: machine });
+  if (!(await row.isVisible())) {
+    await page.getByLabel(/hoot target/i).click();
+    await expect(row).toBeVisible();
   }
-  await allMachines.click();
-  await page.getByRole('menuitemcheckbox', { name: machine }).click();
+  await row.click();
+  await page.keyboard.press('Escape');
+  await expect(row).toBeHidden();
 }
 
 test.describe('hoot key guard', () => {
@@ -79,19 +83,13 @@ test.describe('hoot conversations and controls', () => {
     const target = page.getByLabel(/hoot target/i);
     await expect(target).toBeVisible();
 
-    // The picker is a checkbox menu and "all machines" is a value of its own,
-    // not a ticked box per machine — so clearing the master row is what leaves
-    // ONE machine ticked, and one machine is what the per-machine controls
-    // (the power toggle, the single-machine offline copy) render for. The menu
-    // stays open across toggles on purpose, hence one open and an Escape.
-    await target.click();
+    // One machine is what the per-machine controls — the power toggle, the
+    // single-machine offline copy — render for, and a row's NAME is the way to
+    // ask for exactly one.
     await aimAtOnly(page, /^e2e-cortex-machine/i);
-    await page.keyboard.press('Escape');
     await expect(page.getByText(/hoot active/i)).toBeVisible();
 
-    await target.click();
     await aimAtOnly(page, /^e2e-cortex-offline/i);
-    await page.keyboard.press('Escape');
     await expect(page.getByText(/machine is offline/i)).toBeVisible();
   });
 
@@ -174,7 +172,9 @@ test.describe('hoot conversations and controls', () => {
     });
 
     await page.goto('/hoot');
-    await page.getByPlaceholder(/ask about this machine/i).fill('summarize the latest issue');
+    // By accessible name: the placeholder names the chat's current target, so
+    // it moves with the picker.
+    await page.getByLabel('chat message').fill('summarize the latest issue');
     await page.getByRole('button', { name: /send message/i }).click();
     await expect(page.getByText(/LLM unavailable in e2e/i)).toBeVisible();
   });

@@ -238,6 +238,17 @@ function row(name: string) {
   return screen.getByRole('menuitemcheckbox', { name });
 }
 
+/**
+ * The row's checkbox column — the half that TOGGLES within the ticked set.
+ * Clicking the row anywhere else means "just this machine", so a test that means
+ * to add or remove one has to hit this, exactly as a user does.
+ */
+function box(name: string): HTMLElement {
+  const column = row(name).querySelector('[data-checkbox-box]');
+  if (column === null) throw new Error(`row "${name}" has no checkbox column`);
+  return column as HTMLElement;
+}
+
 /** Hand the screen a chat's stored target the way `loadChat` does. */
 function loadChatWith(target: HootTarget | 'invalid', options?: { chatId?: string; siteId?: string }) {
   act(() => {
@@ -280,7 +291,7 @@ describe('HootChatView target selection', () => {
     const { user, trigger } = await openPicker();
     expect(trigger).toHaveTextContent('all machines');
 
-    await user.click(row('kiosk-03 offline'));
+    await user.click(box('kiosk-03 offline'));
 
     // Unticking one machine spells the rest out — the same conversation, aimed
     // at fewer machines.
@@ -295,7 +306,7 @@ describe('HootChatView target selection', () => {
   it('persists the new set as the site preference', async () => {
     const { user } = await openPicker();
 
-    await user.click(row('kiosk-03 offline'));
+    await user.click(box('kiosk-03 offline'));
 
     expect(mockUpdateLastMachine).toHaveBeenCalledWith('site-a', ['kiosk-01', 'kiosk-02']);
   });
@@ -441,8 +452,10 @@ describe('HootChatView target selection', () => {
   it('disables send while nothing is ticked, and stores nothing (D-G)', async () => {
     const { user } = await openPicker();
 
-    // The master row is tri-state: everything ticked clears it.
-    await user.click(row('all machines 2 online'));
+    // The master row is tri-state, and its BOX is the checkbox half: from
+    // everything ticked it clears. (Its name means "talk to everything", which
+    // is the one thing that cannot leave the picker empty.)
+    await user.click(box('all machines 2 online'));
     await user.keyboard('{Escape}');
 
     expect(screen.getByText('pick at least one machine to send')).toBeInTheDocument();
@@ -529,7 +542,7 @@ describe('HootChatView set-aware warnings', () => {
 describe('HootChatView labels', () => {
   it('labels older approval cards with the current selection', async () => {
     const { user } = await openPicker();
-    await user.click(row('kiosk-03 offline'));
+    await user.click(box('kiosk-03 offline'));
 
     expect(screen.getByTestId('chat-window')).toHaveAttribute(
       'data-approval-target-label',

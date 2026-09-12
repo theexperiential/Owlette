@@ -192,19 +192,16 @@ test('episode 12 — hoot: manage machines by chat', async ({ browser }) => {
         await narrate(page, 'b06 role ceiling + the site-wide approval gate', 12);
 
         // The per-machine switch only renders for a SINGLE targeted machine, so
-        // the target has to move off "all machines": clear the master row, then
-        // tick the one machine. The conversation itself stays put now — a tick
-        // re-aims the open chat instead of starting another. (The b03/b06
-        // narration still says switching opens a fresh conversation; Task 7.1
-        // flags that line for the next render.)
+        // the target has to move off "all machines". A row's NAME selects only
+        // that machine (its checkbox column is what toggles within the set), and
+        // the cursor lands on the name — so one click gets there from any state.
+        // The conversation itself stays put now — re-aiming continues the open
+        // chat instead of starting another. (The b03/b06 narration still says
+        // switching opens a fresh conversation; Task 7.1 flags that line for the
+        // next render.)
         const machineSelectorAgain = page.getByLabel('hoot target');
         await clickWithCursor(page, machineSelectorAgain);
         await page.waitForTimeout(400);
-        await clickWithCursor(
-          page,
-          page.getByRole('menuitemcheckbox', { name: /^all machines/i }).first(),
-        );
-        await page.waitForTimeout(300);
         await clickWithCursor(
           page,
           page.getByRole('menuitemcheckbox', { name: /^media-server-stage/i }).first(),
