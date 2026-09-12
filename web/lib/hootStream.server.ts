@@ -1,19 +1,23 @@
 /**
- * hoot streaming dispatcher, shared by `/api/hoot` and
- * `/api/hoot/conversations/{conversationId}`.
+ * hoot streaming dispatcher for the PUBLIC conversations API:
+ * `/api/hoot/conversations/{conversationId}`, its `/api/chat/{conversationId}`
+ * twin and the `/api/cortex/conversations/{conversationId}` re-export. All of
+ * them pass the `onAssistantText` tap that persists the final assistant message.
+ *
+ * The dashboard's `/api/hoot` no longer comes through here — it runs async turns
+ * through `lib/hoot/turnRunner.server.ts` — so a change made in this file lands
+ * on the documented public contract and nothing else.
  *
  * Three mutually exclusive paths:
  *   - site mode (`SITE_TARGET_ID`): server-side llm + fan-out tools
  *   - single machine, local hoot + site-admin caller: the agent runs the llm and
  *     streams via firestore onSnapshot
  *   - single machine, fallback: server-side llm + tool relay
- *
- * The legacy route is a thin wrapper with unchanged observable behavior; the
- * chat-noun route adds the `onAssistantText` tap to persist the final message.
  */
 
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import { withAdvisor } from '@/lib/hoot/advisor';
+import { SITE_TARGET_ID } from '@/lib/hoot/target';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
@@ -28,7 +32,9 @@ import {
   buildExecutableTools,
 } from '@/lib/hoot-utils.server';
 
-export const SITE_TARGET_ID = '__site__';
+// Re-exported, not redefined: both conversation routes import the sentinel from
+// here, and `lib/hoot/target.ts` holds the one definition in `web/`.
+export { SITE_TARGET_ID };
 
 const HEARTBEAT_STALE_MS = 30_000;
 const LOCAL_HOOT_TIMEOUT_MS = 60_000;
