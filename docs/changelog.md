@@ -11,6 +11,73 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+### added — a hoot chat talks to the machines you tick, and `@machine` narrows one turn
+
+The machine selector in the hoot header is now a checkbox picker: tick as many
+machines as the conversation should talk to, or leave **all machines** ticked,
+which stays dynamic — a machine added to the site later joins the target on its
+own. Changing the ticks **continues the conversation** instead of starting a new
+one, so a chat can follow a problem from one machine to its neighbours without
+losing its history; changing the site still starts a new chat. Each row says
+whether a machine is offline or has hoot off, the trigger shows how many of the
+targeted machines are online, and the selection is stored on the conversation
+and remembered per site across your devices — reopening an old chat restores the
+machines it was talking to.
+
+Typing `@` in the composer completes a machine name and narrows **that turn
+only**: the chat's own ticks are untouched and the next message goes back to
+them. The parser is deliberately conservative, so a pasted PowerShell `@(...)`,
+an `@splat`, an email address or a fenced code block is never read as targeting.
+Mentions come from the dashboard composer — the public conversations API, the
+SDKs, the CLI and chat-scoped API keys get no narrowing.
+
+A ticked machine that is offline or has hoot off is skipped: the turn runs on
+the rest, the model is told which machines were left out, and the header warns
+before you send. A machine you *named* with `@` is refused instead of skipped,
+so a mention can never quietly miss. A chat whose stored target cannot be read
+asks you to pick machines rather than falling back to the whole site.
+
+### changed — hoot off on a machine now means off on every path
+
+A machine with the hoot toggle switched off has always been skipped by
+single-machine chats. It is now skipped by **every** dispatch: site-wide and
+multi-machine chats, scheduled follow-ups, site-wide talons, and the public
+conversations API's site mode. **This changes behaviour for sites that never
+touch the new picker** — a machine you switched hoot off on, which a site-wide
+chat has been reaching anyway, now receives nothing. A talon whose site has no
+online machine with hoot on records the run as *skipped* rather than failed, so
+it is not auto-disabled over it, and the run records which machines it skipped.
+
+### changed — a tier-3 approval is bound to the turn that asked for it
+
+Approving a privileged call now runs it on the machines **that turn** resolved
+to, named on the approval card, rather than on whatever the picker happens to
+show when you come back to the chat — ticking more machines while a card waits
+never widens it. If another turn has run in the conversation since the approval
+was requested — a follow-up firing, or a message sent from another device — the
+approval no longer matches the turn it belongs to and is refused with "that
+approval expired — another turn ran in this chat. ask again."; nothing is queued
+on any machine and the approval is not spent, so the request can be made again.
+Bound machines are re-checked when you answer, and an approval with nothing
+reachable left is held rather than consumed.
+
+A follow-up fires on the machines the turn that scheduled it was targeting,
+re-validated when it comes due; if none of them is still in the site, it is
+marked failed with the reason rather than dispatched somewhere else.
+
+### fixed — the hoot power toggle, and a follow-up's tool limit
+
+The per-machine hoot toggle in the chat header could switch hoot off but never
+back on: the dashboard never read the machine's stored flag, so the toggle
+always believed hoot was already on. It now reflects what is stored.
+
+A follow-up scheduled by a chat-scoped API key — a caller capped to read-only
+tools — fired later with the chat owner's tool tier, so a turn that could only
+read could schedule one that could act. A follow-up now fires with the lower of
+the tier its scheduling turn had and the tier its owner earns at fire time.
+Follow-ups scheduled before this release keep the old behaviour, since their
+records do not carry the limit.
+
 ### changed — hoot runs on Claude Sonnet 5, and can consult Claude Opus 5
 
 Hoot now defaults to Claude Sonnet 5 for accounts that haven't picked a model, and
