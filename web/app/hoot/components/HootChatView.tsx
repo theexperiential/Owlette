@@ -1275,6 +1275,10 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                  unreadable one refuses to build a body at all (requestBody.ts).
                  `targetWarning` beside the picker says which it is. */
               sendDisabled={sendDisabled}
+              /* Same label as the picker's trigger — and nothing at all when
+                 there is no target to name, so the field never reads "ask no
+                 machines anything". */
+              targetLabel={sendDisabled ? undefined : formatTargetLabel(target.machineIds)}
             />
           )}
         </main>

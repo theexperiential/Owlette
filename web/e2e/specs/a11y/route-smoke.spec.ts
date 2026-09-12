@@ -83,7 +83,7 @@ test.describe('authenticated a11y smoke', () => {
   test('hoot keyed state has no serious/critical axe violations', async ({ page }) => {
     await seedHootFixture({ userId: TEST_USERS.admin.uid });
     await page.goto('/hoot');
-    await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
+    await expect(page.getByLabel('chat message')).toBeVisible();
     await expectNoSeriousA11yViolations(page);
   });
 });

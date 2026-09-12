@@ -34,11 +34,13 @@ function Harness({
   mentionOptions,
   onSubmit,
   clearOnSubmit,
+  targetLabel,
 }: {
   mentionOptions?: MentionMachine[];
   onSubmit: (e: React.FormEvent) => void;
   /** What the real caller does: `handleSend` empties the box on send. */
   clearOnSubmit?: boolean;
+  targetLabel?: string;
 }) {
   const [input, setInput] = useState('');
   return (
@@ -55,6 +57,7 @@ function Harness({
       onPasteImage={jest.fn()}
       onRemoveImage={jest.fn()}
       mentionOptions={mentionOptions}
+      targetLabel={targetLabel}
     />
   );
 }
@@ -64,20 +67,43 @@ function Harness({
 // silently swallow it.
 function renderComposer(
   mentionOptions: MentionMachine[] | undefined,
-  { clearOnSubmit = false }: { clearOnSubmit?: boolean } = {},
+  { clearOnSubmit = false, targetLabel }: { clearOnSubmit?: boolean; targetLabel?: string } = {},
 ) {
   const onSubmit = jest.fn((e: React.FormEvent) => e.preventDefault());
   const user = userEvent.setup();
   render(
-    <Harness mentionOptions={mentionOptions} onSubmit={onSubmit} clearOnSubmit={clearOnSubmit} />,
+    <Harness
+      mentionOptions={mentionOptions}
+      onSubmit={onSubmit}
+      clearOnSubmit={clearOnSubmit}
+      targetLabel={targetLabel}
+    />,
   );
-  const box = screen.getByPlaceholderText('ask about this machine...') as HTMLTextAreaElement;
+  // By its accessible name, not its placeholder: the placeholder names the
+  // chat's target and so changes with it.
+  const box = screen.getByLabelText('chat message') as HTMLTextAreaElement;
   return { user, onSubmit, box };
 }
 
 function optionNames(): string[] {
   return screen.getAllByRole('option').map((o) => o.textContent ?? '');
 }
+
+describe('ChatInput placeholder', () => {
+  it('names the chat target so the field says where the question lands', () => {
+    const { box } = renderComposer(MACHINES, { targetLabel: 'kiosk-01' });
+
+    expect(box).toHaveAttribute('placeholder', 'ask kiosk-01 anything...');
+  });
+
+  it('stays generic when there is no target to name', () => {
+    // What the view passes while the selection is empty or unreadable — the
+    // picker's own "no machines" would read as a question to nobody.
+    const { box } = renderComposer(MACHINES);
+
+    expect(box).toHaveAttribute('placeholder', 'ask anything...');
+  });
+});
 
 describe('ChatInput mention list', () => {
   it('opens on `@` and lists every machine with its status as text', async () => {

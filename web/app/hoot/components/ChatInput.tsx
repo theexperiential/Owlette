@@ -61,6 +61,14 @@ interface ChatInputProps {
    * says WHY beside the picker the user fixes it in.
    */
   sendDisabled?: boolean;
+  /**
+   * Who this chat is aimed at, for the composer's prompt — the same label the
+   * header's picker shows ("all machines", an id, "a, b +2"). Omitted while
+   * there is nothing to aim at (an empty or unreadable target), which is also
+   * when `sendDisabled` is set and the header says why; the generic prompt
+   * stands in rather than the picker's "no machines".
+   */
+  targetLabel?: string;
 }
 
 export function ChatInput({
@@ -74,6 +82,7 @@ export function ChatInput({
   onRemoveImage,
   mentionOptions = NO_MENTION_OPTIONS,
   sendDisabled = false,
+  targetLabel,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
@@ -349,7 +358,11 @@ export function ChatInput({
                 syncCaret(e.currentTarget);
               }}
               onPaste={handlePaste}
-              placeholder="ask about this machine..."
+              // Names the target, so the field itself says where the question
+              // lands — the header's picker is the only other place that does,
+              // and it sits above a long conversation. `aria-label` is the
+              // stable handle for tests; the placeholder moves with the target.
+              placeholder={targetLabel ? `ask ${targetLabel} anything...` : 'ask anything...'}
               rows={1}
               aria-label="chat message"
               // A textbox, not a combobox: nesting a combobox role in a form row
@@ -387,7 +400,7 @@ export function ChatInput({
           </div>
         </MentionPopover>
         <p className="mt-1.5 text-[11px] text-muted-foreground text-center">
-          responses may be inaccurate. commands run directly on the selected machine.
+          responses may be inaccurate. commands run directly on the selected machine(s).
         </p>
       </form>
     </div>

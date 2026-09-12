@@ -284,7 +284,7 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
     // Conversations sit behind a collapsed sidebar here — anchor on the
     // always-mounted composer + target selector.
     await expect(page.getByLabel(/hoot target/i)).toBeVisible();
-    await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
+    await expect(page.getByLabel('chat message')).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });
 
