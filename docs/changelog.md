@@ -155,6 +155,29 @@ produced them. They now use the configured site address (`NEXT_PUBLIC_BASE_URL`)
 so a request served through another hostname — such as the failover origin — still
 sends people to owlette.app.
 
+## [3.3.3] - 2026-09-12
+
+### fixed — a process you close by hand no longer keeps reading as running
+
+Close a managed app yourself and switch its launch mode to **off** before
+owlette's next check, and the process kept showing as running — a green dot and
+a "started N seconds ago" on something that had already exited. It corrected
+itself eventually, up to five minutes later, and not at all if Windows had
+recycled the process id onto something unrelated in the meantime.
+
+owlette wrote a status when it launched a process and when it stopped one, but
+never when a process exited on its own: the stale status was only ever replaced
+as a side effect of relaunching. Take the relaunch away — by switching the mode
+off, or because a scheduled process had left its window — and nothing replaced
+it. Switching a launch mode off now checks whether the process is still alive
+and settles its status immediately, and the periodic cleanup verifies process
+identity rather than just asking whether the id exists, so a recycled id can no
+longer keep a dead entry looking alive.
+
+A process that really is running is untouched, and keeps its stop and restart
+controls. Switching a launch mode off has never stopped a running process and
+still doesn't.
+
 ## [3.3.2] - 2026-09-09
 
 ### fixed — a failed display enumeration is no longer reported as monitors being removed
