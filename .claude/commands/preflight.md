@@ -18,7 +18,8 @@ is unreadable — this separates "still shipping here" from "already fixed on de
 
 - **Exit 1 → DO NOT PUSH.** A `LIVE` or `UNRESOLVED` alert means the vulnerable
   version is pinned in this checkout. Fix it, dismiss it on GitHub with a written
-  reason, or get the user's explicit acceptance and re-run with `--ack "<key>"`.
+  reason, or get the user's explicit acceptance and re-run with `--ack "<key>=<why>"`
+  (a reason is mandatory; `verify:*` keys cannot be acked at all).
 - `fixed here, still open on the default branch` warnings are the normal steady
   state on `dev`; report them, don't act on them.
 

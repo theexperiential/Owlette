@@ -59,8 +59,12 @@ So the raw list mixes "still shipping" with "fixed on dev weeks ago".
   or secret-scanning alert, a draft/triage advisory, or a Dependabot PR left
   open past 30 days. A check that cannot run is itself a blocker.
 - **Exit 1 = STOP.** Each blocker gets fixed, dismissed on GitHub with a written
-  reason, or explicitly accepted by the user — then re-run with `--ack "<key>"`
-  using only the keys the user named. Never ack on your own judgment.
+  reason, or explicitly accepted by the user — then re-run with
+  `--ack "<key>=<why>"` using only the keys the user named. Every ack requires a
+  reason; `verify:*` keys are refused (a check that could not run must be fixed,
+  never waived). Never ack on your own judgment.
+- **List every acked item in the release commit body**, with its reason, so the
+  waiver is auditable in `git log` rather than evaporating with the shell.
 - **Report the warnings too.** `fixed here, still open on the default branch` is
   the expected steady state for `dev`; it clears when `dev` reaches `main`.
 

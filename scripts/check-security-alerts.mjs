@@ -10,20 +10,34 @@
  *
  *   1. genuinely vulnerable code that is still shipping           -> BLOCK
  *   2. already fixed on `dev`, still open because `main` is stale -> warn
- *   3. filed against a manifest this branch no longer has         -> warn
+ *   3. filed against a manifest this branch no longer has         -> re-resolved
+ *      against every sibling manifest of the same ecosystem before it is
+ *      allowed to warn (a workspace that moved is not a dependency that left)
  *
  * In September 2026 that mix reached 39 open alerts, of which 5 were real and
  * two were an unauthenticated RCE in Next.js. Nobody could tell, so nobody
  * looked. This script tells them apart by resolving every open alert against
  * the lockfiles *in this working tree* rather than trusting the alert's state.
  *
- * Fails CLOSED: a check that cannot run is itself a blocker, so a throttled
- * API call never reads as "nothing open".
+ * Fails CLOSED, and that is load-bearing: anything unreadable — a malformed
+ * range, an unrecognised lockfile shape, an unknown ecosystem, a throttled API
+ * call — BLOCKS. It must never be possible for a parser limitation to read as
+ * "safe"; every such path is covered by a negative control in --test.
+ *
+ * GitHub's feed is not the only source. `npm audit` runs over production
+ * dependencies as an independent check, because the alert feed's recall lags:
+ * measured 2026-09-12, a published high-severity js-yaml advisory had no alert
+ * four days on while npm audit flagged it immediately.
  *
  * Usage:
- *   node scripts/check-security-alerts.mjs [--ack KEY[,KEY...]] [--json]
+ *   node scripts/check-security-alerts.mjs [--ack "KEY=reason"[,...]] [--json]
  *                                          [--repo OWNER/NAME] [--stale-days N]
+ *                                          [--no-audit]
  *   node scripts/check-security-alerts.mjs --test      # self-test, no network
+ *
+ * Every --ack needs a written reason, and it is echoed in the verdict so it can
+ * be pasted into the release commit body. `verify:*` keys are NOT ackable: a
+ * check that could not run must be fixed, never waived.
  *
  * Exit: 0 = clear (or every blocker acknowledged), 1 = blocked.
  * Needs: an authenticated `gh` CLI, run from anywhere inside the checkout.
@@ -32,7 +46,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TIMEOUT_MS = 120_000;
@@ -58,13 +72,42 @@ class CheckError extends Error {}
 /** Split a version into numeric release parts plus a prerelease tag. */
 function parseVersion(raw) {
   const text = String(raw).trim().replace(/^[=vV]+/, '');
-  const [core, prerelease = ''] = text.split('-', 2);
+  // Strip build metadata first: semver says it is not part of precedence, and
+  // treating `+build.5` as a fourth release part made 1.0.0+build.5 sort above
+  // 1.0.0. Split the prerelease on the FIRST hyphen only, keeping the whole
+  // remainder ("rc-1" must not truncate to "rc").
+  const core0 = text.split('+')[0];
+  const hyphen = core0.indexOf('-');
+  const core = hyphen === -1 ? core0 : core0.slice(0, hyphen);
+  const prerelease = hyphen === -1 ? '' : core0.slice(hyphen + 1);
   const parts = core.split('.').map((n) => {
     const v = Number.parseInt(n, 10);
     return Number.isNaN(v) ? 0 : v;
   });
   while (parts.length < 3) parts.push(0);
-  return { parts, prerelease: prerelease.split('+')[0] };
+  return { parts, prerelease };
+}
+
+/**
+ * Semver prerelease precedence: dot-separated identifiers, compared left to
+ * right; all-numeric identifiers compare numerically (so rc.10 > rc.9 — plain
+ * string compare got this backwards), numeric sorts below alphanumeric, and a
+ * longer identifier list wins when all earlier ones are equal.
+ */
+function comparePrerelease(a, b) {
+  const pa = a.split('.');
+  const pb = b.split('.');
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    if (pa[i] === undefined) return -1;
+    if (pb[i] === undefined) return 1;
+    if (pa[i] === pb[i]) continue;
+    const na = /^\d+$/.test(pa[i]);
+    const nb = /^\d+$/.test(pb[i]);
+    if (na && nb) return Number(pa[i]) < Number(pb[i]) ? -1 : 1;
+    if (na !== nb) return na ? -1 : 1;
+    return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
 }
 
 /** Compare two versions: -1, 0, or 1. A prerelease sorts below its release. */
@@ -79,17 +122,22 @@ export function compareVersions(a, b) {
   if (va.prerelease === vb.prerelease) return 0;
   if (va.prerelease === '') return 1; // 1.0.0 > 1.0.0-rc.1
   if (vb.prerelease === '') return -1;
-  return va.prerelease < vb.prerelease ? -1 : 1;
+  return comparePrerelease(va.prerelease, vb.prerelease);
 }
 
 /** Does `version` satisfy every comparator in a GitHub vulnerable range? */
 export function inVulnerableRange(version, range) {
-  if (!range || !String(range).trim()) return false;
+  // An absent or empty range is not "not vulnerable" — it is a range we failed
+  // to read. Throwing routes it to the caller's catch, which blocks. Returning
+  // false here would silently clear the alert.
+  if (!range || !String(range).trim()) throw new CheckError('alert carries no vulnerable_version_range');
   const clauses = String(range).split(',').map((c) => c.trim()).filter(Boolean);
-  if (clauses.length === 0) return false;
+  if (clauses.length === 0) throw new CheckError(`unparseable vulnerable range: "${range}"`);
   for (const clause of clauses) {
-    const match = /^(>=|<=|>|<|=)?\s*(.+)$/.exec(clause);
-    if (!match) throw new CheckError(`unparseable version clause: "${clause}"`);
+    // The operand must be a whole version, not merely start like one: `^0.18.0`
+    // and `~> 1.2` used to parse as an equality against a mangled number.
+    const match = /^(>=|<=|>|<|=)?\s*(\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(clause);
+    if (!match) throw new CheckError(`unparseable version clause: "${clause}" in range "${range}"`);
     const op = match[1] ?? '=';
     const cmp = compareVersions(version, match[2].trim());
     const ok =
@@ -110,6 +158,12 @@ export function inVulnerableRange(version, range) {
 /** Every version of `pkg` pinned by an npm lockfile (v2/v3 `packages` map). */
 function npmVersions(text, pkg) {
   const lock = JSON.parse(text);
+  // A lockfile whose shape we do not understand must not read as "the package
+  // isn't here". v1 lockfiles use `dependencies`; a manifest (package.json)
+  // filed as the alert's manifest_path has neither. Both used to yield [].
+  if (!lock || typeof lock.packages !== 'object' || lock.packages === null) {
+    throw new CheckError('not an npm lockfile with a "packages" map (v1 lockfile or a bare package.json?)');
+  }
   const suffix = `node_modules/${pkg}`;
   const found = [];
   for (const [path, entry] of Object.entries(lock.packages ?? {})) {
@@ -148,12 +202,27 @@ function pipVersions(text, pkg) {
   let loose = false;
   const normalize = (s) => s.toLowerCase().replace(/[-_.]+/g, '-');
   for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.split('#')[0].trim();
+    let line = rawLine.split('#')[0].trim();
     if (!line) continue;
+    // pyproject.toml / PEP 621 state dependencies as quoted strings inside an
+    // array: `  "pytest>=8.0",`. Without unwrapping the quote and comma the
+    // name never matched, every package in sdks/python read as absent, and the
+    // alert resolved 'gone' — a silent pass on a manifest Dependabot watches.
+    line = line.replace(/,\s*$/, '').replace(/^["']/, '').replace(/["']$/, '').trim();
+    if (!line) continue;
+    // A requirements include (`-r other.txt`) pulls in pins we are not reading.
+    if (/^-{1,2}r\b/.test(line) || /^--requirement\b/.test(line)) { loose = true; continue; }
+    if (line.startsWith('-')) continue; // other pip flags (--hash, --index-url)
     const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(\[[^\]]*\])?\s*(.*)$/.exec(line);
-    if (!match || normalize(match[1]) !== normalize(pkg)) continue;
+    if (!match) continue;
+    if (normalize(match[1]) !== normalize(pkg)) {
+      // A VCS/URL requirement can name the package only in an #egg= fragment.
+      if (/^(git|hg|svn|bzr)\+|^https?:\/\//.test(line) && new RegExp(`[#&]egg=${pkg}(\\b|$)`, 'i').test(line)) loose = true;
+      continue;
+    }
     const pinned = /==\s*([A-Za-z0-9][A-Za-z0-9.!+*-]*)/.exec(match[3]);
-    if (pinned) found.push(pinned[1]);
+    // `==1.2.*` is a wildcard, not a single version — it cannot be compared.
+    if (pinned && !pinned[1].includes('*')) found.push(pinned[1]);
     else loose = true;
   }
   return { versions: [...new Set(found)], loose };
@@ -202,6 +271,40 @@ export function resolveAlert(alert, { root = REPO_ROOT, readFile = readFileSync,
   if (vulnerable.length > 0) return { state: 'live', versions: vulnerable };
   if (loose) return { state: 'unknown', versions };
   return { state: 'fixed', versions };
+}
+
+/** Every manifest in the tree that could pin a package of the given ecosystem. */
+const ECOSYSTEM_MANIFESTS = {
+  npm: ['package-lock.json', 'web/package-lock.json', 'functions/package-lock.json', 'desktop/package-lock.json'],
+  rust: ['agent/host/Cargo.lock', 'desktop/src-tauri/Cargo.lock'],
+  cargo: ['agent/host/Cargo.lock', 'desktop/src-tauri/Cargo.lock'],
+  pip: ['agent/requirements.txt', 'agent/requirements-dev.txt', 'sdks/python/pyproject.toml',
+    'test/integration/requirements.txt', 'test/infra/agent-runner/requirements.txt'],
+};
+
+/**
+ * An alert's manifest is gone from this branch. Before calling that harmless,
+ * look for the package in every other manifest of the same ecosystem — a
+ * deleted lockfile usually means the workspace moved, not that the dependency
+ * left. Returns which manifests pin it vulnerably and which pin it patched.
+ */
+function resolveElsewhere(alert, opts = {}) {
+  const root = opts.root ?? REPO_ROOT;
+  const ecosystem = (alert?.dependency?.package?.ecosystem ?? '').toLowerCase();
+  const manifests = ECOSYSTEM_MANIFESTS[ecosystem] ?? [];
+  const live = [];
+  const fixed = [];
+  for (const manifest of manifests) {
+    let probe;
+    try {
+      probe = resolveAlert({ ...alert, dependency: { ...alert.dependency, manifest_path: manifest } }, opts);
+    } catch {
+      continue; // an unreadable sibling is not evidence either way
+    }
+    if (probe.state === 'live') live.push(`${manifest} (${probe.versions.join(', ')})`);
+    else if (probe.state === 'fixed') fixed.push(`${manifest} (${probe.versions.join(', ')})`);
+  }
+  return { live, fixed };
 }
 
 // ---------------------------------------------------------------------------
@@ -268,49 +371,93 @@ function checkDependabotAlerts(repo, findings, alertedPackages) {
     const what = `[${severity}] ${where} -> fix ${fixedIn}: ${advisory.summary ?? ''}`;
     // Only an alert that is still live HERE makes a pending PR for that package
     // urgent. An alert left open because `main` is stale does not.
-    if ((resolved.state === 'live' || resolved.state === 'unknown') && pkg !== '?') alertedPackages.add(pkg);
+    // Arm the stale-security-PR rule only for packages this branch cannot show
+    // to be safe. An orphaned alert whose package resolves patched in a sibling
+    // manifest is settled, and must not make a superseded PR look urgent.
+    const arms = resolved.state === 'live' || resolved.state === 'unknown' || resolved.state === 'gone';
+    if (arms && pkg !== '?') alertedPackages.add(pkg);
 
-    if (resolved.state === 'live' && BLOCKING_SEVERITIES.has(severity)) {
-      findings.push(finding('block', key, `LIVE on this branch (${resolved.versions.join(', ')}) ${what}`));
+    if (resolved.state === 'live') {
+      // Unconditionally. Severity is reported, never used to excuse a live
+      // pin: an unrecognised severity string used to fall past every branch
+      // and land in the final else, warning with the wrong text entirely.
+      const note = BLOCKING_SEVERITIES.has(severity) ? '' : ' (unrecognised severity — blocking anyway)';
+      findings.push(finding('block', key, `LIVE on this branch (${resolved.versions.join(', ')})${note} ${what}`));
     } else if (resolved.state === 'unknown') {
       findings.push(finding('block', key, `UNRESOLVED — cannot prove this branch is safe. ${what}`));
-    } else if (resolved.state === 'fixed') {
-      findings.push(finding('warn', key, `fixed here (${resolved.versions.join(', ')}), still open on the default branch — clears when dev reaches main. ${what}`));
     } else if (resolved.state === 'gone') {
-      findings.push(finding('warn', key, `package no longer in ${manifest} on this branch. ${what}`));
+      // The manifest parsed but does not pin the package. That is not proof of
+      // safety — it is what every parser limitation looks like from here.
+      findings.push(finding('block', key, `UNPROVEN — ${manifest} parsed but pins no ${pkg}; cannot confirm this branch is safe. ${what}`));
+    } else if (resolved.state === 'orphaned') {
+      // The manifest is gone from this branch, but the package may simply have
+      // moved (cli/ and sdks/node/ became root workspaces in 1b30cc11). Re-resolve
+      // against every other same-ecosystem manifest before downgrading.
+      const elsewhere = resolveElsewhere(alert);
+      if (elsewhere.live.length > 0 && pkg !== '?') alertedPackages.add(pkg);
+      if (elsewhere.live.length > 0) {
+        findings.push(finding('block', key, `LIVE elsewhere on this branch — ${manifest} is gone, but ${elsewhere.live.join('; ')} still pins a vulnerable version. ${what}`));
+      } else if (elsewhere.fixed.length > 0) {
+        findings.push(finding('warn', key, `${manifest} does not exist on this branch; ${pkg} resolved patched in ${elsewhere.fixed.join('; ')}. ${what}`));
+      } else {
+        findings.push(finding('warn', key, `${manifest} does not exist on this branch and ${pkg} appears in no other manifest. ${what}`));
+      }
     } else {
-      findings.push(finding('warn', key, `${manifest} does not exist on this branch. ${what}`));
+      findings.push(finding('warn', key, `fixed here (${resolved.versions.join(', ')}), still open on the default branch — clears when dev reaches main. ${what}`));
     }
   }
 }
 
-function checkScanningAlerts(repo, findings, branch) {
+function checkScanningAlerts(repo, findings, branch, gitRef) {
   for (const kind of ['code-scanning', 'secret-scanning']) {
     let alerts;
+    // Code scanning is per-ref and DEFAULTS TO THE DEFAULT BRANCH. Asking
+    // without `ref` returned main's alerts on every branch, so 14 open CodeQL
+    // alerts on dev (10 of them high) were invisible to this gate entirely.
+    // Secret scanning is repo-wide and takes no ref.
+    const refParam = kind === 'code-scanning' && gitRef ? `&ref=${encodeURIComponent(gitRef)}` : '';
     try {
-      alerts = ghJson(['api', '--paginate', `repos/${repo}/${kind}/alerts?state=open&per_page=100`]);
+      alerts = ghJson(['api', '--paginate', `repos/${repo}/${kind}/alerts?state=open&per_page=100${refParam}`]);
     } catch (err) {
       // A repo with the feature switched off answers 404; that is not a finding.
-      if (/404|not enabled|disabled/i.test(err.message)) continue;
+      if (/404|not enabled|disabled/i.test(err.message)) {
+        findings.push(finding('warn', `verify:${kind}`,
+          `${kind} returned 404 — feature disabled, or unreadable with this token. Not checked.`));
+        continue;
+      }
       findings.push(finding('block', `verify:${kind}`, `could not read ${kind} alerts: ${err.message}`));
       continue;
     }
     if (!Array.isArray(alerts)) continue;
+    // Zero alerts means "clean" only if an analysis actually exists for this
+    // ref. A branch CodeQL has never scanned answers identically to one with
+    // nothing wrong — which is the precise confusion this whole script exists
+    // to remove, so say which it is.
+    if (kind === 'code-scanning' && alerts.length === 0 && gitRef) {
+      let analyses = null;
+      try {
+        analyses = ghJson(['api', `repos/${repo}/code-scanning/analyses?ref=${encodeURIComponent(gitRef)}&per_page=1`]);
+      } catch { /* 403/404 handled as a warning below */ }
+      if (!Array.isArray(analyses) || analyses.length === 0) {
+        findings.push(finding('warn', 'verify:code-scanning-coverage',
+          `no code-scanning analysis exists for ${gitRef} — SAST has not run on this ref, so "no alerts" is not evidence of anything. `
+          + 'It will be graded once this lands on a scanned branch (dev/main).'));
+      }
+    }
     for (const alert of alerts) {
       const label =
         kind === 'code-scanning'
           ? `${alert?.rule?.id ?? '?'} in ${alert?.most_recent_instance?.location?.path ?? '?'}`
           : (alert?.secret_type_display_name ?? alert?.secret_type ?? '?');
-      // Code scanning is per-ref, and it has exactly the same staleness trap as
-      // Dependabot: zizmor only scanned `main` for a long time, so every alert
-      // described `main`'s workflows while `dev` had moved on. Only an alert
-      // whose latest instance is on THIS branch is evidence about this branch.
-      const ref = alert?.most_recent_instance?.ref;
-      const onThisBranch = !ref || !branch || ref === `refs/heads/${branch}`;
-      const level = kind === 'secret-scanning' || onThisBranch ? 'block' : 'warn';
-      const where = onThisBranch ? '' : ` [last seen on ${String(ref).replace('refs/heads/', '')}, not ${branch}]`;
-      findings.push(finding(level, `alert:${kind}:${alert?.number}`,
-        `open ${kind} alert: ${label}${where} ${alert?.html_url ?? ''}`));
+      // The query is already scoped to this ref, so everything returned is
+      // evidence about this branch. Severity decides the level: CodeQL's
+      // security_severity_level for real findings, and `warning`-class lint
+      // (zizmor's ref-version-mismatch) is reported without blocking a release.
+      const sev = (alert?.rule?.security_severity_level ?? '').toLowerCase();
+      const blocking = kind === 'secret-scanning' || sev === 'critical' || sev === 'high';
+      const tag = sev ? `[${sev}] ` : '';
+      findings.push(finding(blocking ? 'block' : 'warn', `alert:${kind}:${alert?.number}`,
+        `open ${kind} alert: ${tag}${label} ${alert?.html_url ?? ''}`));
     }
   }
 }
@@ -383,13 +530,73 @@ function checkDependabotPrs(repo, findings, staleDays, alertedPackages) {
   }
 }
 
+/** Workspaces with their own lockfile, each audited independently. */
+const NPM_WORKSPACES = ['.', 'web', 'functions', 'desktop'];
+
+/**
+ * A second, independent source of truth.
+ *
+ * Everything above reads GitHub's alert feed, which improves *precision* and
+ * adds no *recall*: it can only report what Dependabot has already filed.
+ * Measured 2026-09-12 — GHSA-2883-xcg3-v3hh (js-yaml, high) was published four
+ * days earlier and still had no alert on any manifest, while `npm audit`
+ * flagged js-yaml 4.3.1 in web's PRODUCTION tree immediately. Relying on one
+ * feed is how a live high-severity vulnerability reads as CLEAR.
+ *
+ * Production dependencies only, high and above: a dev-only advisory is not a
+ * reason to block a release, and this runs on every push.
+ */
+function checkNpmAudit(findings, opts = {}) {
+  const root = opts.root ?? REPO_ROOT;
+  for (const ws of NPM_WORKSPACES) {
+    const dir = ws === '.' ? root : join(root, ws);
+    if (!existsSync(join(dir, 'package-lock.json'))) continue;
+    let report;
+    try {
+      // npm audit exits non-zero when it FINDS something, so a throw here is
+      // the normal path; the JSON is on stdout either way.
+      report = execFileSync('npm', ['audit', '--omit=dev', '--json'], {
+        cwd: dir, encoding: 'utf8', timeout: TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 64 * 1024 * 1024, shell: process.platform === 'win32',
+      });
+    } catch (err) {
+      report = err.stdout;
+      if (!report || !String(report).trim()) {
+        findings.push(finding('block', `verify:audit:${ws}`,
+          `npm audit could not run in ${ws}: ${String(err.stderr || err.message).trim().split('\n')[0].slice(0, 200)}`));
+        continue;
+      }
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(report);
+    } catch {
+      findings.push(finding('block', `verify:audit:${ws}`, `npm audit in ${ws} returned unparseable JSON`));
+      continue;
+    }
+    for (const [name, vuln] of Object.entries(parsed?.vulnerabilities ?? {})) {
+      const severity = String(vuln?.severity ?? '').toLowerCase();
+      if (severity !== 'high' && severity !== 'critical') continue;
+      const via = (vuln.via ?? []).filter((v) => typeof v === 'object');
+      const title = via[0]?.title ?? 'see npm audit';
+      const url = via[0]?.url ?? '';
+      const fix = vuln?.fixAvailable === false ? 'NO FIX AVAILABLE'
+        : (vuln?.fixAvailable?.version ? `fix ${vuln.fixAvailable.name}@${vuln.fixAvailable.version}` : 'fix available');
+      findings.push(finding('block', `audit:${ws}:${name}`,
+        `npm audit (production deps, ${ws === '.' ? 'repo root' : ws}): [${severity}] ${name} ${vuln.range ?? ''} — ${title}. ${fix}. ${url}`));
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // self-test — a checker that cannot fail is worth nothing
 // ---------------------------------------------------------------------------
 
 function selfTest() {
   const failures = [];
+  let assertions = 0;
   const check = (name, actual, expected) => {
+    assertions += 1;
     const a = JSON.stringify(actual);
     const e = JSON.stringify(expected);
     if (a !== e) failures.push(`${name}: expected ${e}, got ${a}`);
@@ -405,6 +612,30 @@ function selfTest() {
   check('smol-toml 1.8.0 is NOT vulnerable', inVulnerableRange('1.8.0', '<= 1.7.0'), false);
   check('prerelease sorts below its release', inVulnerableRange('4.0.0-beta.10', '>= 4.0.0-beta.10, < 4.0.33'), true);
   check('short version pads to zero', inVulnerableRange('0.18', '< 0.20.0'), true);
+
+  // Prerelease precedence, numeric not lexicographic. The old assertion above
+  // compared beta.10 to itself and so never reached this code: a mutation that
+  // returned 0 from compareVersions still passed the whole suite.
+  check('rc.10 is newer than rc.9', compareVersions('1.0.0-rc.10', '1.0.0-rc.9'), 1);
+  check('a prerelease is below its release', compareVersions('1.0.0-rc.1', '1.0.0'), -1);
+  check('prerelease floor catches a later prerelease',
+    inVulnerableRange('1.0.0-rc.10', '>= 1.0.0-rc.9, < 2.0.0'), true);
+  check('hyphenated prerelease is not truncated', compareVersions('1.0.0-rc-2', '1.0.0-rc-1'), 1);
+  check('build metadata is not a release part', compareVersions('1.0.0+build.5', '1.0.0'), 0);
+  check('build metadata still lands in range', inVulnerableRange('1.0.0+build.5', '<= 1.0.0'), true);
+
+  // Fail-closed contract: an unreadable range must THROW, never read as safe.
+  const throws = (name, fn) => {
+    assertions += 1;
+    try { fn(); failures.push(`${name}: expected a throw, got none`); } catch { /* expected */ }
+  };
+  throws('missing range throws', () => inVulnerableRange('1.0.0', undefined));
+  throws('empty range throws', () => inVulnerableRange('1.0.0', '   '));
+  throws('caret range throws', () => inVulnerableRange('0.18.5', '^0.18.0'));
+  throws('unknown operator throws', () => inVulnerableRange('1.2.0', '~> 1.2'));
+  throws('prose range throws', () => inVulnerableRange('1.2.0', 'sometimes'));
+  throws('v1 lockfile throws', () => npmVersions(JSON.stringify({ lockfileVersion: 1, dependencies: { next: { version: '16.3.2' } } }), 'next'));
+  throws('bare package.json throws', () => npmVersions(JSON.stringify({ name: 'cli', dependencies: { 'smol-toml': '^1.7.1' } }), 'smol-toml'));
 
   // Lockfile parsing, including a nested (non-hoisted) copy.
   const npmLock = JSON.stringify({
@@ -431,6 +662,13 @@ function selfTest() {
   check('pip loose floor is not a pin', pipVersions('pytest>=7.0\n', 'pytest'), { versions: [], loose: true });
   check('pip name normalization', pipVersions('pytest_asyncio==1.4.0\n', 'pytest-asyncio'), { versions: ['1.4.0'], loose: false });
   check('pip comment ignored', pipVersions('# pytest==1.0.0\npytest==9.0.3\n', 'pytest'), { versions: ['9.0.3'], loose: false });
+  // pyproject arrays: the form that made every sdks/python dependency invisible.
+  check('pyproject quoted dep is seen',
+    pipVersions('dependencies = [\n  "pytest>=8.0",\n  "httpx>=0.27.0",\n]\n', 'pytest'), { versions: [], loose: true });
+  check('pyproject exact pin is read',
+    pipVersions('  "pytest==9.1.1",\n', 'pytest'), { versions: ['9.1.1'], loose: false });
+  check('requirements include is not silence', pipVersions('-r base.txt\n', 'pytest'), { versions: [], loose: true });
+  check('wildcard pin is not a version', pipVersions('pytest==9.0.*\n', 'pytest'), { versions: [], loose: true });
 
   // End-to-end classification against a synthetic tree — the negative control
   // is the same alert resolving to 'fixed' once the lockfile is patched.
@@ -454,12 +692,28 @@ function selfTest() {
     ...alert, dependency: { ...alert.dependency, package: { name: 'actions/checkout', ecosystem: 'github-actions' } },
   }, fakeTree('16.3.2')).state, 'unknown');
 
+  // An orphaned manifest must be re-checked against its siblings: a workspace
+  // that moved is not a dependency that left.
+  const orphanAlert = {
+    dependency: { manifest_path: 'cli/package-lock.json', package: { name: 'smol-toml', ecosystem: 'npm' } },
+    security_vulnerability: { vulnerable_version_range: '<= 1.7.0' },
+  };
+  const siblingTree = (version) => ({
+    root: '/fake',
+    exists: (p) => !String(p).includes('cli'),
+    readFile: () => JSON.stringify({ packages: { 'node_modules/smol-toml': { version } } }),
+  });
+  check('orphan still vulnerable elsewhere is caught',
+    resolveElsewhere(orphanAlert, siblingTree('1.6.1')).live.length > 0, true);
+  check('orphan patched elsewhere is not a blocker',
+    resolveElsewhere(orphanAlert, siblingTree('1.8.0')).live.length, 0);
+
   if (failures.length > 0) {
     console.error(`self-test FAILED (${failures.length}):`);
     for (const f of failures) console.error(`  - ${f}`);
     return 1;
   }
-  console.log('self-test passed (24 assertions)');
+  console.log(`self-test passed (${assertions} assertions)`);
   return 0;
 }
 
@@ -475,9 +729,64 @@ function main(argv) {
     return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
   };
   const staleDays = Number.parseInt(valueOf('--stale-days', String(DEFAULT_STALE_DAYS)), 10);
-  const acks = new Set(
-    args.flatMap((a, i) => (args[i - 1] === '--ack' ? a.split(',') : [])).map((k) => k.trim()).filter(Boolean),
-  );
+  if (!Number.isFinite(staleDays) || staleDays < 0) {
+    console.error(`RESULT: BLOCKED — --stale-days must be a non-negative integer (got "${valueOf('--stale-days', '')}")`);
+    return 1;
+  }
+  // Every ack must carry a reason: `--ack "key=why"`. The reason is printed in
+  // the verdict so it can be pasted into the release commit body, which is the
+  // one thing that makes a waiver auditable later.
+  const acks = new Map();
+
+  // Standing waivers live in git (.github/security-acks.json) so they are
+  // reviewable in a PR and attributable in `git log`, and they EXPIRE — an
+  // expired waiver stops applying and its finding blocks again, so nothing
+  // accumulates here unnoticed.
+  const expired = [];
+  const ackFile = join(REPO_ROOT, '.github', 'security-acks.json');
+  if (existsSync(ackFile)) {
+    let doc;
+    try {
+      doc = JSON.parse(readFileSync(ackFile, 'utf8'));
+    } catch (err) {
+      console.error(`RESULT: BLOCKED — .github/security-acks.json is unreadable (${err.message}); fix it rather than deleting it`);
+      return 1;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [key, entry] of Object.entries(doc?.acks ?? {})) {
+      const reason = entry?.reason?.trim();
+      if (!reason || !entry?.expires || !entry?.accepted_by) {
+        console.error(`RESULT: BLOCKED — .github/security-acks.json entry "${key}" needs reason, accepted_by and expires`);
+        return 1;
+      }
+      if (entry.expires < today) { expired.push(`${key} (expired ${entry.expires})`); continue; }
+      acks.set(key, `${reason} [accepted by ${entry.accepted_by} on ${entry.accepted_on ?? '?'}, expires ${entry.expires}]`);
+    }
+  }
+
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] !== '--ack' || !args[i + 1]) continue;
+    for (const entry of args[i + 1].split(',')) {
+      const text = entry.trim();
+      if (!text) continue;
+      const eq = text.indexOf('=');
+      acks.set(eq === -1 ? text : text.slice(0, eq).trim(), eq === -1 ? '' : text.slice(eq + 1).trim());
+    }
+  }
+  const reasonless = [...acks].filter(([, why]) => !why).map(([k]) => k);
+  if (reasonless.length > 0) {
+    console.error(`RESULT: BLOCKED — every --ack needs a reason: --ack "${reasonless[0]}=<why the user accepted it>". `
+      + `Missing a reason for: ${reasonless.join(', ')}`);
+    return 1;
+  }
+  // A check that could not RUN is never waivable. Allowing --ack verify:dependabot
+  // would switch off dependency checking entirely and leave no trace.
+  const unwaivable = [...acks.keys()].filter((k) => k.startsWith('verify:'));
+  if (unwaivable.length > 0) {
+    console.error(`RESULT: BLOCKED — verify:* keys cannot be acked; a check that cannot run must be fixed, `
+      + `not waived. Refused: ${unwaivable.join(', ')}`);
+    return 1;
+  }
 
   let repo = valueOf('--repo', null);
   if (!repo) {
@@ -499,29 +808,56 @@ function main(argv) {
   }
   if (!branch || branch === 'HEAD') branch = '';
 
+  // The ref the code-scanning feed must be asked about. GITHUB_REF is exact in
+  // Actions (refs/pull/N/merge on a PR, where GITHUB_REF_NAME is "N/merge" and
+  // matches no branch); fall back to this checkout's branch.
+  const gitRef = process.env.GITHUB_REF || (branch ? `refs/heads/${branch}` : '');
+
   const findings = [];
   const alertedPackages = new Set();
   checkDependabotAlerts(repo, findings, alertedPackages);
-  checkScanningAlerts(repo, findings, branch);
+  checkScanningAlerts(repo, findings, branch, gitRef);
   checkAdvisories(repo, findings);
   checkDependabotPrs(repo, findings, staleDays, alertedPackages);
+  if (!args.includes('--no-audit')) checkNpmAudit(findings);
 
   const blockers = findings.filter((f) => f.level === 'block');
   const openBlockers = blockers.filter((f) => !acks.has(f.key));
   const warnings = findings.filter((f) => f.level === 'warn');
 
   if (asJson) {
-    console.log(JSON.stringify({ repo, blockers, warnings, acked: [...acks], blocked: openBlockers.length > 0 }, null, 2));
+    console.log(JSON.stringify({
+      repo, ref: gitRef, blockers, warnings,
+      acked: [...acks].map(([key, reason]) => ({ key, reason })),
+      blocked: openBlockers.length > 0,
+    }, null, 2));
     return openBlockers.length > 0 ? 1 : 0;
   }
 
   console.log(`owlette security preflight: ${repo} (resolved against ${branch || 'this checkout'})`);
-  for (const [title, items] of [['BLOCKING', blockers], ['WARNING', warnings]]) {
-    console.log(`${title} (${items.length})`);
-    for (const f of items) console.log(`  ${acks.has(f.key) ? 'ACKED ' : ''}[${f.key}] ${f.text}`);
+  console.log(`BLOCKING (${blockers.length})`);
+  for (const f of blockers) console.log(`  ${acks.has(f.key) ? 'ACKED ' : ''}[${f.key}] ${f.text}`);
+
+  // Warnings are dominated by two expected steady states on `dev`: alerts
+  // already fixed here that stay open until dev reaches main, and alerts
+  // against manifests this branch does not carry. Enumerating 80+ of those at
+  // every release is the same noise that made the alert list unreadable to
+  // begin with, so they collapse to a count and only the rest are listed.
+  const isRoutine = (f) => /still open on the default branch|does not exist on this branch/.test(f.text);
+  const routine = warnings.filter(isRoutine);
+  const actionable = warnings.filter((f) => !isRoutine(f));
+  console.log(`WARNING (${warnings.length})`);
+  for (const f of actionable) console.log(`  [${f.key}] ${f.text}`);
+  if (routine.length > 0) {
+    console.log(`  ... plus ${routine.length} routine: already patched on this branch, or filed against a manifest `
+      + 'this branch does not carry. Re-run with --json to enumerate.');
   }
-  for (const key of [...acks].filter((k) => !findings.some((f) => f.key === k)).sort()) {
-    console.log(`NOTE: --ack ${key} matched nothing; check the key`);
+  for (const [key, why] of acks) {
+    if (findings.some((f) => f.key === key)) console.log(`ACKED ${key} — ${why}`);
+    else console.log(`NOTE: ack ${key} matched nothing; the finding is gone — remove the entry`);
+  }
+  for (const item of expired) {
+    console.log(`EXPIRED WAIVER: ${item} — no longer applied. Re-accept it with a new expiry, or fix the finding.`);
   }
 
   if (openBlockers.length > 0) {
@@ -533,6 +869,9 @@ function main(argv) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('check-security-alerts.mjs')) {
+// `file://${argv[1]}` never matches on Windows (backslashes, drive letter), so
+// the guard rested entirely on the filename check — meaning a renamed copy ran
+// nothing and exited 0. pathToFileURL normalises both sides on every platform.
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   process.exit(main(process.argv));
 }
