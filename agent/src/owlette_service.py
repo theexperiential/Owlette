@@ -408,6 +408,62 @@ def _retire_dead_status_row(service, pid, process_list_id):
         f"('{process_list_id}') - the process is no longer running")
 
 
+def _retire_dead_rows_for_entry(service, process_id):
+    """Retire every row bound to `process_id` that still claims life on a dead pid.
+
+    The per-tick counterpart to the retirement in handle_process, and the one that
+    covers the reported repro. The main loop routes an entry by the launch mode it
+    reads at the TOP of the tick, so the moment the mode reads 'off' the entry
+    stops reaching handle_process at all and the bail in there is unreachable for
+    it. Kill a process by hand and switch it off before the next tick -- which is
+    the whole repro -- and the off-mode path is the only one the entry still
+    takes, so this is the only place left to notice.
+
+    Same status rule as _retire_dead_status_row: only RUNNING/LAUNCHING/STALLED,
+    the ones asserting the process is alive. RESTARTING in particular must
+    survive -- its pid is dead BY DESIGN while the caller waits to relaunch it.
+    """
+    try:
+        states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    except Exception as e:
+        logging.warning(f"Could not read app_states to retire rows for '{process_id}': {e}")
+        return
+    if not isinstance(states, dict):
+        return
+
+    # Candidates come from the FILE, not `service.results`: this also runs off
+    # the main loop (a remote config apply, a set_launch_mode command), where
+    # that snapshot is whatever the last tick read and may not hold the row at
+    # all. The file is the authority, and read-modify-write is how every other
+    # writer here touches it.
+    doomed = [
+        pid_str for pid_str, row in states.items()
+        if isinstance(row, dict)
+        and row.get('id') == process_id
+        and row.get('status') in _LIVE_CLAIM_STATUSES
+        and pid_str.isdigit()
+        and not _pid_still_ours(int(pid_str), row)
+    ]
+    if not doomed:
+        return
+
+    for pid_str in doomed:
+        states.pop(pid_str, None)
+    try:
+        shared_utils.write_json_to_file(states, shared_utils.RESULT_FILE_PATH)
+    except Exception as e:
+        logging.warning(f"Could not retire stale rows for '{process_id}': {e}")
+        return
+    # And out of the tick's in-memory snapshot, which cleanup_stale_tracking_data
+    # writes back wholesale and would otherwise restore.
+    if isinstance(getattr(service, 'results', None), dict):
+        for pid_str in doomed:
+            service.results.pop(pid_str, None)
+    logging.info(
+        f"Retired stale row(s) for '{process_id}' (PID {', '.join(doomed)}) "
+        f"- the process is no longer running")
+
+
 def _surface_launch_failed(process_list_id, pid=None):
     """Write LAUNCH_FAILED where the desktop and web will actually show it (D5).
 
@@ -3853,6 +3909,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
         process_id = process.get('id')
         if not process_id:
             return
+        # Safety net for the rows the transition edge cannot catch: one written
+        # while the entry was ALREADY off (a desktop restart's relaunch, an
+        # adopted instance), or a transition the service was not running for.
+        # The transition handler is what makes switching to off feel immediate;
+        # this is what makes it eventually true regardless.
+        _retire_dead_rows_for_entry(self, process_id)
         marked = [
             pid_str for pid_str, state in self.results.items()
             if isinstance(state, dict)
@@ -3909,6 +3971,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if new_mode == 'off' and old_active:
             logging.info(f"Launch mode set to off for {name} - stopping monitoring (process stays running)")
             self.manual_overrides.pop(process_id, None)
+            # Settle the status HERE, not on some later tick. This is the last
+            # moment the entry is still being monitored: from the next tick the
+            # main loop routes an off entry away from handle_process entirely, so
+            # a row left claiming RUNNING on a process the user already closed
+            # has nothing left to correct it but the five-minute sweep. A live
+            # process keeps its row (and the desktop's kill/restart controls) --
+            # switching the mode off has never stopped anything and still
+            # doesn't.
+            _retire_dead_rows_for_entry(self, process_id)
             return
 
         if old_mode == 'off' and new_mode == 'always':

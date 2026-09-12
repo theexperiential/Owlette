@@ -392,3 +392,178 @@ def test_sweep_keeps_a_live_row_with_no_identity_record(
     svc.cleanup_stale_tracking_data()
 
     assert str(PID) in read_states(state_file)
+
+
+# ==========================================================================
+# the off-mode tick: the path the REPORTED repro actually takes
+# ==========================================================================
+
+def make_offmode_service(results):
+    """A service double carrying the real off-mode tick handler.
+
+    The main loop routes an entry by the launch mode it reads at the TOP of the
+    tick (owlette_service.py, `if mode == 'always' ... else
+    self._relaunch_if_restarting(process)`). So once the mode is off, the entry
+    never reaches handle_process again — and the declined-relaunch bail inside it
+    is unreachable for that entry from then on.
+    """
+    from owlette_service import OwletteService
+    svc = SimpleNamespace(
+        results=results,
+        last_started={},
+        _skip_launch_delay=set(),
+        firebase_client=None,
+    )
+    svc._relaunch_if_restarting = (
+        OwletteService._relaunch_if_restarting.__get__(svc, OwletteService))
+    return svc
+
+
+def test_offmode_tick_retires_a_stale_running_row(state_file, monkeypatch):
+    """THE REPORTED REPRO, in the ordering the user described: the process is
+    killed and the mode is switched off BEFORE the loop next looks. From the
+    next tick on the entry is dispatched to the off-mode handler, so whatever
+    handle_process would have done never happens — and nothing retires the row
+    until the five-minute sweep.
+    """
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(monkeypatch, {})          # the pid is dead
+    install_config(monkeypatch, 'off')
+    svc = make_offmode_service(json.loads(state_file.read_text()))
+
+    svc._relaunch_if_restarting(dict(ENTRY, launch_mode='off'))
+
+    assert str(PID) not in read_states(state_file), (
+        'the off-mode tick left a RUNNING row on a dead pid')
+    assert str(PID) not in svc.results
+
+
+def test_offmode_tick_leaves_a_live_process_alone(state_file, monkeypatch):
+    """An off-mode process that is genuinely running keeps its row, and with it
+    the desktop's kill and restart controls."""
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(monkeypatch, {PID: FakeProc(PID, CREATE_TIME, EXE)})
+    install_config(monkeypatch, 'off')
+    svc = make_offmode_service(json.loads(state_file.read_text()))
+
+    svc._relaunch_if_restarting(dict(ENTRY, launch_mode='off'))
+
+    assert read_states(state_file)[str(PID)]['status'] == 'RUNNING'
+
+
+def test_offmode_tick_keeps_the_restarting_marker(state_file, monkeypatch):
+    """The marker this handler exists to read must survive: a desktop restart of
+    an off-mode process marks the row RESTARTING, and the pid is dead by design
+    while the relaunch is pending."""
+    write_states(state_file, {str(PID): row('RESTARTING')})
+    install_process_table(monkeypatch, {})
+    install_config(monkeypatch, 'off')
+    svc = make_offmode_service(json.loads(state_file.read_text()))
+    launched = []
+    svc.handle_process_launch = lambda process: launched.append(process) or 999
+
+    svc._relaunch_if_restarting(dict(ENTRY, launch_mode='off'))
+
+    # It is consumed by the relaunch, not retired out from under it.
+    assert launched, 'a marked restart must still relaunch'
+
+
+# ==========================================================================
+# the transition edge: settle the status the moment the mode flips
+# ==========================================================================
+
+def make_transition_service(results):
+    """A service double carrying the real launch-mode transition handler."""
+    from owlette_service import OwletteService
+    svc = SimpleNamespace(
+        results=results,
+        last_started={},
+        manual_overrides={ENTRY_ID: True},
+        relaunch_attempts={},
+        _skip_launch_delay=set(),
+        _cached_site_timezone=None,
+        firebase_client=None,
+    )
+    svc._apply_launch_mode_transition = (
+        OwletteService._apply_launch_mode_transition.__get__(svc, OwletteService))
+    return svc
+
+
+def test_switching_to_off_settles_a_dead_process_immediately(
+        state_file, monkeypatch):
+    """What the user asked for: flipping the mode to off checks whether the pid
+    is still alive and settles the status there and then, rather than leaving it
+    to a tick that will never look at this entry again.
+    """
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(monkeypatch, {})          # closed by hand a moment ago
+    svc = make_transition_service(json.loads(state_file.read_text()))
+
+    svc._apply_launch_mode_transition(ENTRY_ID, 'always', 'off', dict(ENTRY))
+
+    assert str(PID) not in read_states(state_file), (
+        'the status was left claiming RUNNING at the moment monitoring stopped')
+    assert str(PID) not in svc.results
+
+
+def test_switching_to_off_leaves_a_running_process_alone(
+        state_file, monkeypatch):
+    """The log line says it outright — "process stays running". Switching the
+    mode off has never stopped or hidden a live process, and must not start."""
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(monkeypatch, {PID: FakeProc(PID, CREATE_TIME, EXE)})
+    calls = []
+    monkeypatch.setattr(shared_utils, 'graceful_terminate',
+                        lambda *a, **k: calls.append(a) or True)
+    svc = make_transition_service(json.loads(state_file.read_text()))
+
+    svc._apply_launch_mode_transition(ENTRY_ID, 'always', 'off', dict(ENTRY))
+
+    assert read_states(state_file)[str(PID)]['status'] == 'RUNNING'
+    assert calls == [], 'mode-off must never terminate anything'
+
+
+def test_switching_to_off_settles_a_recycled_pid(state_file, monkeypatch):
+    """Identity, not bare liveness: the pid is alive, but it belongs to a
+    stranger now. The row still describes a process that is gone."""
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(
+        monkeypatch,
+        {PID: FakeProc(PID, CREATE_TIME + 500.0, 'c:\windows\notepad.exe')})
+    svc = make_transition_service(json.loads(state_file.read_text()))
+
+    svc._apply_launch_mode_transition(ENTRY_ID, 'always', 'off', dict(ENTRY))
+
+    assert str(PID) not in read_states(state_file)
+
+
+def test_switching_to_off_works_when_the_tick_snapshot_is_empty(
+        state_file, monkeypatch):
+    """The handler also runs off the main loop — a remote config apply, a
+    set_launch_mode command — where `self.results` is whatever the last tick
+    read and may not hold the row at all. Candidates come from the file."""
+    write_states(state_file, {str(PID): row('RUNNING')})
+    install_process_table(monkeypatch, {})
+    svc = make_transition_service({})               # nothing in the snapshot
+
+    svc._apply_launch_mode_transition(ENTRY_ID, 'always', 'off', dict(ENTRY))
+
+    assert str(PID) not in read_states(state_file)
+
+
+def test_switching_to_off_leaves_another_entrys_row_alone(
+        state_file, monkeypatch):
+    """Scoped to the entry whose mode changed. A different process that happens
+    to be dead is not this transition's business."""
+    write_states(state_file, {
+        str(PID): row('RUNNING'),
+        '9999': {'id': 'other-proc', 'status': 'RUNNING', 'timestamp': 100},
+    })
+    install_process_table(monkeypatch, {})
+    svc = make_transition_service(json.loads(state_file.read_text()))
+
+    svc._apply_launch_mode_transition(ENTRY_ID, 'always', 'off', dict(ENTRY))
+
+    states = read_states(state_file)
+    assert str(PID) not in states
+    assert '9999' in states, "another entry's row was swept by this transition"
