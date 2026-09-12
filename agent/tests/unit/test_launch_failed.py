@@ -452,7 +452,11 @@ def test_sweep_clears_leftover_once_entry_is_live_again(
         '5555': recorded_row(timestamp=300),
     }
     write_states(state_file, states)
-    install_process_table(monkeypatch, {5555: FakeProc(5555, 1.0, EXE)})
+    # The live process must be the one row 5555 RECORDS, create_time included:
+    # the sweep verifies identity rather than bare liveness, so a mismatch here
+    # would be pid reuse -- the entry would have no live generation, and the
+    # LAUNCH_FAILED surfacing would rightly be kept instead of swept.
+    install_process_table(monkeypatch, {5555: FakeProc(5555, CREATE_TIME, EXE)})
     svc = make_cleanup_service(json.loads(state_file.read_text()))
 
     svc.cleanup_stale_tracking_data()

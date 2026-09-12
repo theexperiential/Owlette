@@ -335,6 +335,79 @@ def _drop_identity_row(pid):
         logging.warning(f"Could not remove stale identity row for PID {pid}: {e}")
 
 
+# Statuses that assert the pid's process is alive RIGHT NOW. Both UIs render an
+# app_states row verbatim -- the desktop through LIVE_STATUSES
+# (desktop/src/lib/processStatus.ts) and the dashboard through
+# get_system_metrics -- so a row in one of these that outlives its pid is a dead
+# process showing green.
+_LIVE_CLAIM_STATUSES = frozenset({'RUNNING', 'LAUNCHING', 'STALLED'})
+
+
+def _pid_still_ours(pid, row):
+    """True while `pid` is alive AND is still the process `row` recorded.
+
+    Bare pid_exists is not enough for the stale-row sweep: Windows recycles
+    pids, so a row whose process is long gone can be held alive indefinitely by
+    an unrelated process that inherited its number -- and the entry goes on
+    reading green forever rather than for one cleanup interval.
+
+    Rows written before identity records existed carry no create_time and have
+    nothing to verify, so they keep the old liveness rule instead of being swept
+    on a technicality.
+    """
+    if not psutil.pid_exists(pid):
+        return False
+    if not isinstance(row, dict) or not row.get('create_time'):
+        return True
+    return shared_utils.identity_matches({**row, 'pid': pid}, pid)
+
+
+def _retire_dead_status_row(service, pid, process_list_id):
+    """Drop the app_states row for a dead pid that nothing is going to replace.
+
+    The service writes a status when it LAUNCHES a process and when it
+    deliberately stops one, but never when a process dies on its own: the
+    relaunch's new row is what normally supersedes the old one. So the stale row
+    is only ever corrected as a SIDE EFFECT of relaunching, and where the
+    relaunch is declined -- launch mode switched off mid-tick, a scheduled entry
+    now outside its window -- the RUNNING row outlives its process and both UIs
+    keep the entry green until cleanup_stale_tracking_data sweeps it up to five
+    minutes later.
+
+    Called only from that declined-relaunch bail, never from the dead-pid branch
+    at large: a relaunch that is ATTEMPTED needs the dead generation's row to
+    still be there, because _surface_launch_failed writes LAUNCH_FAILED onto it
+    when the attempt fails (D5) and a failed launch has no live pid of its own to
+    key a new row by.
+
+    Only rows still CLAIMING life are retired. 'KILLED' is already terminal,
+    'LAUNCH_FAILED' is that D5 surfacing row, and 'RESTARTING' is the marker
+    _relaunch_if_restarting needs to honour an operator restart of a process
+    whose launch mode is off.
+    """
+    if pid is None:
+        return
+    try:
+        states = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
+    except Exception as e:
+        logging.warning(f"Could not read app_states to retire PID {pid}: {e}")
+        return
+    row = states.get(str(pid)) if isinstance(states, dict) else None
+    process_status = row.get('status') if isinstance(row, dict) else None
+    if process_status not in _LIVE_CLAIM_STATUSES:
+        return
+    _drop_identity_row(pid)
+    # Out of the in-memory snapshot as well: the main loop re-reads app_states
+    # at the top of each tick, but cleanup_stale_tracking_data writes
+    # self.results back wholesale later in THIS one and would restore the row we
+    # just deleted.
+    if isinstance(getattr(service, 'results', None), dict):
+        service.results.pop(str(pid), None)
+    logging.info(
+        f"Retired stale '{process_status}' row for PID {pid} "
+        f"('{process_list_id}') - the process is no longer running")
+
+
 def _surface_launch_failed(process_list_id, pid=None):
     """Write LAUNCH_FAILED where the desktop and web will actually show it (D5).
 
@@ -3621,6 +3694,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 fresh_mode = fresh_process.get('launch_mode', 'always' if fresh_process.get('autolaunch', False) else 'off') if fresh_process else 'off'
                 if fresh_mode == 'off' or (fresh_mode == 'scheduled' and not shared_utils.is_within_schedule(fresh_process.get('schedules') if fresh_process else None, self._cached_site_timezone)):
                     logging.debug(f"Skipping relaunch of '{Util.get_process_name(process)}' - launch_mode is '{fresh_mode}' (not active)")
+                    # Nothing is going to supersede the dead pid's row now, so
+                    # retire it here: this is the ONE place the service both
+                    # knows the process is gone and has decided not to start it
+                    # again. Left alone, the entry reads green in the desktop and
+                    # the dashboard until the five-minute sweep.
+                    #
+                    # Not while shutting down: that path suppresses its side
+                    # effects on the way out, and startup re-derives the file
+                    # anyway (recover_running_processes drops every dead pid, and
+                    # a row this would retire could never have been re-adopted --
+                    # adoption needs the pid still alive).
+                    if not self._shutting_down:
+                        _retire_dead_status_row(self, last_pid, process_list_id)
                     # Clear last_started so we don't keep detecting it as crashed
                     if process_list_id in self.last_started:
                         del self.last_started[process_list_id]
@@ -3719,7 +3805,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         # below -- skip just this key and keep sweeping.
                         logging.debug(f"Skipping non-numeric PID key '{pid_str}' in app_states cleanup")
                         continue
-                    if psutil.pid_exists(pid_int):
+                    # Identity, not bare liveness: a recycled pid would keep a
+                    # dead row alive forever, which is the one way the stale
+                    # green survives past this sweep entirely.
+                    if _pid_still_ours(pid_int, row):
                         if isinstance(row, dict) and row.get('id'):
                             live_entry_ids.add(row['id'])
                     else:
