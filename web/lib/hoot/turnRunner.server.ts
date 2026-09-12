@@ -461,11 +461,14 @@ export function startTurn(
       ]);
 
       const earnedTier = resolveHootMaxTier(params.access);
-      const toolDefs = getToolsByTier(
+      // A caller cap can only lower what access earns. Resolved once: the tools
+      // are cut to it, and `schedule_followup` records it so a follow-up this
+      // turn promises fires under the same ceiling.
+      const effectiveTier: ToolTier =
         params.maxToolTier === undefined
           ? earnedTier
-          : (Math.min(params.maxToolTier, earnedTier) as ToolTier),
-      );
+          : (Math.min(params.maxToolTier, earnedTier) as ToolTier);
+      const toolDefs = getToolsByTier(effectiveTier);
       const tools = buildExecutableTools(
         db,
         params.siteId,
@@ -478,6 +481,7 @@ export function startTurn(
           userId: params.userId,
           userRole: params.access.role,
           userSiteRole: params.access.siteRole,
+          maxToolTier: effectiveTier,
           requireTier3Approval,
           toolCallbacks: {
             onCommandQueued: (toolCallId: string, commandId: string, machineId: string) =>

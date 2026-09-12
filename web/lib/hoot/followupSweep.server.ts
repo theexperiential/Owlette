@@ -21,7 +21,11 @@
  *
  * Fire-time authority: site access is re-resolved on every fire, never trusted
  * from scheduling time, so a user removed or demoted in the meantime cannot
- * keep driving tools through a promise they left behind.
+ * keep driving tools through a promise they left behind. Re-resolution alone
+ * only bounds the fire from above by the OWNER's standing, which is more than a
+ * capped turn had — a chat-scoped API key is held to tier 1 yet may still call
+ * `schedule_followup`. So the scheduling turn's own ceiling rides on the doc
+ * (`maxToolTier`) and the fire takes the lower of the two.
  *
  * Tier 3 always waits for a person (plan decision 9). Unlike a talon this is a
  * forced approval gate, not a tier-2 ceiling: the model may still reach for a
@@ -243,6 +247,11 @@ async function dispatchFollowup(
       messages,
       userId: followup.userId,
       access,
+      // The scheduling turn's ceiling, which `startTurn` then intersects with
+      // what access earns now — so the fire is capped by the lower of the two
+      // and can never widen. Legacy docs carry none and fire as they always
+      // did, on re-resolved access alone.
+      ...(followup.maxToolTier ? { maxToolTier: followup.maxToolTier } : {}),
       priorToolCommands,
       // Nobody is watching the moment a follow-up fires — see the header.
       forceTier3Approval: true,

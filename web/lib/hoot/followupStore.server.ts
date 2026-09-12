@@ -21,6 +21,7 @@
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { timestampToMs } from '@/lib/firestoreTime.server';
+import type { ToolTier } from '@/lib/mcp-tools';
 
 /** Data at rest — see the WIRE_NAMES note above before renaming. */
 export const FOLLOWUPS_COLLECTION = 'cortex-followups';
@@ -38,6 +39,14 @@ export interface FollowupDoc {
   runAt: unknown;
   /** A command whose completion fires this follow-up early. */
   watchCommandId?: string;
+  /**
+   * The scheduling turn's effective tool-tier ceiling. The fired turn is capped
+   * at it so a promise made from a capped turn (a chat-scoped API key is held to
+   * tier 1) cannot come back with more reach than the turn that made it. Absent
+   * on docs written before this was recorded — those fire at whatever the
+   * owner's access earns, as they always did.
+   */
+  maxToolTier?: ToolTier;
   status: FollowupStatus;
   createdAt: unknown;
   firedAt?: unknown;
@@ -53,6 +62,8 @@ export interface ScheduleFollowupInput {
   note: string;
   runAt: Date;
   watchCommandId?: string;
+  /** See {@link FollowupDoc.maxToolTier}. */
+  maxToolTier?: ToolTier;
 }
 
 export interface ScheduledFollowup {
@@ -117,6 +128,9 @@ export async function scheduleFollowup(
     status: 'scheduled',
     createdAt: FieldValue.serverTimestamp(),
     ...(input.watchCommandId ? { watchCommandId: input.watchCommandId } : {}),
+    // Firestore rejects nested undefined, and an absent field is also what the
+    // sweep reads as "legacy doc, no recorded ceiling".
+    ...(input.maxToolTier ? { maxToolTier: input.maxToolTier } : {}),
   };
 
   const ref = await followupsCollection(db).add(doc);

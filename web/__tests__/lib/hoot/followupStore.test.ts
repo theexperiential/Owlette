@@ -155,6 +155,26 @@ describe('scheduleFollowup', () => {
     // the exact-shape assertion above covers that case.
     expect(added).toHaveBeenCalledWith(expect.objectContaining({ watchCommandId: 'cmd-42' }));
   });
+
+  it('records the scheduling turn\'s tier ceiling, and omits it when there is none', async () => {
+    // The ceiling is what stops a capped turn (a chat-scoped API key is held to
+    // tier 1) from promising itself the owner's reach at fire time. Absent is
+    // the legacy shape the sweep reads as "no recorded ceiling".
+    const base = {
+      chatId: 'chat-1',
+      siteId: 'node-pa',
+      machineId: 'lobby-01',
+      userId: 'user-1',
+      note: 'check back on the install',
+      runAt: new Date(),
+    };
+
+    await scheduleFollowup(db, { ...base, maxToolTier: 1 });
+    await scheduleFollowup(db, base);
+
+    expect(added.mock.calls[0][0]).toMatchObject({ maxToolTier: 1 });
+    expect(added.mock.calls[1][0]).not.toHaveProperty('maxToolTier');
+  });
 });
 
 describe('cancelFollowup', () => {

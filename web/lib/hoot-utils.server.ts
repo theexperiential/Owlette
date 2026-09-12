@@ -117,6 +117,11 @@ export interface BuildExecutableToolsOptions {
    *  the fanned-out online machines rather than the sentinel. Read only by
    *  `schedule_followup`. */
   chatMachineId?: string;
+  /** This turn's effective tool-tier ceiling — what `access` earns, already
+   *  intersected with any caller cap. Recorded by `schedule_followup` on the
+   *  follow-up doc so the turn it fires later cannot out-reach the turn that
+   *  promised it; nothing else reads it. */
+  maxToolTier?: ToolTier;
   /** Tier-3 in-chat approval gate; defaults true. Off means tier-3 auto-runs on
    *  the server-side and site-wide paths too, not just local Hoot. */
   requireTier3Approval?: boolean;
@@ -1524,6 +1529,10 @@ async function executeScheduleFollowupTool(
       note,
       runAt: schedule.runAt,
       ...(watchCommandId ? { watchCommandId } : {}),
+      // The ceiling travels with the promise: without it the fired turn would
+      // earn the OWNER's tier, so a chat-scoped API key held to tier 1 could
+      // schedule itself tier-2 reach with no approval gate.
+      ...(options.maxToolTier ? { maxToolTier: options.maxToolTier } : {}),
     });
     const firesAt = scheduled.runAt.toISOString();
     return {

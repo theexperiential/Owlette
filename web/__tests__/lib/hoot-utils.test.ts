@@ -720,6 +720,27 @@ describe('follow-up tools', () => {
     expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({ machineId: '__site__' });
   });
 
+  it('records the turn\'s tier ceiling so the fired turn cannot out-reach it', async () => {
+    // A chat-scoped API key is capped at tier 1 but may still schedule, and the
+    // sweep re-resolves the OWNER's access at fire time. Without the ceiling on
+    // the doc the promise would come back at the owner's tier — tier 2 runs with
+    // no approval gate, `manage_scheduled_task` included.
+    await followupTools({ ...CHAT_OPTIONS, maxToolTier: 1 }).schedule_followup.execute({
+      note: 'check whether the deploy landed',
+      delay_minutes: 15,
+    });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).toMatchObject({ maxToolTier: 1 });
+  });
+
+  it('omits the ceiling when the turn declared none (Firestore rejects undefined)', async () => {
+    // Absent is the legacy shape: the sweep fires those on re-resolved access
+    // alone, exactly as it did before the ceiling existed.
+    await followupTools().schedule_followup.execute({ note: 'check back', delay_minutes: 5 });
+
+    expect(mockScheduleFollowup.mock.calls[0][1]).not.toHaveProperty('maxToolTier');
+  });
+
   it('never dispatches a command to an agent', async () => {
     const { db, pendingDoc } = createMockDb();
 

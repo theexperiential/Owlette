@@ -386,8 +386,11 @@ describe('mcp-tools: follow-up scheduling schemas', () => {
   });
 
   it('both follow-up tools are tier 1 — scheduling one grants no new reach', () => {
-    // The turn a follow-up starts re-resolves the user's own access at fire
-    // time, so the act of scheduling is no more privileged than chatting.
+    // Re-resolving the owner's access at fire time is only half of it: that
+    // bounds the fired turn by the OWNER's standing, which is more than a capped
+    // turn had. So the scheduling turn's own ceiling rides on the follow-up doc
+    // (`maxToolTier`) and the fire takes the lower of the two — without it a
+    // tier-1 chat-scoped API key could schedule itself tier-2 reach.
     expect(getToolByName('schedule_followup')!.tier).toBe(1);
     expect(getToolByName('cancel_followup')!.tier).toBe(1);
     expect(requiresConfirmation('schedule_followup')).toBe(false);

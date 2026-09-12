@@ -353,6 +353,20 @@ describe('startTurn — happy path', () => {
       machineName: 'All Machines',
     });
   });
+
+  it('cuts the toolset to the caller cap and hands that ceiling to the tools', async () => {
+    // A chat-scoped API key is held to tier 1 while its owner earns 3. The cap
+    // has to reach the tool options as well as the toolset: that value is what
+    // `schedule_followup` records on the follow-up doc, and without it a capped
+    // turn could promise itself the owner's reach at fire time.
+    await collectChunks(startTurn(fakeDb, baseParams({ maxToolTier: 1 })));
+    await flushAsync();
+
+    expect(getToolsByTier).toHaveBeenCalledWith(1);
+    expect((hootUtils.buildExecutableTools as jest.Mock).mock.calls[0][7]).toMatchObject({
+      maxToolTier: 1,
+    });
+  });
 });
 
 describe('startTurn — heartbeat', () => {

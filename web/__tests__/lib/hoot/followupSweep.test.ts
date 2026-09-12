@@ -4,12 +4,13 @@
  * Unit tests for `web/lib/hoot/followupSweep.server.ts` — the follow-up pass of
  * the talons cron sweep.
  *
- * Pins the five behaviours the feature turns on: a due follow-up starts a turn
+ * Pins the behaviours the feature turns on: a due follow-up starts a turn
  * that CONTINUES its chat (history preserved), a watched command finishing
  * early pulls the turn forward, the status flip is the claim so overlapping
  * sweeps fire once, access is re-resolved at fire time (a departed user never
- * runs), and a live turn is never superseded — the follow-up goes back to
- * `scheduled` and waits.
+ * runs) under the scheduling turn's recorded tier ceiling (a capped turn cannot
+ * promise itself the owner's reach), and a live turn is never superseded — the
+ * follow-up goes back to `scheduled` and waits.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -278,6 +279,20 @@ describe('fireDueFollowups', () => {
       source: 'followup',
     });
     expect(followups.get('fu-1')).toMatchObject({ status: 'fired', firedAt: expect.any(Date) });
+  });
+
+  it('fires under the tier ceiling the scheduling turn recorded', async () => {
+    // The owner is a site admin (tier 3 earned), so only the recorded ceiling
+    // keeps a promise made by a tier-1-capped turn — a chat-scoped API key — from
+    // coming back with tier-2 reach. `startTurn` intersects it with what access
+    // earns now, so this is the lower of the two, never a widening.
+    // The exact-shape assertion above is the legacy control: a doc with no
+    // ceiling passes none and fires on re-resolved access alone.
+    seedFollowup('fu-1', followup({ maxToolTier: 1 }));
+
+    await sweep();
+
+    expect(startTurnMock.mock.calls[0][1]).toMatchObject({ maxToolTier: 1 });
   });
 
   it('leaves a follow-up that is not due yet alone', async () => {
