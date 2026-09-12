@@ -7,6 +7,23 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { CopyButton } from './CopyButton';
 
+/**
+ * How many machines an approval prompt spells out before it collapses the rest
+ * into a count. One or two are named outright; past that the count leads, so the
+ * reader sees the blast radius before the list.
+ */
+const APPROVAL_IDS_SHOWN = 5;
+
+/** `kiosk-01` | `kiosk-01 and kiosk-02` | `7 machines: a, b, c, d, e and 2 more`. */
+function formatApprovalTargets(machineIds: string[]): string {
+  if (machineIds.length === 1) return machineIds[0];
+  if (machineIds.length === 2) return `${machineIds[0]} and ${machineIds[1]}`;
+  const shown = machineIds.slice(0, APPROVAL_IDS_SHOWN);
+  const rest = machineIds.length - shown.length;
+  const names = rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+  return `${machineIds.length} machines: ${names}`;
+}
+
 interface ToolCallCardProps {
   toolName: string;
   args: Record<string, unknown>;
@@ -14,8 +31,19 @@ interface ToolCallCardProps {
   isLoading?: boolean;
   /** Tier-3 human-in-the-loop gate; absent for tier-1/2 and executed calls. */
   approvalState?: 'requested' | 'denied';
-  /** Where the tool will run, e.g. a machine name or "all machines". */
+  /**
+   * FALLBACK for where the tool will run, e.g. a machine name or "all machines" —
+   * used only for turns with no per-turn metadata (chats written before hoot
+   * recorded a target per turn). `approvalTargetMachineIds` wins over it.
+   */
   approvalTargetLabel?: string;
+  /**
+   * The machines THIS turn resolved to, from the assistant message's metadata.
+   * It wins because the label follows the live header selector, which a loaded
+   * chat can have pointed anywhere — approving on what the selector shows is how
+   * a tier-3 call ends up credited to the wrong machine.
+   */
+  approvalTargetMachineIds?: string[];
   onApprove?: () => void;
   onDeny?: () => void;
   /** Only set while executing with >=1 agent command dispatched (cancels the
@@ -32,6 +60,7 @@ export function ToolCallCard({
   isLoading,
   approvalState,
   approvalTargetLabel,
+  approvalTargetMachineIds,
   onApprove,
   onDeny,
   onCancel,
@@ -45,6 +74,11 @@ export function ToolCallCard({
   const tierLabel = toolDef ? `Tier ${toolDef.tier}` : '';
   const awaitingApproval = approvalState === 'requested';
   const denied = approvalState === 'denied';
+  // An empty list falls back rather than erasing the target: a prompt that names
+  // no machine at all is worse than one naming the selector's.
+  const approvalTarget = approvalTargetMachineIds?.length
+    ? formatApprovalTargets(approvalTargetMachineIds)
+    : approvalTargetLabel;
 
   // Prefer the uploaded Firebase URL; fall back to inline base64 if upload failed.
   let screenshotSrc: string | null = null;
@@ -127,7 +161,7 @@ export function ToolCallCard({
         <div className="border-t border-amber-500/30 px-3 py-2.5 space-y-2.5">
           <p className="text-xs text-foreground">
             hoot wants to run the privileged <span className="font-mono">{toolName}</span> tool
-            {approvalTargetLabel ? <> on <span className="font-medium">{approvalTargetLabel}</span></> : null}. approve to continue, or expand to inspect the input.
+            {approvalTarget ? <> on <span className="font-medium">{approvalTarget}</span></> : null}. approve to continue, or expand to inspect the input.
           </p>
           <div className="flex items-center gap-2">
             <Button

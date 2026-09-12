@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { HootIcon } from '@/components/icons/HootIcon';
 import { useScrollFade } from '@/hooks/useScrollFade';
 import { ADVISOR_MODEL_NAME, ADVISOR_TOOL_NAME } from '@/lib/llmModels';
+import { formatTargetLabel, readHootTurnMetadata, type HootTurnMetadata } from '@/lib/hoot/target';
 
 type MessagePart = UIMessage['parts'][number];
 
@@ -38,6 +39,27 @@ function hasVisibleContent(message: UIMessage): boolean {
   );
 }
 
+/** Set comparison: the resolver's order follows the site listing, not the intent. */
+function sameMachines(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const known = new Set(a);
+  return b.every((id) => known.has(id));
+}
+
+/**
+ * Whether the server stamped a target on this turn AT ALL — true even when
+ * `readHootTurnMetadata` then rejects the blob (a forged re-send, or a list past
+ * the reader's cap, which a site-wide turn on a large site produces today). Such
+ * a turn must not borrow the fallback label: that one follows the live header
+ * selector, and naming the wrong machines on a tier-3 approval is worse than
+ * naming none.
+ */
+function hasHootStamp(metadata: unknown): boolean {
+  if (typeof metadata !== 'object' || metadata === null) return false;
+  const hoot = (metadata as { hoot?: unknown }).hoot;
+  return typeof hoot === 'object' && hoot !== null;
+}
+
 function pickYouTranslation(messageId: string) {
   let hash = 0;
   for (let i = 0; i < messageId.length; i++) hash = (hash * 31 + messageId.charCodeAt(i)) | 0;
@@ -53,7 +75,12 @@ interface ChatWindowProps {
   onToolApproval?: (approvalId: string, approved: boolean) => void;
   /** Edit a prior user message and re-send, branching from that point. */
   onEditMessage?: (messageId: string, newText: string) => void;
-  /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
+  /**
+   * Where tool calls run, shown in the approval prompt (machine / "all machines")
+   * — the FALLBACK only, and only for turns carrying NO stamp at all. Each turn
+   * is labelled from its own `metadata.hoot`; this label follows the live
+   * selector, so it is right only for turns that predate per-turn targeting.
+   */
   approvalTargetLabel?: string;
   /** Dispatched agent commands keyed by toolCallId → machineId → { commandId } — the cancel index. */
   toolCommands?: Record<string, Record<string, { commandId: string }>>;
@@ -89,6 +116,30 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
   const [editText, setEditText] = useState('');
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
+
+  // Each assistant turn carries the machines it actually ran on. Read once per
+  // render — `readHootTurnMetadata` validates an untrusted blob, and both the
+  // approval cards and the retarget captions need the result — and flag the turns
+  // that moved, since a chat now aims at a different set from one turn to the next.
+  const turnTargets = useMemo(() => {
+    const byMessageId = new Map<string, HootTurnMetadata>();
+    const stamped = new Set<string>();
+    const retargeted = new Set<string>();
+    let previous: string[] | null = null;
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue;
+      if (hasHootStamp(message.metadata)) stamped.add(message.id);
+      const meta = readHootTurnMetadata(message.metadata);
+      // An unstamped turn (an old chat, or one mid-deploy) is passed over rather
+      // than treated as a change: the comparison is against the last turn whose
+      // target is actually known.
+      if (!meta) continue;
+      byMessageId.set(message.id, meta);
+      if (previous && !sameMachines(previous, meta.machineIds)) retargeted.add(message.id);
+      previous = meta.machineIds;
+    }
+    return { byMessageId, stamped, retargeted };
+  }, [messages]);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -250,6 +301,10 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         const isUser = message.role === 'user';
         const isEditing = isUser && editingId === message.id;
         const emptyReply = !isUser && !hasVisibleContent(message);
+        const turnMeta = turnTargets.byMessageId.get(message.id);
+        // A stamped turn owns its label outright, so the header's fallback is
+        // withheld even when the stamp turned out to be unreadable.
+        const turnTargetLabel = turnTargets.stamped.has(message.id) ? undefined : approvalTargetLabel;
         // The newest reply with nothing to show yet is the model thinking: the
         // indicator below stands in for it — or, once the turn is stale or has failed,
         // the interrupted notice or the error banner does.
@@ -368,6 +423,13 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 </div>
               ) : (
               <div className={isUser ? 'opacity-80 text-right' : ''}>
+              {/* Where this turn went, noted only when it moved: a transcript that
+                  reads as one conversation can have gone to different machines. */}
+              {turnMeta && turnTargets.retargeted.has(message.id) && (
+                <p className="mb-1.5 text-xs text-muted-foreground">
+                  targets changed — {formatTargetLabel(turnMeta.machineIds)}
+                </p>
+              )}
               {/* Render parts (text + images + tool calls) */}
               {message.parts.map((part, i) => {
               if (part.type === 'text') {
@@ -468,7 +530,8 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                     result={hasResult ? result : undefined}
                     isLoading={running}
                     approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
-                    approvalTargetLabel={approvalTargetLabel}
+                    approvalTargetLabel={turnTargetLabel}
+                    approvalTargetMachineIds={turnMeta?.machineIds}
                     onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
                     onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
                     onCancel={cancellable && toolCallId && onCancelTool ? () => onCancelTool(toolCallId) : undefined}

@@ -8,6 +8,9 @@
  * whether it is open (aria-expanded + data-state), a collapsed card keeps the
  * payload out of the DOM, and nothing the card already did — approve/deny, the
  * cancel button beside the toggle, the screenshot — moved behind the collapse.
+ *
+ * Also who an approval prompt names: the turn's own machines win over the header
+ * label, and a set is spelled out up to a cap and counted past it.
  */
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
@@ -201,6 +204,56 @@ describe('ToolCallCard', () => {
       expect(onApprove).not.toHaveBeenCalled();
       expect(screen.getByRole('button', { name: 'approve' })).toBeDisabled();
       expect(screen.getByRole('button', { name: 'deny' })).toBeDisabled();
+    });
+  });
+
+  describe('who an approval prompt names', () => {
+    /** The banner sentence; the target rides in a span, so read the whole line. */
+    function banner(props: Partial<CardProps>) {
+      renderCard({
+        toolName: 'run_powershell',
+        args: { command: 'hostname' },
+        approvalState: 'requested',
+        onApprove: () => {},
+        onDeny: () => {},
+        ...props,
+      });
+      return screen.getByText(/hoot wants to run the privileged/);
+    }
+
+    const TWELVE = Array.from({ length: 12 }, (_, i) => `kiosk-${String(i + 1).padStart(2, '0')}`);
+
+    it.each([
+      [['kiosk-01'], 'on kiosk-01.'],
+      [['kiosk-01', 'kiosk-02'], 'on kiosk-01 and kiosk-02.'],
+      [
+        ['kiosk-01', 'kiosk-02', 'kiosk-03', 'kiosk-04', 'kiosk-05'],
+        'on 5 machines: kiosk-01, kiosk-02, kiosk-03, kiosk-04, kiosk-05.',
+      ],
+      [TWELVE, 'on 12 machines: kiosk-01, kiosk-02, kiosk-03, kiosk-04, kiosk-05 and 7 more.'],
+    ])('names %j as "%s"', (machineIds, expected) => {
+      expect(banner({ approvalTargetMachineIds: machineIds })).toHaveTextContent(expected);
+    });
+
+    it("prefers the turn's machines over the header label", () => {
+      // The header can be pointed anywhere by the time a loaded chat is read back.
+      const line = banner({ approvalTargetLabel: 'all machines', approvalTargetMachineIds: ['kiosk-07'] });
+      expect(line).toHaveTextContent('on kiosk-07.');
+      expect(line).not.toHaveTextContent('all machines');
+    });
+
+    it('falls back to the header label for a turn with no machines recorded', () => {
+      expect(banner({ approvalTargetLabel: 'all machines' })).toHaveTextContent('on all machines.');
+    });
+
+    it('falls back rather than naming nothing when the list comes back empty', () => {
+      expect(banner({ approvalTargetLabel: 'STUDIO-01', approvalTargetMachineIds: [] })).toHaveTextContent(
+        'on STUDIO-01.',
+      );
+    });
+
+    it('names no target at all when neither is given', () => {
+      expect(banner({})).toHaveTextContent('hoot wants to run the privileged run_powershell tool.');
     });
   });
 

@@ -13,6 +13,10 @@
  *
  * And the OWL-47 approval gate: a live turn disarms approve/deny, because the
  * persisted `approval-requested` part outlives the resume that is already running.
+ *
+ * And per-turn targets: each assistant turn is labelled from its own stamped
+ * `metadata.hoot`, not from the header selector, and a turn that moved to other
+ * machines says so.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -20,6 +24,7 @@ import userEvent from '@testing-library/user-event';
 import type { UIMessage } from 'ai';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ChatWindow } from '@/app/hoot/components/ChatWindow';
+import { MAX_TARGET_MACHINES } from '@/lib/hoot/target';
 
 // react-markdown 10 is ESM-only and jest leaves node_modules untransformed, so
 // the real renderer cannot load under this runtime. Markdown is not on trial.
@@ -272,6 +277,167 @@ describe('ChatWindow — the tier-3 approval gate (OWL-47)', () => {
     expect(screen.queryByRole('button', { name: 'deny' })).toBeNull();
     expect(screen.queryByText(/approve to continue/)).toBeNull();
     expect(screen.getByRole('button', { name: /run_powershell/ })).toBeInTheDocument();
+  });
+});
+
+describe('ChatWindow — per-turn target labels', () => {
+  const ASK = msg('u1', 'user', [{ type: 'text', text: 'restart the render node' }]);
+  const ASK_AGAIN = msg('u2', 'user', [{ type: 'text', text: 'and again' }]);
+  const PENDING = {
+    type: 'tool-run_powershell',
+    toolCallId: 'tc1',
+    state: 'approval-requested',
+    input: { command: 'hostname' },
+    approval: { id: 'ap1' },
+  };
+  const REPLIED = { type: 'text', text: 'done.' };
+
+  /** An assistant turn the server stamped with the machines it resolved to. */
+  function turn(
+    id: string,
+    machineIds: unknown,
+    opts: { via?: string; parts?: unknown[] } = {},
+  ): UIMessage {
+    return {
+      ...msg(id, 'assistant', opts.parts ?? [PENDING]),
+      metadata: {
+        hoot: {
+          turnId: `turn-${id}`,
+          machineIds,
+          via: opts.via ?? 'chat',
+          skipped: { offline: [], disabled: [] },
+        },
+      },
+    } as UIMessage;
+  }
+
+  function approvalLine() {
+    return screen.getByText(/hoot wants to run the privileged/);
+  }
+
+  it("names the turn's machines, not the machine the header is showing", () => {
+    // The pre-existing bug: a site-wide chat reopened with one machine ticked
+    // asked to approve "on kiosk-09", the selector's machine.
+    renderChat({
+      onToolApproval: jest.fn(),
+      approvalTargetLabel: 'kiosk-09',
+      messages: [ASK, turn('a1', ['kiosk-01', 'kiosk-02', 'kiosk-03'])],
+    });
+
+    expect(approvalLine()).toHaveTextContent('on 3 machines: kiosk-01, kiosk-02, kiosk-03.');
+    expect(screen.queryByText(/kiosk-09/)).toBeNull();
+  });
+
+  it('names the mentioned machine on a turn an @mention narrowed', () => {
+    renderChat({
+      onToolApproval: jest.fn(),
+      approvalTargetLabel: 'all machines',
+      messages: [ASK, turn('a1', ['kiosk-07'], { via: 'mention' })],
+    });
+
+    expect(approvalLine()).toHaveTextContent('on kiosk-07.');
+    expect(screen.queryByText(/all machines/)).toBeNull();
+  });
+
+  it('falls back to the header label on a chat written before per-turn targeting', () => {
+    renderChat({
+      onToolApproval: jest.fn(),
+      approvalTargetLabel: 'all machines',
+      messages: [ASK, msg('a1', 'assistant', [PENDING])],
+    });
+
+    expect(approvalLine()).toHaveTextContent('on all machines.');
+  });
+
+  it('names nothing, not the header label, when a stamp does not validate', () => {
+    // The client re-sends assistant messages verbatim, so this blob is untrusted:
+    // a machine id that could not be a document id reads as no metadata at all.
+    // The header label is NOT the answer — it follows the live selector, which a
+    // loaded chat can have pointed anywhere.
+    renderChat({
+      onToolApproval: jest.fn(),
+      approvalTargetLabel: 'all machines',
+      messages: [ASK, turn('a1', ['kiosk-01/../secrets'])],
+    });
+
+    expect(approvalLine()).toHaveTextContent('hoot wants to run the privileged run_powershell tool.');
+    expect(screen.queryByText(/all machines/)).toBeNull();
+  });
+
+  it('names nothing on a site-wide turn whose list is past the reader cap', () => {
+    // `readHootTurnMetadata` rejects a list longer than MAX_TARGET_MACHINES, and
+    // a site-wide turn on a site that big stamps one — the biggest blast radius
+    // there is, so borrowing "kiosk-09" from the header would be at its worst.
+    const wholeFleet = Array.from({ length: MAX_TARGET_MACHINES + 1 }, (_, i) => `kiosk-${i + 1}`);
+    renderChat({
+      onToolApproval: jest.fn(),
+      approvalTargetLabel: 'kiosk-09',
+      messages: [ASK, turn('a1', wholeFleet)],
+    });
+
+    expect(approvalLine()).toHaveTextContent('hoot wants to run the privileged run_powershell tool.');
+    expect(screen.queryByText(/kiosk-09/)).toBeNull();
+  });
+
+  it('keeps approve/deny disarmed while the turn runs on (OWL-47)', () => {
+    renderChat({
+      onToolApproval: jest.fn(),
+      turnRunning: true,
+      approvalTargetLabel: 'kiosk-09',
+      messages: [ASK, turn('a1', ['kiosk-01'])],
+    });
+
+    expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'deny' })).toBeNull();
+  });
+
+  describe('the retarget caption', () => {
+    it('notes a turn that moved, and leaves the first one alone', () => {
+      renderChat({
+        messages: [
+          ASK,
+          turn('a1', ['kiosk-01'], { parts: [REPLIED] }),
+          ASK_AGAIN,
+          turn('a2', ['kiosk-02'], { parts: [REPLIED] }),
+        ],
+      });
+
+      const captions = screen.getAllByText(/targets changed/);
+      expect(captions).toHaveLength(1);
+      expect(captions[0]).toHaveTextContent('targets changed — kiosk-02');
+    });
+
+    it('says nothing while the target holds steady', () => {
+      renderChat({
+        messages: [
+          ASK,
+          turn('a1', ['kiosk-01'], { parts: [REPLIED] }),
+          ASK_AGAIN,
+          turn('a2', ['kiosk-01'], { parts: [REPLIED] }),
+        ],
+      });
+
+      expect(screen.queryByText(/targets changed/)).toBeNull();
+    });
+
+    it('is not fooled by the resolver returning the same set in another order', () => {
+      renderChat({
+        messages: [
+          ASK,
+          turn('a1', ['kiosk-01', 'kiosk-02'], { parts: [REPLIED] }),
+          ASK_AGAIN,
+          turn('a2', ['kiosk-02', 'kiosk-01'], { parts: [REPLIED] }),
+        ],
+      });
+
+      expect(screen.queryByText(/targets changed/)).toBeNull();
+    });
+
+    it('stays quiet on a chat with nothing stamped', () => {
+      renderChat({ messages: MESSAGES });
+
+      expect(screen.queryByText(/targets changed/)).toBeNull();
+    });
   });
 });
 
