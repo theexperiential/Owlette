@@ -14,9 +14,29 @@ import { CopyButton } from './CopyButton';
  */
 const APPROVAL_IDS_SHOWN = 5;
 
-/** `kiosk-01` | `kiosk-01 and kiosk-02` | `7 machines: a, b, c, d, e and 2 more`. */
-function formatApprovalTargets(machineIds: string[]): string {
+/**
+ * `kiosk-01` | `kiosk-01 and kiosk-02` | `7 machines: a, b, c, d, e and 2 more`,
+ * or `every machine in this site (7 reachable)` when the turn asked for the
+ * dynamic "all machines" rather than a chosen list.
+ *
+ * That distinction is the point: a named seven and the whole site can resolve to
+ * the same seven ids, and "7 machines" reads like a selection either way. On a
+ * prompt authorising a privileged command, the reader needs to know the set was
+ * everything.
+ *
+ * NOT "every online machine (7)": `machineIds` is what the turn resolved to,
+ * which drops offline machines AND online ones with hoot switched off. On a site
+ * with eight machines online and hoot off on one, that phrasing asserts the seven
+ * ARE every online machine, which is false — and false in exactly the place this
+ * label exists to be precise. "reachable" is the honest word for the count, and
+ * naming the SITE (not "online") is what carries the whole-site scope.
+ *
+ * A dynamic target that resolves to ONE machine is still named — the turn ran the
+ * single-machine path, and the phrase would be a grander way of saying `kiosk-01`.
+ */
+function formatApprovalTargets(machineIds: string[], dynamic = false): string {
   if (machineIds.length === 1) return machineIds[0];
+  if (dynamic) return `every machine in this site (${machineIds.length} reachable)`;
   if (machineIds.length === 2) return `${machineIds[0]} and ${machineIds[1]}`;
   const shown = machineIds.slice(0, APPROVAL_IDS_SHOWN);
   const rest = machineIds.length - shown.length;
@@ -44,6 +64,8 @@ interface ToolCallCardProps {
    * a tier-3 call ends up credited to the wrong machine.
    */
   approvalTargetMachineIds?: string[];
+  /** That turn asked for the dynamic "all machines" — see formatApprovalTargets. */
+  approvalTargetDynamic?: boolean;
   onApprove?: () => void;
   onDeny?: () => void;
   /** Only set while executing with >=1 agent command dispatched (cancels the
@@ -61,6 +83,7 @@ export function ToolCallCard({
   approvalState,
   approvalTargetLabel,
   approvalTargetMachineIds,
+  approvalTargetDynamic,
   onApprove,
   onDeny,
   onCancel,
@@ -71,13 +94,14 @@ export function ToolCallCard({
   const toolDef = getToolByName(toolName);
 
   const hasError = result != null && typeof result === 'object' && !!(result as Record<string, unknown>).error;
-  const tierLabel = toolDef ? `Tier ${toolDef.tier}` : '';
+  // Lowercase like every other label on this screen.
+  const tierLabel = toolDef ? `tier ${toolDef.tier}` : '';
   const awaitingApproval = approvalState === 'requested';
   const denied = approvalState === 'denied';
   // An empty list falls back rather than erasing the target: a prompt that names
   // no machine at all is worse than one naming the selector's.
   const approvalTarget = approvalTargetMachineIds?.length
-    ? formatApprovalTargets(approvalTargetMachineIds)
+    ? formatApprovalTargets(approvalTargetMachineIds, approvalTargetDynamic)
     : approvalTargetLabel;
 
   // Prefer the uploaded Firebase URL; fall back to inline base64 if upload failed.
@@ -123,7 +147,16 @@ export function ToolCallCard({
             <span className="font-mono text-xs text-foreground truncate">{toolName}</span>
 
             {tierLabel && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0">
+              /* `--muted-foreground` on `--accent` is 4.40:1 in the app's forced-dark
+                 theme — under the 4.5:1 axe enforces on /hoot, and this is 10px text,
+                 so it is held to the normal-text threshold with no large-text relief.
+                 `--accent-foreground` at 70% composites to rgb(178,194,208) for 6.22:1,
+                 while staying quieter than the tool name beside it — which is what keeps
+                 the chip reading as metadata. (Work that ratio in GAMMA-ENCODED sRGB, the
+                 space the browser actually blends in: computing the same blend in linear
+                 light flatters it to 7.87:1.) The accent fill stays — against the card it
+                 is what makes the chip a chip, where `--secondary` would all but vanish. */
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground/70 flex-shrink-0">
                 {tierLabel}
               </span>
             )}

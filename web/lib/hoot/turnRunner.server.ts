@@ -652,6 +652,11 @@ export function startTurn(
         machineIds: resolved.ids,
         via: params.turnTarget.source,
         skipped: resolved.skipped,
+        // What the turn ASKED for, not what it resolved to: `null` is the
+        // dynamic "all machines", and only the request can tell that apart from
+        // a list that happens to cover the site today. The approval prompt says
+        // "every online machine" on the strength of this.
+        dynamic: params.turnTarget.machineIds === null,
       };
 
       // Model/tool-loop errors arrive as error CHUNKS, not rejections.

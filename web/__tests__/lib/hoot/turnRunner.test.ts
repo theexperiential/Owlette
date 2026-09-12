@@ -1158,8 +1158,35 @@ describe('startTurn — per-turn metadata and the stored selection', () => {
           machineIds: ['machine-1'],
           via: 'chat',
           skipped: { offline: ['machine-2'], disabled: [] },
+          // `siteParams` asks for the dynamic "all machines". Asserted here
+          // because `toMatchObject` ignores keys it is not given: without this
+          // the stamp's only producer could be deleted outright and every suite
+          // would stay green.
+          dynamic: true,
         },
       },
+    });
+  });
+
+  it('stamps dynamic:false for a turn that CHOSE its machines', async () => {
+    // The counterpart, and the half that matters: a chosen set and the whole
+    // site resolve to the same ids, so an inverted stamp would have a two-machine
+    // chat telling the approval prompt it was about to run on the entire site.
+    await collectChunks(
+      startTurn(
+        fakeDb,
+        baseParams({
+          turnTarget: { machineIds: ['machine-1', 'machine-2'], fanOut: true, source: 'chat' },
+          resolved: resolvedOn(['machine-1', 'machine-2']),
+        }),
+      ),
+    );
+    await flushAsync();
+
+    const messages = store[CHAT_PATH].messages as Array<{ role: string; metadata?: unknown }>;
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      metadata: { hoot: { dynamic: false } },
     });
   });
 

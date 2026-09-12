@@ -532,6 +532,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                     approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
                     approvalTargetLabel={turnTargetLabel}
                     approvalTargetMachineIds={turnMeta?.machineIds}
+                    approvalTargetDynamic={turnMeta?.dynamic}
                     onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
                     onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
                     onCancel={cancellable && toolCallId && onCancelTool ? () => onCancelTool(toolCallId) : undefined}

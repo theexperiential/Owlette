@@ -397,6 +397,17 @@ export interface HootTurnMetadata {
   machineIds: string[];
   via: TurnTargetSource;
   skipped: { offline: string[]; disabled: string[] };
+  /**
+   * The turn asked for the DYNAMIC "all machines" (`machineIds: null`) rather
+   * than a list that happens to cover the site. `machineIds` above is the
+   * resolved list either way, so without this the two are indistinguishable
+   * once a turn is stamped — and an approval prompt cannot tell the reader
+   * whether it is about to run on a chosen seven or on everything.
+   *
+   * Optional because it is additive: turns stamped before it read as absent,
+   * and their labels stay exactly as they were.
+   */
+  dynamic?: boolean;
 }
 
 const TURN_TARGET_SOURCES: ReadonlySet<string> = new Set<TurnTargetSource>([
@@ -423,6 +434,7 @@ export function readHootTurnMetadata(metadata: unknown): HootTurnMetadata | null
     machineIds?: unknown;
     via?: unknown;
     skipped?: unknown;
+    dynamic?: unknown;
   };
 
   if (typeof value.turnId !== 'string' || value.turnId.length === 0) return null;
@@ -446,5 +458,9 @@ export function readHootTurnMetadata(metadata: unknown): HootTurnMetadata | null
       offline: readIdList(skipped.offline) ?? [],
       disabled: readIdList(skipped.disabled) ?? [],
     },
+    // Strictly `=== true`: this widens what the label CLAIMS ("every online
+    // machine" rather than a named few), and the value arrives from a client
+    // re-send, so anything truthy-but-not-true reads as the narrower form.
+    dynamic: value.dynamic === true,
   };
 }

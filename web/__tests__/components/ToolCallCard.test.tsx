@@ -119,7 +119,7 @@ describe('ToolCallCard', () => {
     });
     const toggle = toggleFor('get_system_info');
     // The tier chip rides inside the toggle.
-    expect(toggle).toHaveTextContent('Tier 1');
+    expect(toggle).toHaveTextContent('tier 1');
     expect(screen.queryByText('output')).toBeNull();
 
     await user.click(toggle);
@@ -168,7 +168,7 @@ describe('ToolCallCard', () => {
     it('keeps the approval banner outside the collapse, open or shut', async () => {
       const { user } = renderAwaiting();
       const toggle = toggleFor('run_powershell');
-      expect(toggle).toHaveTextContent('Tier 3');
+      expect(toggle).toHaveTextContent('tier 3');
       expect(toggle).toHaveTextContent('awaiting approval');
       expect(screen.getByText(/hoot wants to run the privileged/)).toHaveTextContent(
         'hoot wants to run the privileged run_powershell tool on STUDIO-01.',
@@ -233,6 +233,47 @@ describe('ToolCallCard', () => {
       [TWELVE, 'on 12 machines: kiosk-01, kiosk-02, kiosk-03, kiosk-04, kiosk-05 and 7 more.'],
     ])('names %j as "%s"', (machineIds, expected) => {
       expect(banner({ approvalTargetMachineIds: machineIds })).toHaveTextContent(expected);
+    });
+
+    it.each([
+      [['kiosk-01', 'kiosk-02'], 'on every machine in this site (2 reachable).'],
+      [TWELVE, 'on every machine in this site (12 reachable).'],
+    ])('says the set was everything for a dynamic turn: %j', (machineIds, expected) => {
+      // A chosen seven and the whole site resolve to the same shape, and
+      // "7 machines" reads like a selection either way. On a prompt authorising
+      // a privileged command, the reader has to be able to tell.
+      const line = banner({ approvalTargetMachineIds: machineIds, approvalTargetDynamic: true });
+      expect(line).toHaveTextContent(expected);
+      expect(line).not.toHaveTextContent('machines:');
+    });
+
+    it('does not claim the count is every ONLINE machine', () => {
+      // The resolved set drops offline machines and online ones with hoot off,
+      // so "every online machine (2)" would be false on a site where a third
+      // machine is online with hoot switched off. The count is the reachable
+      // ones; the scope is the site.
+      const line = banner({
+        approvalTargetMachineIds: ['kiosk-01', 'kiosk-02'],
+        approvalTargetDynamic: true,
+      });
+      expect(line).not.toHaveTextContent('every online machine');
+    });
+
+    it('still names a dynamic turn that resolved to one machine', () => {
+      // A one-machine site with "all machines" ticked runs the single-machine
+      // path; "every online machine (1)" is a grander way of saying kiosk-01.
+      expect(
+        banner({ approvalTargetMachineIds: ['kiosk-01'], approvalTargetDynamic: true }),
+      ).toHaveTextContent('on kiosk-01.');
+    });
+
+    it('names the machines when the turn chose them, not the whole site', () => {
+      const line = banner({
+        approvalTargetMachineIds: ['kiosk-01', 'kiosk-02'],
+        approvalTargetDynamic: false,
+      });
+      expect(line).toHaveTextContent('on kiosk-01 and kiosk-02.');
+      expect(line).not.toHaveTextContent('every machine in this site');
     });
 
     it("prefers the turn's machines over the header label", () => {

@@ -610,7 +610,22 @@ describe('readHootTurnMetadata', () => {
       machineIds: ['kiosk-01', 'kiosk-02'],
       via: 'mention',
       skipped: { offline: ['kiosk-03'], disabled: ['kiosk-04'] },
+      // Absent on a stamp written before the field existed, which is the
+      // narrower reading: the label names the machines rather than claiming the
+      // turn covered everything online.
+      dynamic: false,
     });
+  });
+
+  it('reads the dynamic flag, and only from a literal true', () => {
+    expect(readHootTurnMetadata({ hoot: { ...valid.hoot, dynamic: true } })?.dynamic).toBe(true);
+    // The stamp is re-sent by the client, so a truthy-but-not-true value must
+    // not be enough to widen what the approval prompt claims.
+    for (const forged of ['true', 1, {}, [], 'yes']) {
+      expect(readHootTurnMetadata({ hoot: { ...valid.hoot, dynamic: forged } })?.dynamic).toBe(
+        false,
+      );
+    }
   });
 
   it('defaults a missing or malformed skipped block to empty lists', () => {
