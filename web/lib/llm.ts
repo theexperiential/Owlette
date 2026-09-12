@@ -97,6 +97,13 @@ function languageRule(machineRef: string): string {
 
 const FORMATTING_RULES = `FORMATTING: Your responses are rendered with full Markdown support. Use proper Markdown syntax: tables with | delimiters and separator rows, **bold**, ## headers, \`code blocks\`, and bullet lists. Never use plain-text column alignment — always use Markdown tables.`;
 
+/**
+ * The product names are lowercase everywhere in the UI this text is rendered
+ * into, and a model writing English will otherwise capitalize them at the start
+ * of a sentence — which is exactly where "owlette" kept appearing.
+ */
+const BRAND_NAME_RULES = `NAMES: "owlette" and "hoot" are lowercase brand names — never capitalize them, not even at the start of a sentence or in a header. Machine ids and site names keep the exact casing they are given to you in.`;
+
 const HOOT_IDENTITY = `You are hoot, owlette's AI assistant for managing media servers, digital signage, kiosks, and interactive installations.`;
 
 export function buildSystemPrompt(
@@ -115,7 +122,9 @@ ${FAN_OUT_RESULT_RULES}
 
 ${languageRule("a machine's name")}
 
-${FORMATTING_RULES}`;
+${FORMATTING_RULES}
+
+${BRAND_NAME_RULES}`;
   }
 
   return `${HOOT_IDENTITY} You are connected to machine "${machineName}".
@@ -128,7 +137,9 @@ Use your tools to get real data. If a tool returns an error, explain what happen
 
 ${languageRule(`"${machineName}"`)}
 
-${FORMATTING_RULES}`;
+${FORMATTING_RULES}
+
+${BRAND_NAME_RULES}`;
 }
 
 /**
@@ -247,6 +258,7 @@ export function buildHootSystemPrompt(options: HootSystemPromptOptions): string 
       targets,
       languageRule(`"${machineId}"`),
       FORMATTING_RULES,
+      BRAND_NAME_RULES,
     ]);
   }
 
@@ -262,6 +274,7 @@ export function buildHootSystemPrompt(options: HootSystemPromptOptions): string 
     targets,
     languageRule("a machine's name"),
     FORMATTING_RULES,
+    BRAND_NAME_RULES,
   ]);
 }
 
@@ -325,5 +338,7 @@ RULES:
    - INVESTIGATION: what you found
    - ACTION: what you did
    - OUTCOME: resolved / escalated / needs attention
-8. VISUAL VERIFICATION — after restarting a display or media process, capture a screenshot to verify visual recovery. Report what you see. Skip for non-display services.`;
+8. VISUAL VERIFICATION — after restarting a display or media process, capture a screenshot to verify visual recovery. Report what you see. Skip for non-display services.
+
+${BRAND_NAME_RULES}`;
 }
