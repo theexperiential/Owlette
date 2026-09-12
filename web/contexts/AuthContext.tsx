@@ -48,16 +48,6 @@ function isSessionEndedError(error: unknown): boolean {
   return code !== undefined && SESSION_ENDED_CODES.has(code);
 }
 
-function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-  for (const key of keysA) {
-    if (a[key] !== b[key]) return false;
-  }
-  return true;
-}
-
 // Not JSON.stringify: Firestore does not guarantee key order, so stringify
 // equality produces spurious mismatches and reference churn downstream.
 function isDeepEqual(a: unknown, b: unknown): boolean {
@@ -82,6 +72,36 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
     if (!isDeepEqual(aObj[key], bObj[key])) return false;
   }
   return true;
+}
+
+/** Last hoot target per site: the site sentinel, one machine id, or a set. */
+export type LastMachineSelection = string | string[];
+
+/**
+ * Read `users/{uid}.lastMachineIds`. Values gained a list form when a hoot chat
+ * could target a SET of machines, so old entries (a single id or the site
+ * sentinel) and new ones coexist and both have to survive a round trip.
+ *
+ * Sanitized rather than trusted: this value picks the machines a turn dispatches
+ * to, and an entry that isn't a string or a non-empty list of strings is dropped
+ * instead of being carried into a selection. (The empty list is never a valid
+ * target — see `lib/hoot/target.ts`.)
+ */
+function readLastMachineIds(raw: unknown): Record<string, LastMachineSelection> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const parsed: Record<string, LastMachineSelection> = {};
+  for (const [siteId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      parsed[siteId] = value;
+    } else if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every((id) => typeof id === 'string')
+    ) {
+      parsed[siteId] = value as string[];
+    }
+  }
+  return parsed;
 }
 
 // Local literal, not an import of `EMPTY_MFA_FACTORS`: importing that VALUE
@@ -334,7 +354,7 @@ interface AuthContextType {
   isSiteOwner: (siteId: string) => boolean;
   userSites: string[]; // Sites the user has access to
   lastSiteId: string | null; // Last active site (synced to Firestore)
-  lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
+  lastMachineIds: Record<string, LastMachineSelection>; // Last hoot target per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
   /** Second factors, mirrored live from the user doc. `totp || passkeys > 0` === `mfaEnrolled`. */
   mfaFactors: MfaFactorInventory;
@@ -350,7 +370,7 @@ interface AuthContextType {
   sendPasswordReset: (email: string, turnstileToken?: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
-  updateLastMachine: (siteId: string, machineId: string) => void;
+  updateLastMachine: (siteId: string, selection: LastMachineSelection) => void;
   deleteAccount: (password: string) => Promise<void>;
 }
 
@@ -417,7 +437,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // instead of racing a second, tokenless one — see shouldListenerBootstrap.
   const signUpBootstrapRef = useRef<Promise<{ alreadyExists: boolean }> | null>(null);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
-  const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
+  const [lastMachineIds, setLastMachineIds] = useState<Record<string, LastMachineSelection>>({});
 
   const sendUserCreatedNotification = async (
     email: string,
@@ -519,7 +539,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const newRequiresMfa = userData.requiresMfaSetup || false;
                 const newMfaFactors = readMfaFactorsFromDoc(userData);
                 const newLastSiteId = userData.lastSiteId || null;
-                const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
+                const newLastMachineIds = readLastMachineIds(userData.lastMachineIds);
 
                 // Identity-preserving setters: avoid re-renders on equal values.
                 setRole(prev => prev === newRole ? prev : newRole);
@@ -531,7 +551,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     : newMfaFactors
                 );
                 setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
-                setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
+                // Deep, not shallow: a per-site value can be a LIST now, and a
+                // shallow compare sees two equal lists as a change on every
+                // snapshot — churning the context value for the whole app.
+                setLastMachineIds(prev => isDeepEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
                 const preferences = userData.preferences || {};
                 // Unknown/missing timeDisplayMode falls back to 'machine'.
@@ -967,11 +990,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const updateLastMachine = useCallback((siteId: string, machineId: string) => {
-    setLastMachineIds((prev) => ({ ...prev, [siteId]: machineId }));
+  // The selection is the site sentinel, one machine id, or an explicit set.
+  // Same writer, same field, same rules allowlist entry as the single-id form.
+  const updateLastMachine = useCallback((siteId: string, selection: LastMachineSelection) => {
+    setLastMachineIds((prev) => ({ ...prev, [siteId]: selection }));
     if (auth?.currentUser && db) {
       const userDocRef = doc(db, 'users', auth.currentUser.uid);
-      setDoc(userDocRef, { lastMachineIds: { [siteId]: machineId } }, { merge: true }).catch((err) =>
+      setDoc(userDocRef, { lastMachineIds: { [siteId]: selection } }, { merge: true }).catch((err) =>
         console.error('Failed to save lastMachineId:', err)
       );
     }

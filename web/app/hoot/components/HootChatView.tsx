@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -30,6 +30,8 @@ import { ConversationResizeHandle } from './ConversationResizeHandle';
 import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
+import type { HootTarget } from '@/lib/hoot/target';
+import type { LastMachineSelection } from '@/contexts/AuthContext';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { HootIcon } from '@/components/icons/HootIcon';
 
@@ -41,6 +43,21 @@ const SIDEBAR_RESIZE_STEP = 16;
  * see `handleResize`.
  */
 const PANEL_WIDTH_VAR = '--hoot-panel-w';
+
+/**
+ * Wave 4.3 adapters. The chat hook targets a SET of machines now; this screen
+ * still drives one id through `MachineSelector`, so the two are bridged here
+ * until 6.1 swaps in the checkbox picker and drops both helpers.
+ */
+function targetFor(machineId: string): HootTarget {
+  return machineId === SITE_TARGET_ID ? { machineIds: null } : { machineIds: [machineId] };
+}
+
+/** The stored selection can be a set; this screen takes its first machine. */
+function firstMachineId(selection: LastMachineSelection | undefined): string | undefined {
+  if (typeof selection === 'string') return selection;
+  return Array.isArray(selection) ? selection[0] : undefined;
+}
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -188,23 +205,20 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
       const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
       const siteId = savedSite && sites.some((s) => s.id === savedSite) ? savedSite : sites[0].id;
       setCurrentSiteId(siteId);
-      if (lastMachineIds[siteId]) setSelectedMachineId(lastMachineIds[siteId]);
+      const savedMachineId = firstMachineId(lastMachineIds[siteId]);
+      if (savedMachineId) setSelectedMachineId(savedMachineId);
     }
   }, [sites, currentSiteId, lastSiteId, lastMachineIds]);
 
   const handleSiteChange = (siteId: string) => {
-    const nextMachineId = lastMachineIds[siteId] || SITE_TARGET_ID;
+    const nextMachineId = firstMachineId(lastMachineIds[siteId]) || SITE_TARGET_ID;
     setCurrentSiteId(siteId);
     setSelectedMachineId(nextMachineId);
     updateLastSite(siteId);
     // Start a fresh chat, mirroring the machine selector: the active chat is
     // bound to the OLD site (it already left the sidebar and can't be sent to),
     // so keeping it in front only invites a cross-site send (OWL-48).
-    handleNewChat({
-      siteId,
-      machineId: nextMachineId,
-      machineName: nextMachineId === SITE_TARGET_ID ? 'All Machines' : nextMachineId,
-    });
+    handleNewChat({ siteId, selection: targetFor(nextMachineId) });
   };
 
   // Reset to "All Machines" if the saved machine no longer exists on this site
@@ -238,10 +252,13 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     }
   }, [initialChatId, router]);
 
+  const selection = useMemo(() => targetFor(selectedMachineId), [selectedMachineId]);
+  const siteMachineIds = useMemo(() => machines.map((m) => m.machineId), [machines]);
+
   const chat = useOwletteChat({
     siteId: currentSiteId,
-    machineId: selectedMachineId,
-    machineName: isSiteMode ? 'All Machines' : selectedMachineId,
+    selection,
+    siteMachineIds,
     onChatPersisted: handleChatPersisted,
   });
   const activeChatId = chat.chatId;
@@ -353,7 +370,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
-  const handleNewChat = useCallback((overrides?: { siteId?: string; machineId?: string; machineName?: string }) => {
+  const handleNewChat = useCallback((overrides?: { siteId?: string; selection?: HootTarget }) => {
     // The sheet is the only route to "new conversation" on mobile, so starting one
     // must dismiss it. No-op on desktop, where the flag is never set.
     setMobileConversationsOpen(false);
@@ -870,8 +887,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               onSelect={(id) => {
                 setSelectedMachineId(id);
                 updateLastMachine(currentSiteId, id);
-                const isSite = id === SITE_TARGET_ID;
-                handleNewChat({ machineId: id, machineName: isSite ? 'All Machines' : id });
+                handleNewChat({ selection: targetFor(id) });
               }}
             />
 
